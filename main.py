@@ -4,7 +4,16 @@ import json
 import ssl
 import os
 import time
+import threading
 from datetime import datetime
+from flask import Flask
+
+# Start Flask Web Server
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Scanner Bot is Active!"
 
 # Settings
 TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
@@ -20,14 +29,10 @@ def fetch_klines_kucoin(symbol, interval_str="15min", limit=100):
     with urllib.request.urlopen(req, context=ctx) as resp:
         res_data = json.loads(resp.read().decode('utf-8'))
         raw_candles = res_data.get("data", [])
-        # KuCoin returns descending (recent first). Reverse to make it ascending (oldest first)
         candles = list(reversed(raw_candles))
         
-        # Format to match Binance index style:
-        # Binance format: [time, open, high, low, close, volume]
         formatted = []
         for c in candles:
-            # c[0]=time, c[1]=open, c[2]=close, c[3]=high, c[4]=low, c[5]=volume
             formatted.append([
                 int(c[0]),      # time
                 float(c[1]),    # open
@@ -44,14 +49,11 @@ def calculate_rsi(prices, period=14):
     deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
     gains = [d if d > 0 else 0 for d in deltas]
     losses = [-d if d < 0 else 0 for d in deltas]
-    
     avg_gain = sum(gains[:period]) / period
     avg_loss = sum(losses[:period]) / period
-    
     for i in range(period, len(deltas)):
         avg_gain = (avg_gain * 13 + gains[i]) / 14
         avg_loss = (avg_loss * 13 + losses[i]) / 14
-        
     if avg_loss == 0:
         return 100.0
     rs = avg_gain / avg_loss
@@ -80,14 +82,12 @@ def calculate_supertrend(klines, period=10, multiplier=3.0):
     closes = [float(k[4]) for k in klines]
     highs = [float(k[2]) for k in klines]
     lows = [float(k[3]) for k in klines]
-    
     tr_list = []
     for i in range(len(klines)):
         if i == 0:
             tr_list.append(highs[i] - lows[i])
         else:
             tr_list.append(max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1])))
-            
     atr_list = []
     for i in range(len(tr_list)):
         if i < period - 1:
@@ -96,19 +96,16 @@ def calculate_supertrend(klines, period=10, multiplier=3.0):
             atr_list.append(sum(tr_list[:period]) / period)
         else:
             atr_list.append((atr_list[-1] * (period - 1) + tr_list[i]) / period)
-            
     st_val = [0.0] * len(klines)
     st_dir = [1] * len(klines)
     basic_ub = [0.0] * len(klines)
     basic_lb = [0.0] * len(klines)
     final_ub = [0.0] * len(klines)
     final_lb = [0.0] * len(klines)
-    
     for i in range(len(klines)):
         hl2 = (highs[i] + lows[i]) / 2.0
         basic_ub[i] = hl2 + multiplier * atr_list[i]
         basic_lb[i] = hl2 - multiplier * atr_list[i]
-        
         if i == 0:
             final_ub[i] = basic_ub[i]
             final_lb[i] = basic_lb[i]
@@ -118,24 +115,20 @@ def calculate_supertrend(klines, period=10, multiplier=3.0):
                 final_ub[i] = basic_ub[i]
             else:
                 final_ub[i] = final_ub[i-1]
-                
             if basic_lb[i] > final_lb[i-1] or closes[i-1] < final_lb[i-1]:
                 final_lb[i] = basic_lb[i]
             else:
                 final_lb[i] = final_lb[i-1]
-                
             if closes[i] > final_ub[i-1]:
                 st_dir[i] = 1
             elif closes[i] < final_lb[i-1]:
                 st_dir[i] = -1
             else:
                 st_dir[i] = st_dir[i-1]
-                
             if st_dir[i] == 1:
                 st_val[i] = final_lb[i]
             else:
                 st_val[i] = final_ub[i]
-                
     return st_dir[-1], st_val[-1]
 
 def send_telegram_message(text):
@@ -168,10 +161,7 @@ def save_state(state):
 def run_scan():
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting scanning cycle...")
     state = load_state()
-    current_time = time.time()
     candidates = []
-    
-    # Check BTC Trend (using KuCoin symbol BTC-USDT)
     try:
         btc_klines = fetch_klines_kucoin('BTC-USDT', '15min', 100)
         btc_st_dir, btc_st_val = calculate_supertrend(btc_klines)
@@ -183,7 +173,6 @@ def run_scan():
         
     for symbol in WATCHLIST:
         try:
-            # 1. Daily CPR using KuCoin 1day candles
             daily_klines = fetch_klines_kucoin(symbol, '1day', 2)
             if len(daily_klines) < 2:
                 continue
@@ -191,11 +180,9 @@ def run_scan():
             high_d, low_d, close_d = yesterday[2], yesterday[3], yesterday[4]
             cpr = calculate_cpr(high_d, low_d, close_d)
             
-            # 2. 15m Candles for Supertrend & CMP
             m15_klines = fetch_klines_kucoin(symbol, '15min', 100)
             if len(m15_klines) < 20:
                 continue
-            
             cmp = m15_klines[-1][4]
             st_dir, st_val = calculate_supertrend(m15_klines)
             close_prices = [k[4] for k in m15_klines]
@@ -211,12 +198,10 @@ def run_scan():
                 score += 10
             elif rsi_val > 75:
                 score -= 10
-                
             if vol_spike >= 2.0:
                 score += 20
             elif vol_spike >= 1.5:
                 score += 10
-                
             score = max(0, min(100, score))
             
             rating = "C (Low Confluence)"
@@ -229,7 +214,6 @@ def run_scan():
             
             is_above_cpr_tc = cmp > cpr['tc']
             is_supertrend_green = st_dir == 1
-            
             print(f" -> {symbol}: CMP=${cmp:.4f} | CPR TC=${cpr['tc']:.4f} | ST=${st_val:.4f} ({'GREEN' if is_supertrend_green else 'RED'}) | RSI={rsi_val:.1f} | VolSpike={vol_spike:.1f}x | Score={score}")
             
             if is_above_cpr_tc and is_supertrend_green:
@@ -238,8 +222,6 @@ def run_scan():
                         'symbol': symbol, 'score': score, 'rating': rating,
                         'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike
                     })
-                else:
-                    print(f" -> [SKIP] {symbol} volume spike ({vol_spike:.2f}x) is below the 1.5x threshold.")
         except Exception as e:
             print(f"Error scanning {symbol}: {e}")
             
@@ -250,7 +232,6 @@ def run_scan():
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
         try:
             if not btc_is_bullish:
-                print(f"[SKIP] Skipping {symbol} alert because BTC trend is BEARISH.")
                 continue
             last_sent = state.get(symbol, 0)
             if time.time() - last_sent > 21600:
@@ -296,11 +277,19 @@ def run_scan():
         except Exception as e:
             print(f"Error processing signal for {symbol}: {e}")
 
-if __name__ == "__main__":
-    print("Cloud Daemon active. Loop running 24/7...")
+def run_loop():
+    print("Scanner loop running...")
     while True:
         try:
             run_scan()
         except Exception as e:
             print(f"Loop error: {e}")
         time.sleep(900)
+
+# Start background scanning thread
+threading.Thread(target=run_loop, daemon=True).start()
+
+if __name__ == "__main__":
+    # Start web server on Render's allocated port
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
