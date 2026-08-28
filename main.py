@@ -18,8 +18,19 @@ def home():
 # Settings
 TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
 CHAT_ID = "8938527650"
-WATCHLIST = ['SOL-USDT', 'AVAX-USDT', 'ZEC-USDT', 'GRASS-USDT']
 STATE_FILE = "scanner_state.json"
+
+# Top 40 Most Liquid and Reliable Assets
+WATCHLIST = [
+    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AVAX-USDT', 'ZEC-USDT', 
+    'GRASS-USDT', 'SUI-USDT', 'DOGE-USDT', 'XRP-USDT', 'ADA-USDT', 
+    'LINK-USDT', 'NEAR-USDT', 'FTM-USDT', 'DOT-USDT', 'LTC-USDT', 
+    'WIF-USDT', 'PEPE-USDT', 'SHIB-USDT', 'BCH-USDT', 'OP-USDT', 
+    'ARB-USDT', 'APT-USDT', 'RENDER-USDT', 'INJ-USDT', 'TIA-USDT', 
+    'STX-USDT', 'IMX-USDT', 'FIL-USDT', 'ATOM-USDT', 'ICP-USDT', 
+    'MKR-USDT', 'LDO-USDT', 'UNI-USDT', 'FET-USDT', 'JUP-USDT', 
+    'PYTH-USDT', 'ONDO-USDT', 'SEI-USDT', 'BEAM-USDT', 'EGLD-USDT'
+]
 
 ctx = ssl._create_unverified_context()
 
@@ -162,6 +173,8 @@ def run_scan():
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting scanning cycle...")
     state = load_state()
     candidates = []
+    
+    # 1. Fetch BTC Trend (using KuCoin symbol BTC-USDT)
     try:
         btc_klines = fetch_klines_kucoin('BTC-USDT', '15min', 100)
         btc_st_dir, btc_st_val = calculate_supertrend(btc_klines)
@@ -173,6 +186,10 @@ def run_scan():
         
     for symbol in WATCHLIST:
         try:
+            # Add 300ms delay to respect exchange API rate limits
+            time.sleep(0.3)
+            
+            # Daily CPR using KuCoin 1day candles
             daily_klines = fetch_klines_kucoin(symbol, '1day', 2)
             if len(daily_klines) < 2:
                 continue
@@ -180,6 +197,7 @@ def run_scan():
             high_d, low_d, close_d = yesterday[2], yesterday[3], yesterday[4]
             cpr = calculate_cpr(high_d, low_d, close_d)
             
+            # 15m Candles for Supertrend & CMP
             m15_klines = fetch_klines_kucoin(symbol, '15min', 100)
             if len(m15_klines) < 20:
                 continue
@@ -214,24 +232,27 @@ def run_scan():
             
             is_above_cpr_tc = cmp > cpr['tc']
             is_supertrend_green = st_dir == 1
-            print(f" -> {symbol}: CMP=${cmp:.4f} | CPR TC=${cpr['tc']:.4f} | ST=${st_val:.4f} ({'GREEN' if is_supertrend_green else 'RED'}) | RSI={rsi_val:.1f} | VolSpike={vol_spike:.1f}x | Score={score}")
             
-            if is_above_cpr_tc and is_supertrend_green:
-                if vol_spike >= 1.5:
-                    candidates.append({
-                        'symbol': symbol, 'score': score, 'rating': rating,
-                        'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike
-                    })
+            # Check Breakout Criteria (must have volume spike >= 1.5x)
+            if is_above_cpr_tc and is_supertrend_green and vol_spike >= 1.5:
+                candidates.append({
+                    'symbol': symbol, 'score': score, 'rating': rating,
+                    'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike
+                })
         except Exception as e:
             print(f"Error scanning {symbol}: {e}")
             
+    # Sort candidates by score descending and keep ONLY the best 4
     candidates.sort(key=lambda x: x['score'], reverse=True)
     top_candidates = candidates[:4]
+    
+    print(f"Found {len(candidates)} total breakout candidates. Dispatched top {len(top_candidates)}...")
     
     for cand in top_candidates:
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
         try:
             if not btc_is_bullish:
+                print(f"[SKIP] Skipping {symbol} alert because BTC trend is BEARISH.")
                 continue
             last_sent = state.get(symbol, 0)
             if time.time() - last_sent > 21600:
@@ -247,7 +268,11 @@ def run_scan():
                 if tp2 <= tp1:
                     tp2 = round(tp1 * 1.035, 4 if cmp > 1 else 6)
                     
-                leverage_val = "10x (Isolated)" if clean_symbol in ['SOLUSDT', 'AVAXUSDT'] else "5x (Isolated)"
+                # Dynamic Leverage logic: 10x for majors, 5x for volatile/others
+                if clean_symbol in ['SOLUSDT', 'AVAXUSDT', 'BTCUSDT', 'ETHUSDT']:
+                    leverage_val = "10x (Isolated)"
+                else:
+                    leverage_val = "5x (Isolated)"
                 
                 msg = (
                     f"🟢 <b>NEW BULLISH BREAKOUT SIGNAL</b>\n\n"
@@ -290,6 +315,5 @@ def run_loop():
 threading.Thread(target=run_loop, daemon=True).start()
 
 if __name__ == "__main__":
-    # Start web server on Render's allocated port
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
