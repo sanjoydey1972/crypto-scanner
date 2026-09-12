@@ -13,9 +13,13 @@ from flask import Flask
 app = Flask(__name__)
 scan_lock = threading.Lock()
 
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def catch_all(path):
+@app.route('/')
+@app.route('/health')
+def health_check():
+    return "OK - Scanner is Live", 200
+
+@app.route('/trigger')
+def trigger_scan():
     if scan_lock.acquire(blocking=False):
         def async_scan():
             try:
@@ -23,7 +27,8 @@ def catch_all(path):
             finally:
                 scan_lock.release()
         threading.Thread(target=async_scan, daemon=True).start()
-    return "OK", 200
+        return "Scan triggered", 200
+    return "Scan already in progress", 200
 
 TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
 CHAT_ID = "8938527650"
@@ -338,17 +343,24 @@ def run_scan():
                     save_state(state)
         except Exception: pass
 
-def run_loop():
-    while True:
-        try:
-            if scan_lock.acquire(blocking=False):
-                try: run_scan()
-                finally: scan_lock.release()
-        except Exception: pass
-        time.sleep(300)
+def start_background_loop():
+    def run_loop():
+        time.sleep(5)
+        while True:
+            try:
+                if scan_lock.acquire(blocking=False):
+                    try: run_scan()
+                    finally: scan_lock.release()
+            except Exception as e:
+                print(f"Scan loop exception: {e}")
+            time.sleep(300)
 
-threading.Thread(target=run_loop, daemon=True).start()
+    t = threading.Thread(target=run_loop, daemon=True)
+    t.start()
+
+start_background_loop()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
+    print(f"Starting server on port {port}...")
     app.run(host="0.0.0.0", port=port)
