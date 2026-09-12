@@ -127,8 +127,10 @@ def send_telegram_message(text):
         return False
 
 def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0, leverage=5):
-    api_key = os.environ.get("COINDCX_API_KEY", "").strip()
-    secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip()
+    # Built-In Key Fallback: Eliminates all Render UI Environment linking issues!
+    api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
+    secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
+    
     if not api_key or not secret_key:
         return {'success': False, 'error': 'CoinDCX API credentials missing.'}
     try:
