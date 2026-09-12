@@ -51,17 +51,18 @@ WATCHLIST = [
 
 ctx = ssl._create_unverified_context()
 
-def fetch_klines_kucoin(symbol, interval_str="15min", limit=100):
-    url = f"https://api.kucoin.com/api/v1/market/candles?symbol={symbol}&type={interval_str}"
+# Gold-Standard Binance Market Data Fetcher (Eliminates KuCoin symbol/price glitches)
+def fetch_klines_binance(symbol, interval_str="15m", limit=100):
+    clean_sym = symbol.replace("-", "").upper()
+    url = f"https://api.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}"
     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, context=ctx) as resp:
-        res_data = json.loads(resp.read().decode('utf-8'))
-        raw_candles = res_data.get("data", [])
-        candles = list(reversed(raw_candles))
+    with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+        raw_candles = json.loads(resp.read().decode('utf-8'))
         formatted = []
-        for c in candles:
-            formatted.append([int(c[0]), float(c[1]), float(c[3]), float(c[4]), float(c[2]), float(c[5])])
-        return formatted[-limit:]
+        for c in raw_candles:
+            # [open_time, open, high, low, close, volume]
+            formatted.append([int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])])
+        return formatted
 
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1: return 50.0
@@ -145,13 +146,11 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
         position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
         raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
         
-        # Lot size & contract precision floors for CoinDCX Futures API
+        # Precise decimal lot size formatting for CoinDCX API
         if coin == 'BTC':
-            quantity = max(0.001, round(raw_qty, 3))
+            quantity = round(raw_qty, 3)
         elif coin == 'ETH':
-            quantity = max(0.01, round(raw_qty, 2))
-        elif coin in ['AAVE', 'BCH', 'SOL', 'AVAX', 'LINK']:
-            quantity = max(0.2, round(raw_qty, 2))
+            quantity = round(raw_qty, 2)
         elif raw_qty >= 100:
             quantity = float(int(round(raw_qty)))
         elif raw_qty >= 10:
@@ -256,7 +255,7 @@ def save_state(state):
 
 def fetch_live_btc_price():
     try:
-        url = "https://fapi.binance.com/fapi/v1/ticker/price?symbol=BTCUSDT"
+        url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
             data = json.loads(resp.read().decode('utf-8'))
@@ -270,7 +269,7 @@ def run_scan():
     btc_cmp = fetch_live_btc_price()
     btc_is_bullish = True
     try:
-        btc_klines = fetch_klines_kucoin('BTC-USDT', '15min', 100)
+        btc_klines = fetch_klines_binance('BTC-USDT', '15m', 100)
         btc_st_dir, _ = calculate_supertrend(btc_klines)
         btc_is_bullish = (btc_st_dir == 1)
     except Exception: pass
@@ -278,10 +277,10 @@ def run_scan():
     for symbol in WATCHLIST:
         try:
             time.sleep(0.3)
-            daily_klines = fetch_klines_kucoin(symbol, '1day', 2)
+            daily_klines = fetch_klines_binance(symbol, '1d', 2)
             if len(daily_klines) < 2: continue
             cpr = calculate_cpr(daily_klines[0][2], daily_klines[0][3], daily_klines[0][4])
-            m15_klines = fetch_klines_kucoin(symbol, '15min', 100)
+            m15_klines = fetch_klines_binance(symbol, '15m', 100)
             if len(m15_klines) < 20: continue
             cmp = m15_klines[-1][4]
             st_dir, st_val = calculate_supertrend(m15_klines)
@@ -358,7 +357,8 @@ def run_scan():
                     f"🏆 <b>Signal Strength:</b> <code>{rating}</code>\n\n"
                     f"⚙️ <b>Trade Parameters:</b>\n"
                     f"• <b>Leverage:</b> <code>{lev_num}x (Isolated)</code>\n"
-                    f"• <b>Margin:</b> <code>₹500 INR (Per Trade)</code>\n\n"
+                    f"• <b>Margin:</b> <code>₹500 INR (Per Trade)</code>\n"
+                    f"• <b>Live CMP:</b> <code>${cmp}</code>\n\n"
                     f"🔹 <b>Entry Range:</b> <code>{entry_min} - {entry_max}</code>\n"
                     f"🔹 <b>Stop Loss:</b> <code>{sl}</code>\n"
                     f"🎯 <b>TP1:</b> <code>{tp1}</code> | 🎯 <b>TP2:</b> <code>{tp2}</code>\n"
@@ -381,7 +381,7 @@ def monitor_active_positions():
             for symbol in symbols_to_check:
                 try:
                     time.sleep(0.5)
-                    m15_klines = fetch_klines_kucoin(symbol, '15min', 5)
+                    m15_klines = fetch_klines_binance(symbol, '15m', 5)
                     if not m15_klines: continue
                     cmp = m15_klines[-1][4]
                     
