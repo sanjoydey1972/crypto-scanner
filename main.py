@@ -134,8 +134,19 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
         return {'success': False, 'error': 'CoinDCX API credentials missing.'}
         
     coin = symbol.split('-')[0].upper()
-    position_value_usdt = (margin_inr * leverage) / 88.5
-    quantity = round(position_value_usdt / cmp, 4 if cmp > 1 else 6)
+    usdt_inr_rate = 88.5
+    position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
+    raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
+    
+    # Lot size / precision formatting for CoinDCX API compliance
+    if raw_qty >= 100:
+        quantity = float(int(round(raw_qty)))
+    elif raw_qty >= 10:
+        quantity = round(raw_qty, 1)
+    elif raw_qty >= 1:
+        quantity = round(raw_qty, 2)
+    else:
+        quantity = round(raw_qty, 4)
     if quantity <= 0: quantity = 1.0
 
     url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
@@ -149,8 +160,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
             "pair": f"B-{coin}_USDT",
             "total_quantity": quantity,
             "leverage": leverage,
-            "notification": "no_notification",
-            "margin_currency_short_name": "INR"
+            "notification": "no_notification"
         },
         {
             "timestamp": int(round(time.time() * 1000)),
@@ -160,7 +170,17 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
             "total_quantity": quantity,
             "leverage": leverage,
             "notification": "no_notification",
-            "margin_currency_short_name": ["INR"]
+            "margin_currency_short_name": "INR"
+        },
+        {
+            "timestamp": int(round(time.time() * 1000)),
+            "order_type": "market_order",
+            "price": cmp,
+            "side": side.lower(),
+            "pair": f"B-{coin}_USDT",
+            "total_quantity": quantity,
+            "leverage": leverage,
+            "notification": "no_notification"
         },
         {
             "timestamp": int(round(time.time() * 1000)),
@@ -186,12 +206,19 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
             req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers, method='POST')
             with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
-                order_id = data.get('id', data.get('order_id', 'EXECUTED'))
+                order_id = "EXECUTED"
+                if isinstance(data, dict):
+                    order_id = data.get('id', data.get('order_id', 'EXECUTED'))
+                elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+                    order_id = data[0].get('id', 'EXECUTED')
                 print(f"✅ CoinDCX Futures Order Executed! Pair: {body['pair']} | Qty: {quantity} | OrderID: {order_id}")
                 return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': body['pair']}
         except urllib.error.HTTPError as e:
-            err_msg = e.read().decode('utf-8') if e.fp else str(e)
-            last_err = f"HTTP {e.code}: {err_msg}"
+            try:
+                raw_err = e.read().decode('utf-8')
+            except Exception:
+                raw_err = str(e)
+            last_err = f"HTTP {e.code}: {raw_err}"
             continue
         except Exception as e:
             last_err = str(e)
