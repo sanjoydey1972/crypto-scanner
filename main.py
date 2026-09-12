@@ -131,8 +131,14 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
     position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
     raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
     
-    # Lot size / precision formatting for CoinDCX Futures step-size compliance
-    if raw_qty >= 100:
+    # Lot size & contract precision floors for CoinDCX Futures API
+    if coin == 'BTC':
+        quantity = max(0.001, round(raw_qty, 3))
+    elif coin == 'ETH':
+        quantity = max(0.01, round(raw_qty, 2))
+    elif coin in ['AAVE', 'BCH', 'SOL', 'AVAX', 'LINK']:
+        quantity = max(0.2, round(raw_qty, 2))
+    elif raw_qty >= 100:
         quantity = float(int(round(raw_qty)))
     elif raw_qty >= 10:
         quantity = round(raw_qty, 1)
@@ -210,7 +216,8 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
                 return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': body['pair']}
         except urllib.error.HTTPError as e:
             try:
-                raw_err = e.read().decode('utf-8')
+                err_bytes = e.read()
+                raw_err = err_bytes.decode('utf-8') if err_bytes else str(e)
             except Exception:
                 raw_err = str(e)
             last_err = f"HTTP {e.code}: {raw_err}"
