@@ -12,11 +12,16 @@ from flask import Flask
 
 app = Flask(__name__)
 scan_lock = threading.Lock()
+active_trades_lock = threading.Lock()
+
+# 4-Step Execution Tracker State
+# Format: { symbol: { entry_price, total_qty, remaining_qty, tp1, tp2, sl, tp1_booked, entry_time } }
+ACTIVE_TRADES = {}
 
 @app.route('/')
 @app.route('/health')
 def health_check():
-    return "OK - Scanner is Live", 200
+    return "OK - Scanner & 4-Step Manager is Live", 200
 
 @app.route('/trigger')
 def trigger_scan():
@@ -124,7 +129,7 @@ def send_telegram_message(text):
         print(f"Telegram error: {e}")
         return False
 
-def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0, leverage=5):
+def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0, leverage=5, custom_quantity=None):
     api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
     secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
     
@@ -132,25 +137,29 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
         return {'success': False, 'error': 'CoinDCX API credentials missing.'}
         
     coin = symbol.split('-')[0].upper()
-    usdt_inr_rate = 88.5
-    position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
-    raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
     
-    # Lot size & contract precision floors for CoinDCX Futures API
-    if coin == 'BTC':
-        quantity = max(0.001, round(raw_qty, 3))
-    elif coin == 'ETH':
-        quantity = max(0.01, round(raw_qty, 2))
-    elif coin in ['AAVE', 'BCH', 'SOL', 'AVAX', 'LINK']:
-        quantity = max(0.2, round(raw_qty, 2))
-    elif raw_qty >= 100:
-        quantity = float(int(round(raw_qty)))
-    elif raw_qty >= 10:
-        quantity = round(raw_qty, 1)
-    elif raw_qty >= 1:
-        quantity = round(raw_qty, 2)
+    if custom_quantity is not None:
+        quantity = custom_quantity
     else:
-        quantity = round(raw_qty, 4)
+        usdt_inr_rate = 88.5
+        position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
+        raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
+        
+        # Lot size & contract precision floors for CoinDCX Futures API
+        if coin == 'BTC':
+            quantity = max(0.001, round(raw_qty, 3))
+        elif coin == 'ETH':
+            quantity = max(0.01, round(raw_qty, 2))
+        elif coin in ['AAVE', 'BCH', 'SOL', 'AVAX', 'LINK']:
+            quantity = max(0.2, round(raw_qty, 2))
+        elif raw_qty >= 100:
+            quantity = float(int(round(raw_qty)))
+        elif raw_qty >= 10:
+            quantity = round(raw_qty, 1)
+        elif raw_qty >= 1:
+            quantity = round(raw_qty, 2)
+        else:
+            quantity = round(raw_qty, 4)
     if quantity <= 0: quantity = 1.0
 
     url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
@@ -217,7 +226,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
                     order_id = data.get('id', data.get('order_id', 'EXECUTED'))
                 elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
                     order_id = data[0].get('id', 'EXECUTED')
-                print(f"✅ CoinDCX Futures Order Executed! Pair: {body['pair']} | Qty: {quantity} | OrderID: {order_id}")
+                print(f"✅ CoinDCX Futures Order Executed! Pair: {body['pair']} | Side: {side} | Qty: {quantity} | OrderID: {order_id}")
                 return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': body['pair']}
         except urllib.error.HTTPError as e:
             try:
@@ -315,11 +324,29 @@ def run_scan():
                 
                 lev_num = 10 if clean_symbol in ['SOLUSDT', 'AVAXUSDT', 'BTCUSDT', 'ETHUSDT'] else (7 if score >= 90 else 5)
                 
-                # EXECUTE COINDCX FUTURES TRADE
+                # STEP 1: EXECUTE COINDCX FUTURES ENTRY TRADE
                 trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=500.0, leverage=lev_num)
                 
                 if trade_res.get('success'):
-                    exec_hdr = f"\n\n⚡ <b>AUTO-TRADE EXECUTED ON COINDCX FUTURES!</b>\n• <b>Status:</b> <code>SUCCESS (Order ID: {trade_res.get('order_id')})</code>\n• <b>Quantity:</b> <code>{trade_res.get('quantity')} {clean_symbol[:-4]}</code>"
+                    exec_hdr = (
+                        f"\n\n⚡ <b>AUTO-TRADE EXECUTED ON COINDCX FUTURES!</b>\n"
+                        f"• <b>Status:</b> <code>SUCCESS (Order ID: {trade_res.get('order_id')})</code>\n"
+                        f"• <b>Quantity:</b> <code>{trade_res.get('quantity')} {clean_symbol[:-4]}</code>"
+                    )
+                    
+                    # REGISTRATION IN 4-STEP TIMELINE ENGINE
+                    with active_trades_lock:
+                        ACTIVE_TRADES[symbol] = {
+                            'entry_price': cmp,
+                            'total_qty': trade_res.get('quantity'),
+                            'remaining_qty': trade_res.get('quantity'),
+                            'tp1': tp1,
+                            'tp2': tp2,
+                            'sl': sl,
+                            'tp1_booked': False,
+                            'leverage': lev_num,
+                            'entry_time': time.time()
+                        }
                 else:
                     exec_hdr = f"\n\n⚠️ <b>COINDCX EXECUTION NOTICE:</b>\n<code>{trade_res.get('error')}</code>"
 
@@ -343,6 +370,92 @@ def run_scan():
                     save_state(state)
         except Exception: pass
 
+# 4-STEP EXECUTION TIMELINE MANAGER THREAD
+def monitor_active_positions():
+    time.sleep(15)
+    while True:
+        try:
+            with active_trades_lock:
+                symbols_to_check = list(ACTIVE_TRADES.keys())
+            
+            for symbol in symbols_to_check:
+                try:
+                    time.sleep(0.5)
+                    m15_klines = fetch_klines_kucoin(symbol, '15min', 5)
+                    if not m15_klines: continue
+                    cmp = m15_klines[-1][4]
+                    
+                    with active_trades_lock:
+                        if symbol not in ACTIVE_TRADES: continue
+                        trade = ACTIVE_TRADES[symbol]
+                    
+                    clean_coin = symbol.split('-')[0].upper()
+                    
+                    # STEP 2 & 3: TP1 REACHED -> BOOK 80% PROFIT & SHIFT SL TO ENTRY (RISK-FREE)
+                    if cmp >= trade['tp1'] and not trade['tp1_booked']:
+                        qty_80 = round(trade['total_qty'] * 0.8, 2 if cmp < 100 else 1)
+                        if qty_80 <= 0: qty_80 = trade['total_qty']
+                        
+                        # Partial sell 80% on CoinDCX
+                        res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=qty_80)
+                        if res.get('success'):
+                            with active_trades_lock:
+                                trade['tp1_booked'] = True
+                                trade['remaining_qty'] = round(trade['total_qty'] - qty_80, 2)
+                                trade['sl'] = trade['entry_price'] # MOVE SL TO ENTRY PRICE (100% RISK-FREE)
+                            
+                            send_telegram_message(
+                                f"🎯 <b>STEP 2 & 3 EXECUTED: TP1 REACHED!</b>\n\n"
+                                f"<b>Pair:</b> B-{clean_coin}_USDT\n"
+                                f"💰 <b>80% Profit Booked on CoinDCX!</b> (Qty: {qty_80})\n"
+                                f"🛡️ <b>SL Shifted to Entry:</b> <code>{trade['entry_price']}</code> (Trade is now 100% Risk-Free!)\n"
+                                f"🚀 <b>Riding Remaining 20% to TP2 ({trade['tp2']})...</b>"
+                            )
+
+                    # STEP 4: RIDE TO TP2 OR EXIT AT BREAKEVEN / STOP LOSS
+                    elif trade['tp1_booked']:
+                        if cmp >= trade['tp2']:
+                            # Sell remaining 20% on CoinDCX
+                            res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=trade['remaining_qty'])
+                            with active_trades_lock:
+                                ACTIVE_TRADES.pop(symbol, None)
+                            
+                            send_telegram_message(
+                                f"🚀 <b>STEP 4 EXECUTED: TP2 TARGET HIT!</b>\n\n"
+                                f"<b>Pair:</b> B-{clean_coin}_USDT\n"
+                                f"🔥 <b>100% Trade Successfully Closed!</b>\n"
+                                f"🏆 <b>Full Target Achieved at CMP:</b> <code>{cmp}</code>"
+                            )
+                        elif cmp <= trade['sl']:
+                            # Exit remaining 20% at Entry (Breakeven / ₹0 Loss)
+                            res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=trade['remaining_qty'])
+                            with active_trades_lock:
+                                ACTIVE_TRADES.pop(symbol, None)
+                            
+                            send_telegram_message(
+                                f"🛡️ <b>STEP 4 EXECUTED: EXIT AT BREAKEVEN</b>\n\n"
+                                f"<b>Pair:</b> B-{clean_coin}_USDT\n"
+                                f"🔹 Remaining 20% Closed at Entry (<code>{cmp}</code>).\n"
+                                f"✅ <b>Net Trade Profit:</b> <b>80% Cash Locked in Wallet (₹0 Loss)</b>"
+                            )
+
+                    # INITIAL STOP LOSS (BEFORE TP1)
+                    elif not trade['tp1_booked'] and cmp <= trade['sl']:
+                        res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=trade['total_qty'])
+                        with active_trades_lock:
+                            ACTIVE_TRADES.pop(symbol, None)
+                        
+                        send_telegram_message(
+                            f"🛑 <b>STOP LOSS EXECUTED</b>\n\n"
+                            f"<b>Pair:</b> B-{clean_coin}_USDT\n"
+                            f"Position closed at Stop Loss: <code>{cmp}</code>"
+                        )
+                except Exception as e:
+                    print(f"Error monitoring {symbol}: {e}")
+        except Exception as e:
+            print(f"Position monitor exception: {e}")
+        time.sleep(10)
+
 def start_background_loop():
     def run_loop():
         time.sleep(5)
@@ -355,8 +468,11 @@ def start_background_loop():
                 print(f"Scan loop exception: {e}")
             time.sleep(300)
 
-    t = threading.Thread(target=run_loop, daemon=True)
-    t.start()
+    t1 = threading.Thread(target=run_loop, daemon=True)
+    t1.start()
+    
+    t2 = threading.Thread(target=monitor_active_positions, daemon=True)
+    t2.start()
 
 start_background_loop()
 
