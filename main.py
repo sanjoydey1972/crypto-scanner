@@ -29,21 +29,14 @@ TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
 CHAT_ID = "8938527650"
 STATE_FILE = "scanner_state.json"
 
+# Strict watchlist of top liquid coins verified to exist on CoinDCX Futures
 WATCHLIST = [
-    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AVAX-USDT', 'ZEC-USDT', 
-    'DASH-USDT', 'ZEN-USDT', 'LIT-USDT', 'BICO-USDT', 'PROM-USDT',
-    'GRASS-USDT', 'SUI-USDT', 'DOGE-USDT', 'XRP-USDT', 'ADA-USDT', 
-    'LINK-USDT', 'NEAR-USDT', 'FTM-USDT', 'DOT-USDT', 'LTC-USDT', 
-    'PEPE-USDT', 'BCH-USDT', 'OP-USDT', 'ARB-USDT', 'APT-USDT', 
-    'RENDER-USDT', 'INJ-USDT', 'STX-USDT', 'IMX-USDT', 'FIL-USDT', 
-    'ATOM-USDT', 'ICP-USDT', 'MKR-USDT', 'UNI-USDT', 'FET-USDT', 
-    'PYTH-USDT', 'ONDO-USDT', 'SEI-USDT', 'EGLD-USDT', '1000RATS-USDT',
-    'TIA-USDT', 'WIF-USDT', 'FLOKI-USDT', 'BONK-USDT', 'SHIB-USDT',
-    'JUP-USDT', 'ENA-USDT', 'W-USDT', 'ARKM-USDT', 'GALA-USDT',
-    'SAND-USDT', 'MANA-USDT', 'THETA-USDT', 'JTO-USDT', 'STRK-USDT',
-    'ORDI-USDT', 'ALT-USDT', 'ALGO-USDT', 'DYDX-USDT', 'AAVE-USDT',
-    'RUNE-USDT', 'KAS-USDT', 'NOT-USDT', 'BLUR-USDT', 'PENDLE-USDT',
-    'GMX-USDT', 'LDO-USDT', 'CRV-USDT', 'SNX-USDT', 'POL-USDT'
+    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AVAX-USDT', 'DOGE-USDT', 
+    'XRP-USDT', 'ADA-USDT', 'LINK-USDT', 'NEAR-USDT', 'BCH-USDT', 
+    'SUI-USDT', 'LTC-USDT', 'DOT-USDT', 'PEPE-USDT', 'OP-USDT', 
+    'ARB-USDT', 'APT-USDT', 'RENDER-USDT', 'INJ-USDT', 'FET-USDT', 
+    'TIA-USDT', 'WIF-USDT', 'SHIB-USDT', 'FLOKI-USDT', 'AAVE-USDT',
+    'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 'ICP-USDT', 'SAND-USDT'
 ]
 
 ctx = ssl._create_unverified_context()
@@ -138,7 +131,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
     position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
     raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
     
-    # Precision formatting for CoinDCX Futures step-size compliance
+    # Lot size / precision formatting for CoinDCX Futures step-size compliance
     if raw_qty >= 100:
         quantity = float(int(round(raw_qty)))
     elif raw_qty >= 10:
@@ -151,7 +144,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
 
     url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
 
-    # Multi-variant payload solver for CoinDCX Futures API
+    # Multi-variant solver to handle all CoinDCX API payload specs
     payload_variants = [
         {
             "timestamp": int(round(time.time() * 1000)),
