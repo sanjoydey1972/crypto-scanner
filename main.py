@@ -51,7 +51,7 @@ WATCHLIST = [
 
 ctx = ssl._create_unverified_context()
 
-# Gold-Standard Binance Market Data Fetcher (Eliminates KuCoin symbol/price glitches)
+# Gold-Standard Binance Market Data Fetcher (Eliminates symbol/price glitches)
 def fetch_klines_binance(symbol, interval_str="15m", limit=100):
     clean_sym = symbol.replace("-", "").upper()
     url = f"https://api.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}"
