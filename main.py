@@ -138,7 +138,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
     position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
     raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
     
-    # Lot size / precision formatting for CoinDCX API compliance
+    # Precision formatting for CoinDCX Futures step-size compliance
     if raw_qty >= 100:
         quantity = float(int(round(raw_qty)))
     elif raw_qty >= 10:
@@ -151,17 +151,8 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
 
     url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
 
-    # Multi-variant solver to handle all CoinDCX API payload specs
+    # Multi-variant payload solver for CoinDCX Futures API
     payload_variants = [
-        {
-            "timestamp": int(round(time.time() * 1000)),
-            "order_type": "market_order",
-            "side": side.lower(),
-            "pair": f"B-{coin}_USDT",
-            "total_quantity": quantity,
-            "leverage": leverage,
-            "notification": "no_notification"
-        },
         {
             "timestamp": int(round(time.time() * 1000)),
             "order_type": "market_order",
@@ -175,7 +166,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
         {
             "timestamp": int(round(time.time() * 1000)),
             "order_type": "market_order",
-            "price": cmp,
             "side": side.lower(),
             "pair": f"B-{coin}_USDT",
             "total_quantity": quantity,
@@ -184,11 +174,23 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
         },
         {
             "timestamp": int(round(time.time() * 1000)),
+            "order_type": "market_order",
+            "price": cmp,
+            "side": side.lower(),
+            "pair": f"B-{coin}_USDT",
+            "total_quantity": quantity,
+            "leverage": leverage,
+            "notification": "no_notification",
+            "margin_currency_short_name": "INR"
+        },
+        {
+            "timestamp": int(round(time.time() * 1000)),
             "order_type": "market",
             "side": side.lower(),
             "pair": f"B-{coin}_USDT",
             "total_quantity": quantity,
-            "leverage": leverage
+            "leverage": leverage,
+            "margin_currency_short_name": "INR"
         }
     ]
 
