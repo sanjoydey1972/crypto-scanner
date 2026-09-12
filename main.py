@@ -15,16 +15,11 @@ scan_lock = threading.Lock()
 active_trades_lock = threading.Lock()
 
 # 4-Step Execution Tracker State
-# Format: { symbol: { entry_price, total_qty, remaining_qty, tp1, tp2, sl, tp1_booked, entry_time } }
 ACTIVE_TRADES = {}
 
-@app.route('/')
-@app.route('/health')
-def health_check():
-    return "OK - Scanner & 4-Step Manager is Live", 200
-
-@app.route('/trigger')
-def trigger_scan():
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def catch_all(path):
     if scan_lock.acquire(blocking=False):
         def async_scan():
             try:
@@ -32,8 +27,8 @@ def trigger_scan():
             finally:
                 scan_lock.release()
         threading.Thread(target=async_scan, daemon=True).start()
-        return "Scan triggered", 200
-    return "Scan already in progress", 200
+        return "⚡ OK - Live 30-Coin Market Scan Triggered!", 200
+    return "⚡ OK - Market Scanner Currently Active", 200
 
 TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
 CHAT_ID = "8938527650"
@@ -51,7 +46,7 @@ WATCHLIST = [
 
 ctx = ssl._create_unverified_context()
 
-# Gold-Standard Binance Market Data Fetcher (Eliminates symbol/price glitches)
+# Gold-Standard Binance Market Data Fetcher
 def fetch_klines_binance(symbol, interval_str="15m", limit=100):
     clean_sym = symbol.replace("-", "").upper()
     url = f"https://api.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}"
@@ -60,7 +55,6 @@ def fetch_klines_binance(symbol, interval_str="15m", limit=100):
         raw_candles = json.loads(resp.read().decode('utf-8'))
         formatted = []
         for c in raw_candles:
-            # [open_time, open, high, low, close, volume]
             formatted.append([int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])])
         return formatted
 
@@ -163,7 +157,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
 
     url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
 
-    # Multi-variant solver to handle all CoinDCX API payload specs
     payload_variants = [
         {
             "timestamp": int(round(time.time() * 1000)),
@@ -333,7 +326,6 @@ def run_scan():
                         f"• <b>Quantity:</b> <code>{trade_res.get('quantity')} {clean_symbol[:-4]}</code>"
                     )
                     
-                    # REGISTRATION IN 4-STEP TIMELINE ENGINE
                     with active_trades_lock:
                         ACTIVE_TRADES[symbol] = {
                             'entry_price': cmp,
@@ -370,7 +362,6 @@ def run_scan():
                     save_state(state)
         except Exception: pass
 
-# 4-STEP EXECUTION TIMELINE MANAGER THREAD
 def monitor_active_positions():
     time.sleep(15)
     while True:
@@ -391,18 +382,16 @@ def monitor_active_positions():
                     
                     clean_coin = symbol.split('-')[0].upper()
                     
-                    # STEP 2 & 3: TP1 REACHED -> BOOK 80% PROFIT & SHIFT SL TO ENTRY (RISK-FREE)
                     if cmp >= trade['tp1'] and not trade['tp1_booked']:
                         qty_80 = round(trade['total_qty'] * 0.8, 2 if cmp < 100 else 1)
                         if qty_80 <= 0: qty_80 = trade['total_qty']
                         
-                        # Partial sell 80% on CoinDCX
                         res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=qty_80)
                         if res.get('success'):
                             with active_trades_lock:
                                 trade['tp1_booked'] = True
                                 trade['remaining_qty'] = round(trade['total_qty'] - qty_80, 2)
-                                trade['sl'] = trade['entry_price'] # MOVE SL TO ENTRY PRICE (100% RISK-FREE)
+                                trade['sl'] = trade['entry_price']
                             
                             send_telegram_message(
                                 f"🎯 <b>STEP 2 & 3 EXECUTED: TP1 REACHED!</b>\n\n"
@@ -412,10 +401,8 @@ def monitor_active_positions():
                                 f"🚀 <b>Riding Remaining 20% to TP2 ({trade['tp2']})...</b>"
                             )
 
-                    # STEP 4: RIDE TO TP2 OR EXIT AT BREAKEVEN / STOP LOSS
                     elif trade['tp1_booked']:
                         if cmp >= trade['tp2']:
-                            # Sell remaining 20% on CoinDCX
                             res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=trade['remaining_qty'])
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
@@ -427,7 +414,6 @@ def monitor_active_positions():
                                 f"🏆 <b>Full Target Achieved at CMP:</b> <code>{cmp}</code>"
                             )
                         elif cmp <= trade['sl']:
-                            # Exit remaining 20% at Entry (Breakeven / ₹0 Loss)
                             res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=trade['remaining_qty'])
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
@@ -439,7 +425,6 @@ def monitor_active_positions():
                                 f"✅ <b>Net Trade Profit:</b> <b>80% Cash Locked in Wallet (₹0 Loss)</b>"
                             )
 
-                    # INITIAL STOP LOSS (BEFORE TP1)
                     elif not trade['tp1_booked'] and cmp <= trade['sl']:
                         res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=trade['total_qty'])
                         with active_trades_lock:
