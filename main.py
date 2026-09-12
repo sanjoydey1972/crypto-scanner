@@ -127,43 +127,77 @@ def send_telegram_message(text):
         return False
 
 def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0, leverage=5):
-    # Built-In Key Fallback: Eliminates all Render UI Environment linking issues!
     api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
     secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
     
     if not api_key or not secret_key:
         return {'success': False, 'error': 'CoinDCX API credentials missing.'}
-    try:
-        coin = symbol.split('-')[0].upper()
-        pair_name = f"B-{coin}_USDT"
-        position_value_usdt = (margin_inr * leverage) / 88.5
-        quantity = round(position_value_usdt / cmp, 4 if cmp > 1 else 6)
-        if quantity <= 0: quantity = 1.0
-        timestamp = int(round(time.time() * 1000))
-        body = {
-            "timestamp": timestamp,
+        
+    coin = symbol.split('-')[0].upper()
+    position_value_usdt = (margin_inr * leverage) / 88.5
+    quantity = round(position_value_usdt / cmp, 4 if cmp > 1 else 6)
+    if quantity <= 0: quantity = 1.0
+
+    url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
+
+    # Multi-variant solver to handle all CoinDCX API payload specs
+    payload_variants = [
+        {
+            "timestamp": int(round(time.time() * 1000)),
             "order_type": "market_order",
             "side": side.lower(),
-            "pair": pair_name,
+            "pair": f"B-{coin}_USDT",
+            "total_quantity": quantity,
+            "leverage": leverage,
+            "notification": "no_notification",
+            "margin_currency_short_name": "INR"
+        },
+        {
+            "timestamp": int(round(time.time() * 1000)),
+            "order_type": "market_order",
+            "side": side.lower(),
+            "pair": f"B-{coin}_USDT",
             "total_quantity": quantity,
             "leverage": leverage,
             "notification": "no_notification",
             "margin_currency_short_name": ["INR"]
+        },
+        {
+            "timestamp": int(round(time.time() * 1000)),
+            "order_type": "market",
+            "side": side.lower(),
+            "pair": f"B-{coin}_USDT",
+            "total_quantity": quantity,
+            "leverage": leverage
         }
-        json_body = json.dumps(body, separators=(',', ':'))
-        signature = hmac.new(secret_key.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
-        url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
-        headers = {'Content-Type': 'application/json', 'X-AUTH-APIKEY': api_key, 'X-AUTH-SIGNATURE': signature, 'User-Agent': 'Mozilla/5.0'}
-        req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers, method='POST')
-        with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            order_id = data.get('id', data.get('order_id', 'EXECUTED'))
-            return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': pair_name}
-    except urllib.error.HTTPError as e:
-        err_msg = e.read().decode('utf-8') if e.fp else str(e)
-        return {'success': False, 'error': f"HTTP {e.code}: {err_msg}"}
-    except Exception as e:
-        return {'success': False, 'error': str(e)}
+    ]
+
+    last_err = ""
+    for body in payload_variants:
+        try:
+            json_body = json.dumps(body, separators=(',', ':'))
+            signature = hmac.new(secret_key.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
+            headers = {
+                'Content-Type': 'application/json',
+                'X-AUTH-APIKEY': api_key,
+                'X-AUTH-SIGNATURE': signature,
+                'User-Agent': 'Mozilla/5.0'
+            }
+            req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers, method='POST')
+            with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                order_id = data.get('id', data.get('order_id', 'EXECUTED'))
+                print(f"✅ CoinDCX Futures Order Executed! Pair: {body['pair']} | Qty: {quantity} | OrderID: {order_id}")
+                return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': body['pair']}
+        except urllib.error.HTTPError as e:
+            err_msg = e.read().decode('utf-8') if e.fp else str(e)
+            last_err = f"HTTP {e.code}: {err_msg}"
+            continue
+        except Exception as e:
+            last_err = str(e)
+            continue
+
+    return {'success': False, 'error': last_err}
 
 def load_state():
     if os.path.exists(STATE_FILE):
