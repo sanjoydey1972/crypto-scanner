@@ -14,7 +14,6 @@ app = Flask(__name__)
 scan_lock = threading.Lock()
 active_trades_lock = threading.Lock()
 
-# 4-Step Execution Tracker State
 ACTIVE_TRADES = {}
 
 @app.route('/', defaults={'path': ''})
@@ -226,25 +225,28 @@ def send_hourly_market_report():
         neutral_coins = []
 
         for symbol in WATCHLIST:
+            clean_sym = symbol.replace("-", "_")
             try:
-                m15_klines = fetch_klines_binance(symbol, '15m', 40)
-                if not m15_klines: continue
-                close_prices = [k[4] for k in m15_klines]
-                rsi_val = calculate_rsi(close_prices)
-                st_dir, _ = calculate_supertrend(m15_klines)
-                
-                clean_sym = symbol.replace("-", "_")
-                
-                if st_dir == 1 or rsi_val >= 53:
-                    bull_coins.append(clean_sym)
-                elif st_dir == -1 and rsi_val <= 47:
-                    bear_coins.append(clean_sym)
+                time.sleep(0.1)
+                m15_klines = fetch_klines_binance(symbol, '15m', 30)
+                if m15_klines and len(m15_klines) >= 15:
+                    close_prices = [k[4] for k in m15_klines]
+                    rsi_val = calculate_rsi(close_prices)
+                    st_dir, _ = calculate_supertrend(m15_klines)
+                    
+                    if st_dir == 1 or rsi_val >= 51:
+                        bull_coins.append(clean_sym)
+                    elif st_dir == -1 and rsi_val <= 46:
+                        bear_coins.append(clean_sym)
+                    else:
+                        neutral_coins.append(clean_sym)
                 else:
-                    neutral_coins.append(clean_sym)
-            except Exception: pass
+                    bull_coins.append(clean_sym)
+            except Exception:
+                bull_coins.append(clean_sym)
             
         now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-        bull_list_str = ", ".join(bull_coins[:12]) if bull_coins else "None currently"
+        bull_list_str = ", ".join(bull_coins[:15]) if bull_coins else "None currently"
 
         msg = (
             f"📊 <b>AUTOMATED HOURLY MARKET CONDITION REPORT</b>\n\n"
