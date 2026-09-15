@@ -218,44 +218,45 @@ def fetch_live_btc_price():
 
 def send_hourly_market_report():
     try:
-        btc_cmp = fetch_live_btc_price()
-        candidates = []
+        btc_usd = fetch_live_btc_price()
+        btc_inrm_price = btc_usd * 1.2889
+        
+        bull_coins = []
+        bear_coins = []
+        neutral_coins = []
+
         for symbol in WATCHLIST:
             try:
-                m15_klines = fetch_klines_binance(symbol, '15m', 50)
+                m15_klines = fetch_klines_binance(symbol, '15m', 40)
                 if not m15_klines: continue
-                cmp = m15_klines[-1][4]
                 close_prices = [k[4] for k in m15_klines]
                 rsi_val = calculate_rsi(close_prices)
-                vol_spike = calculate_volume_spike(m15_klines)
                 st_dir, _ = calculate_supertrend(m15_klines)
                 
-                score = 50
-                if 50 <= rsi_val <= 70: score += 20
-                elif rsi_val > 70: score += 10
-                if vol_spike >= 2.0: score += 20
-                elif vol_spike >= 1.5: score += 10
-                score = max(0, min(100, score))
+                clean_sym = symbol.replace("-", "_")
                 
-                if st_dir == 1 and score >= 60:
-                    candidates.append((symbol, score, cmp, rsi_val, vol_spike))
+                if st_dir == 1 or rsi_val >= 53:
+                    bull_coins.append(clean_sym)
+                elif st_dir == -1 and rsi_val <= 47:
+                    bear_coins.append(clean_sym)
+                else:
+                    neutral_coins.append(clean_sym)
             except Exception: pass
-        
-        candidates.sort(key=lambda x: x[1], reverse=True)
-        top_candidates_str = ""
-        for cand in candidates[:5]:
-            clean_sym = cand[0].replace("-", "")
-            top_candidates_str += f"\n• <b>{clean_sym}:</b> Score <code>{cand[1]}/100</code> | CMP: <code>${cand[2]}</code>"
             
         now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+        bull_list_str = ", ".join(bull_coins[:12]) if bull_coins else "None currently"
+
         msg = (
             f"📊 <b>AUTOMATED HOURLY MARKET CONDITION REPORT</b>\n\n"
             f"⏰ <b>Time:</b> {now_str}\n"
             f"✅ <b>Render Cloud Status:</b> 100% ONLINE (24/7 Active)\n\n"
             f"🔍 <b>Market Overview (30 CoinDCX Futures Symbols):</b>\n"
-            f"• <b>BTC Current Price:</b> <code>${btc_cmp}</code>\n"
-            f"• <b>Bull Run Candidates:</b> <code>{len(candidates)} coins</code>\n\n"
-            f"🔥 <b>Top Confluence Candidates:</b>{top_candidates_str}\n\n"
+            f"• <b>BTC Current Price:</b> <code>${btc_inrm_price:,.1f}</code>\n"
+            f"🟢 <b>In Bull Run:</b> <code>{len(bull_coins)} coins</code>\n"
+            f"🔴 <b>In Bear Run:</b> <code>{len(bear_coins)} coins</code>\n"
+            f"⚪ <b>Unconfirmed / Consolidation:</b> <code>{len(neutral_coins)} coins</code>\n\n"
+            f"🔥 <b>Bull Run Candidates:</b>\n"
+            f"{bull_list_str}\n\n"
             f"🚀 <i>Automated 1-Hour Market Report from Render Cloud Bot</i>"
         )
         send_telegram_message(msg)
