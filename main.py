@@ -34,7 +34,6 @@ TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
 CHAT_ID = "8938527650"
 STATE_FILE = "scanner_state.json"
 
-# Strict watchlist of top liquid coins verified to exist on CoinDCX Futures
 WATCHLIST = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AVAX-USDT', 'DOGE-USDT', 
     'XRP-USDT', 'ADA-USDT', 'LINK-USDT', 'NEAR-USDT', 'BCH-USDT', 
@@ -46,7 +45,6 @@ WATCHLIST = [
 
 ctx = ssl._create_unverified_context()
 
-# Gold-Standard Binance Market Data Fetcher
 def fetch_klines_binance(symbol, interval_str="15m", limit=100):
     clean_sym = symbol.replace("-", "").upper()
     url = f"https://api.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}"
@@ -140,19 +138,12 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
         position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
         raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
         
-        # Precise decimal lot size formatting for CoinDCX API
-        if coin == 'BTC':
-            quantity = round(raw_qty, 3)
-        elif coin == 'ETH':
-            quantity = round(raw_qty, 2)
-        elif raw_qty >= 100:
-            quantity = float(int(round(raw_qty)))
-        elif raw_qty >= 10:
-            quantity = round(raw_qty, 1)
-        elif raw_qty >= 1:
-            quantity = round(raw_qty, 2)
-        else:
-            quantity = round(raw_qty, 4)
+        if coin == 'BTC': quantity = round(raw_qty, 3)
+        elif coin == 'ETH': quantity = round(raw_qty, 2)
+        elif raw_qty >= 100: quantity = float(int(round(raw_qty)))
+        elif raw_qty >= 10: quantity = round(raw_qty, 1)
+        elif raw_qty >= 1: quantity = round(raw_qty, 2)
+        else: quantity = round(raw_qty, 4)
     if quantity <= 0: quantity = 1.0
 
     url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
@@ -176,26 +167,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
             "total_quantity": quantity,
             "leverage": leverage,
             "notification": "no_notification"
-        },
-        {
-            "timestamp": int(round(time.time() * 1000)),
-            "order_type": "market_order",
-            "price": cmp,
-            "side": side.lower(),
-            "pair": f"B-{coin}_USDT",
-            "total_quantity": quantity,
-            "leverage": leverage,
-            "notification": "no_notification",
-            "margin_currency_short_name": "INR"
-        },
-        {
-            "timestamp": int(round(time.time() * 1000)),
-            "order_type": "market",
-            "side": side.lower(),
-            "pair": f"B-{coin}_USDT",
-            "total_quantity": quantity,
-            "leverage": leverage,
-            "margin_currency_short_name": "INR"
         }
     ]
 
@@ -214,20 +185,9 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
             with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 order_id = "EXECUTED"
-                if isinstance(data, dict):
-                    order_id = data.get('id', data.get('order_id', 'EXECUTED'))
-                elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
-                    order_id = data[0].get('id', 'EXECUTED')
-                print(f"✅ CoinDCX Futures Order Executed! Pair: {body['pair']} | Side: {side} | Qty: {quantity} | OrderID: {order_id}")
+                if isinstance(data, dict): order_id = data.get('id', data.get('order_id', 'EXECUTED'))
+                elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict): order_id = data[0].get('id', 'EXECUTED')
                 return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': body['pair']}
-        except urllib.error.HTTPError as e:
-            try:
-                err_bytes = e.read()
-                raw_err = err_bytes.decode('utf-8') if err_bytes else str(e)
-            except Exception:
-                raw_err = str(e)
-            last_err = f"HTTP {e.code}: {raw_err}"
-            continue
         except Exception as e:
             last_err = str(e)
             continue
@@ -254,7 +214,53 @@ def fetch_live_btc_price():
             data = json.loads(resp.read().decode('utf-8'))
             if 'price' in data: return float(data['price'])
     except Exception: pass
-    return 78721.5
+    return 60080.0
+
+def send_hourly_market_report():
+    try:
+        btc_cmp = fetch_live_btc_price()
+        candidates = []
+        for symbol in WATCHLIST:
+            try:
+                m15_klines = fetch_klines_binance(symbol, '15m', 50)
+                if not m15_klines: continue
+                cmp = m15_klines[-1][4]
+                close_prices = [k[4] for k in m15_klines]
+                rsi_val = calculate_rsi(close_prices)
+                vol_spike = calculate_volume_spike(m15_klines)
+                st_dir, _ = calculate_supertrend(m15_klines)
+                
+                score = 50
+                if 50 <= rsi_val <= 70: score += 20
+                elif rsi_val > 70: score += 10
+                if vol_spike >= 2.0: score += 20
+                elif vol_spike >= 1.5: score += 10
+                score = max(0, min(100, score))
+                
+                if st_dir == 1 and score >= 60:
+                    candidates.append((symbol, score, cmp, rsi_val, vol_spike))
+            except Exception: pass
+        
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        top_candidates_str = ""
+        for cand in candidates[:5]:
+            clean_sym = cand[0].replace("-", "")
+            top_candidates_str += f"\n• <b>{clean_sym}:</b> Score <code>{cand[1]}/100</code> | CMP: <code>${cand[2]}</code>"
+            
+        now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+        msg = (
+            f"📊 <b>AUTOMATED HOURLY MARKET CONDITION REPORT</b>\n\n"
+            f"⏰ <b>Time:</b> {now_str}\n"
+            f"✅ <b>Render Cloud Status:</b> 100% ONLINE (24/7 Active)\n\n"
+            f"🔍 <b>Market Overview (30 CoinDCX Futures Symbols):</b>\n"
+            f"• <b>BTC Current Price:</b> <code>${btc_cmp}</code>\n"
+            f"• <b>Bull Run Candidates:</b> <code>{len(candidates)} coins</code>\n\n"
+            f"🔥 <b>Top Confluence Candidates:</b>{top_candidates_str}\n\n"
+            f"🚀 <i>Automated 1-Hour Market Report from Render Cloud Bot</i>"
+        )
+        send_telegram_message(msg)
+    except Exception as e:
+        print(f"Hourly report error: {e}")
 
 def run_scan():
     state = load_state()
@@ -316,7 +322,6 @@ def run_scan():
                 
                 lev_num = 10 if clean_symbol in ['SOLUSDT', 'AVAXUSDT', 'BTCUSDT', 'ETHUSDT'] else (7 if score >= 90 else 5)
                 
-                # STEP 1: EXECUTE COINDCX FUTURES ENTRY TRADE
                 trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=500.0, leverage=lev_num)
                 
                 if trade_res.get('success'):
@@ -453,11 +458,24 @@ def start_background_loop():
                 print(f"Scan loop exception: {e}")
             time.sleep(300)
 
+    def run_hourly_report_loop():
+        time.sleep(10)
+        send_hourly_market_report()
+        while True:
+            try:
+                time.sleep(3600)
+                send_hourly_market_report()
+            except Exception as e:
+                print(f"Hourly loop exception: {e}")
+
     t1 = threading.Thread(target=run_loop, daemon=True)
     t1.start()
     
     t2 = threading.Thread(target=monitor_active_positions, daemon=True)
     t2.start()
+
+    t3 = threading.Thread(target=run_hourly_report_loop, daemon=True)
+    t3.start()
 
 start_background_loop()
 
