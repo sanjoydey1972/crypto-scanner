@@ -219,7 +219,21 @@ def fetch_live_btc_price():
     return 60080.0
 
 def fetch_coindcx_btc_inrm_price():
-    # Direct CoinDCX ticker (works if non-blocked IP)
+    # Tier 1: Direct Official CoinDCX Public Market Data API (B-BTC_USDT Futures)
+    try:
+        url = "https://public.coindcx.com/market_data/candles/?pair=B-BTC_USDT&interval=1m"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            if isinstance(data, list) and len(data) > 0:
+                # Get latest 1m candle close price from CoinDCX public feed
+                close_price = float(data[0].get('close', 0) or data[-1].get('close', 0))
+                if close_price > 0:
+                    return round(close_price, 1)
+    except Exception as e:
+        print(f"CoinDCX public fetch error: {e}")
+
+    # Tier 2: Direct CoinDCX ticker for BTCINR spot / 102.0
     try:
         url = "https://api.coindcx.com/exchange/ticker"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -232,8 +246,7 @@ def fetch_coindcx_btc_inrm_price():
                         return float(btcinr) / 102.0
     except Exception: pass
 
-    # Precision CoinDCX INR-M Index Formula from Live Binance Feed
-    # CoinDCX INR-M Price = Binance BTC USD * 1.3136 (Exact CoinDCX UI Match: $76,005)
+    # Tier 3: Live Binance BTC USD * 1.3136 Fallback Ratio
     btc_usd = fetch_live_btc_price()
     return round(btc_usd * 1.3136, 1)
 
