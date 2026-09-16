@@ -231,9 +231,22 @@ def fetch_coindcx_btc_inrm_price():
                         return btcinr / 102.0
     except Exception as e:
         print(f"CoinDCX price fetch error: {e}")
-    # Fallback to Binance * live factor if CoinDCX ticker fails
+    
+    # Secondary direct CoinDCX futures instrument fallback if ticker fails
+    try:
+        url = "https://api.coindcx.com/exchange/v1/derivatives/futures/data/active_instruments"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            for inst in data:
+                if inst.get('pair') == 'B-BTC_USDT' or inst.get('symbol') == 'B-BTC_USDT':
+                    last_p = float(inst.get('last_price', 0) or inst.get('mark_price', 0))
+                    if last_p > 0: return last_p
+    except Exception: pass
+
+    # Emergency fallback
     btc_usd = fetch_live_btc_price()
-    return btc_usd * 1.2723
+    return btc_usd * 1.3195
 
 def send_hourly_market_report():
     try:
