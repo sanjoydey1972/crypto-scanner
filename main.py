@@ -218,10 +218,26 @@ def fetch_live_btc_price():
     except Exception: pass
     return 60080.0
 
+def fetch_coindcx_btc_inrm_price():
+    try:
+        url = "https://api.coindcx.com/exchange/ticker"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            tickers = json.loads(resp.read().decode('utf-8'))
+            for t in tickers:
+                if t.get('market') == 'BTCINR':
+                    btcinr = float(t.get('last_price', 0))
+                    if btcinr > 0:
+                        return btcinr / 102.0
+    except Exception as e:
+        print(f"CoinDCX price fetch error: {e}")
+    # Fallback to Binance * live factor if CoinDCX ticker fails
+    btc_usd = fetch_live_btc_price()
+    return btc_usd * 1.2723
+
 def send_hourly_market_report():
     try:
-        btc_usd = fetch_live_btc_price()
-        btc_inrm_price = btc_usd * 1.2800
+        btc_inrm_price = fetch_coindcx_btc_inrm_price()
         
         bull_coins = []
         bear_coins = []
