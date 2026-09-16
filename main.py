@@ -14,6 +14,7 @@ app = Flask(__name__)
 scan_lock = threading.Lock()
 active_trades_lock = threading.Lock()
 
+# 4-Step Execution Tracker State
 ACTIVE_TRADES = {}
 
 @app.route('/', defaults={'path': ''})
@@ -33,6 +34,7 @@ TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
 CHAT_ID = "8938527650"
 STATE_FILE = "scanner_state.json"
 
+# Strict watchlist of top liquid coins verified to exist on CoinDCX Futures
 WATCHLIST = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AVAX-USDT', 'DOGE-USDT', 
     'XRP-USDT', 'ADA-USDT', 'LINK-USDT', 'NEAR-USDT', 'BCH-USDT', 
@@ -44,6 +46,7 @@ WATCHLIST = [
 
 ctx = ssl._create_unverified_context()
 
+# Gold-Standard Binance Market Data Fetcher
 def fetch_klines_binance(symbol, interval_str="15m", limit=100):
     clean_sym = symbol.replace("-", "").upper()
     url = f"https://api.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}"
@@ -218,7 +221,7 @@ def fetch_live_btc_price():
 def send_hourly_market_report():
     try:
         btc_usd = fetch_live_btc_price()
-        btc_inrm_price = btc_usd * 1.2889
+        btc_inrm_price = btc_usd * 1.2800
         
         bull_coins = []
         bear_coins = []
