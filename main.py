@@ -27,7 +27,7 @@ def catch_all(path):
             finally:
                 scan_lock.release()
         threading.Thread(target=async_scan, daemon=True).start()
-        return "⚡ OK - Live 30-Coin Market Scan Triggered!", 200
+        return "⚡ OK - Live 40-Coin Market Scan Triggered!", 200
     return "⚡ OK - Market Scanner Currently Active", 200
 
 TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
@@ -41,7 +41,9 @@ WATCHLIST = [
     'SUI-USDT', 'LTC-USDT', 'DOT-USDT', 'PEPE-USDT', 'OP-USDT', 
     'ARB-USDT', 'APT-USDT', 'RENDER-USDT', 'INJ-USDT', 'FET-USDT', 
     'TIA-USDT', 'WIF-USDT', 'SHIB-USDT', 'FLOKI-USDT', 'AAVE-USDT',
-    'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 'ICP-USDT', 'SAND-USDT'
+    'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 'ICP-USDT', 'SAND-USDT',
+    'SEI-USDT', 'ORDI-USDT', 'TON-USDT', 'JUP-USDT', 'BONK-USDT',
+    'STX-USDT', 'PENDLE-USDT', 'RUNE-USDT', 'IMX-USDT', 'KAS-USDT'
 ]
 
 ctx = ssl._create_unverified_context()
@@ -286,7 +288,7 @@ def send_hourly_market_report():
             f"📊 <b>AUTOMATED HOURLY MARKET CONDITION REPORT</b>\n\n"
             f"⏰ <b>Time:</b> {now_str}\n"
             f"✅ <b>Render Cloud Status:</b> 100% ONLINE (24/7 Active)\n\n"
-            f"🔍 <b>Market Overview (30 CoinDCX Futures Symbols):</b>\n"
+            f"🔍 <b>Market Overview (40 CoinDCX Futures Symbols):</b>\n"
             f"• <b>BTC Current Price:</b> <code>${btc_inrm_price:,.1f}</code>\n"
             f"🟢 <b>In Bull Run:</b> <code>{len(bull_coins)} coins</code>\n"
             f"🔴 <b>In Bear Run:</b> <code>{len(bear_coins)} coins</code>\n"
@@ -520,4 +522,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     print(f"Starting server on port {port}...")
     app.run(host="0.0.0.0", port=port)
-    
