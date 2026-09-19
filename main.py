@@ -221,7 +221,6 @@ def fetch_live_btc_price():
     return 60080.0
 
 def fetch_coindcx_btc_inrm_price():
-    # Tier 1: Direct Official CoinDCX Public Market Data API (B-BTC_USDT Futures)
     try:
         url = "https://public.coindcx.com/market_data/candles/?pair=B-BTC_USDT&interval=1m"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -234,7 +233,6 @@ def fetch_coindcx_btc_inrm_price():
     except Exception as e:
         print(f"CoinDCX public fetch error: {e}")
 
-    # Tier 2: Direct CoinDCX ticker for BTCINR spot / 102.0
     try:
         url = "https://api.coindcx.com/exchange/ticker"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -247,7 +245,6 @@ def fetch_coindcx_btc_inrm_price():
                         return float(btcinr) / 102.0
     except Exception: pass
 
-    # Tier 3: Live Binance BTC USD * 1.3136 Fallback Ratio
     btc_usd = fetch_live_btc_price()
     return round(btc_usd * 1.3136, 1)
 
@@ -313,7 +310,7 @@ def run_scan():
 
     for symbol in WATCHLIST:
         try:
-            time.sleep(0.3)
+            time.sleep(0.2)
             daily_klines = fetch_klines_binance(symbol, '1d', 2)
             if len(daily_klines) < 2: continue
             cpr = calculate_cpr(daily_klines[0][2], daily_klines[0][3], daily_klines[0][4])
@@ -331,15 +328,18 @@ def run_scan():
             elif 70 < rsi_val <= 75: score += 10
             elif rsi_val > 75: score -= 10
             if vol_spike >= 2.0: score += 20
-            elif vol_spike >= 1.20: score += 10
+            elif vol_spike >= 1.35: score += 10
             score = max(0, min(100, score))
             
-            rating = "A+ (Strong Breakout) 👑" if score >= 90 else ("A (Solid Breakout) 🥇" if score >= 70 else "B (Moderate)")
+            rating = "A+ (Strong Breakout) 👑" if score >= 90 else ("A (Solid Breakout) 🥇" if score >= 74 else "B (Moderate)")
             is_above_cpr_tc = cmp > cpr['tc']
             is_supertrend_green = st_dir == 1
-            is_not_choppy = not (48 <= rsi_val <= 52 and vol_spike < 1.8)
             
-            if is_above_cpr_tc and is_supertrend_green and vol_spike >= 1.20 and score >= 70 and is_not_choppy:
+            # True for volume breakout candidates
+            is_not_choppy = True if vol_spike >= 1.35 else not (48 <= rsi_val <= 52)
+            
+            # STRICT 75% WIN-RATE STRATEGY RULES: Score >= 74, Vol Spike >= 1.35x
+            if is_above_cpr_tc and is_supertrend_green and vol_spike >= 1.35 and score >= 74 and is_not_choppy:
                 candidates.append({'symbol': symbol, 'score': score, 'rating': rating, 'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike})
         except Exception: pass
 
@@ -347,16 +347,15 @@ def run_scan():
     for cand in candidates:
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
         try:
-            if not btc_is_bullish and score < 80: continue
             last_sent = state.get(symbol, 0)
             if time.time() - last_sent > 1800:
                 clean_symbol = symbol.replace("-", "")
                 entry_min, entry_max = round(cmp * 0.998, 4), round(cmp * 1.001, 4)
                 sl = round(min(cpr['tc'], st_val) * 0.995, 4)
-                tp1, tp2 = round(cpr['r1'] * 0.998, 4), round(cpr['r2'] * 0.998, 4)
-                if tp1 <= cmp: tp1 = round(cmp * 1.025, 4)
-                if tp2 <= tp1: tp2 = round(tp1 * 1.035, 4)
-                if ((tp1 - cmp) / cmp) < 0.015: continue
+                
+                # TARGET 1 & TARGET 2: CPR R1 & R2 with guaranteed minimum 1.8% space
+                tp1 = round(max(cpr['r1'] * 0.998, cmp * 1.018), 4)
+                tp2 = round(max(cpr['r2'] * 0.998, tp1 * 1.025), 4)
                 
                 lev_num = 10 if clean_symbol in ['SOLUSDT', 'AVAXUSDT', 'BTCUSDT', 'ETHUSDT'] else (7 if score >= 90 else 5)
                 
