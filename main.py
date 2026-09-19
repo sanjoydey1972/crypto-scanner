@@ -34,6 +34,7 @@ def catch_all(path):
 @app.route('/test-trade')
 def test_trade_endpoint():
     try:
+        # Use margin_inr=500 for test trade on CoinDCX INR-M Futures
         res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=135.0, margin_inr=500.0, leverage=10)
         msg = (
             f"🧪 <b>SYSTEM DIAGNOSTIC TEST ALERT</b>\n\n"
@@ -164,14 +165,26 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
         elif raw_qty >= 10: quantity = round(raw_qty, 1)
         elif raw_qty >= 1: quantity = round(raw_qty, 2)
         else: quantity = round(raw_qty, 4)
-    if quantity <= 0: quantity = 1.0
+    if quantity <= 0: quantity = 0.1
 
     futures_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
     spot_url = "https://api.coindcx.com/exchange/v1/orders/create"
     ts = int(round(time.time() * 1000))
 
+    # Variant 1 is for CoinDCX INR-M Futures (Matches ₹3,009.97 INR Futures Wallet balance!)
+    # Variant 2 is for CoinDCX USDT-M Futures (B-COIN_USDT)
     endpoint_variants = [
-        # Variant 1: Nested Order, pair B-COIN_USDT, market_order
+        (futures_url, {
+            "timestamp": ts,
+            "order": {
+                "side": side.lower(),
+                "pair": f"I-{coin}_INR",
+                "order_type": "market_order",
+                "total_quantity": quantity,
+                "leverage": leverage,
+                "notification": "no_notification"
+            }
+        }),
         (futures_url, {
             "timestamp": ts,
             "order": {
@@ -183,55 +196,11 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
                 "notification": "no_notification"
             }
         }),
-        # Variant 2: Nested Order, pair B-COINUSDT, market_order
-        (futures_url, {
-            "timestamp": ts,
-            "order": {
-                "side": side.lower(),
-                "pair": f"B-{coin}USDT",
-                "order_type": "market_order",
-                "total_quantity": quantity,
-                "leverage": leverage,
-                "notification": "no_notification"
-            }
-        }),
-        # Variant 3: Nested Order, pair COINUSDT, market_order
-        (futures_url, {
-            "timestamp": ts,
-            "order": {
-                "side": side.lower(),
-                "pair": f"{coin}USDT",
-                "order_type": "market_order",
-                "total_quantity": quantity,
-                "leverage": leverage,
-                "notification": "no_notification"
-            }
-        }),
-        # Variant 4: Flat Order structure, B-COIN_USDT
-        (futures_url, {
-            "timestamp": ts,
-            "side": side.lower(),
-            "pair": f"B-{coin}_USDT",
-            "order_type": "market_order",
-            "total_quantity": quantity,
-            "leverage": leverage,
-            "notification": "no_notification"
-        }),
-        # Variant 5: Flat Order structure, order_type market
-        (futures_url, {
-            "timestamp": ts,
-            "side": side.lower(),
-            "pair": f"B-{coin}_USDT",
-            "order_type": "market",
-            "total_quantity": quantity,
-            "leverage": leverage
-        }),
-        # Variant 6: Fallback Spot/Margin API endpoint
         (spot_url, {
             "timestamp": ts,
             "side": side.lower(),
             "order_type": "market_order",
-            "market": f"{coin}USDT",
+            "market": f"{coin}INR",
             "total_quantity": quantity,
             "leverage": leverage
         })
@@ -254,7 +223,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
                 order_id = "EXECUTED"
                 if isinstance(data, dict): order_id = data.get('id', data.get('order_id', 'EXECUTED'))
                 elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict): order_id = data[0].get('id', 'EXECUTED')
-                return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': body.get('pair', body.get('market', f"B-{coin}_USDT"))}
+                return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': body.get('pair', body.get('market', f"I-{coin}_INR"))}
         except urllib.error.HTTPError as e:
             try:
                 err_text = e.read().decode('utf-8')
