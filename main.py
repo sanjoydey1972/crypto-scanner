@@ -349,7 +349,7 @@ def run_scan():
         try:
             if not btc_is_bullish and score < 90: continue
             last_sent = state.get(symbol, 0)
-            if time.time() - last_sent > 21600:
+            if time.time() - last_sent > 1800:
                 clean_symbol = symbol.replace("-", "")
                 entry_min, entry_max = round(cmp * 0.998, 4), round(cmp * 1.001, 4)
                 sl = round(min(cpr['tc'], st_val) * 0.995, 4)
