@@ -1,5 +1,6 @@
 import urllib.request
 import urllib.parse
+import urllib.error
 import json
 import ssl
 import os
@@ -168,7 +169,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
     url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
 
     payload_variants = [
-        # Official CoinDCX Nested Order Wrapper (Required by CoinDCX API)
+        # Variant 1: Official Nested Order object with timestamp
         {
             "timestamp": int(round(time.time() * 1000)),
             "order": {
@@ -180,19 +181,20 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
                 "notification": "no_notification"
             }
         },
+        # Variant 2: Nested Order with price specified
         {
             "timestamp": int(round(time.time() * 1000)),
             "order": {
                 "side": side.lower(),
                 "pair": f"B-{coin}_USDT",
                 "order_type": "market_order",
+                "price": str(cmp),
                 "total_quantity": quantity,
                 "leverage": leverage,
-                "notification": "no_notification",
-                "margin_currency_short_name": "INR"
+                "notification": "no_notification"
             }
         },
-        # Flat fallback variant
+        # Variant 3: Flat structure
         {
             "timestamp": int(round(time.time() * 1000)),
             "side": side.lower(),
@@ -221,7 +223,14 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
                 order_id = "EXECUTED"
                 if isinstance(data, dict): order_id = data.get('id', data.get('order_id', 'EXECUTED'))
                 elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict): order_id = data[0].get('id', 'EXECUTED')
-                return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': body['pair']}
+                return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': f"B-{coin}_USDT"}
+        except urllib.error.HTTPError as e:
+            try:
+                err_text = e.read().decode('utf-8')
+                last_err = f"HTTP {e.code}: {err_text}"
+            except Exception:
+                last_err = str(e)
+            continue
         except Exception as e:
             last_err = str(e)
             continue
