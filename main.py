@@ -30,6 +30,21 @@ def catch_all(path):
         return "⚡ OK - Live 40-Coin Market Scan Triggered!", 200
     return "⚡ OK - Market Scanner Currently Active", 200
 
+@app.route('/test-trade')
+def test_trade_endpoint():
+    try:
+        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=112.5, margin_inr=500.0, leverage=10)
+        msg = (
+            f"🧪 <b>SYSTEM DIAGNOSTIC TEST ALERT</b>\n\n"
+            f"• <b>Render Cloud Bot:</b> 100% CONNECTED\n"
+            f"• <b>CoinDCX Execution Test:</b> <code>{res}</code>\n"
+            f"• <b>Timestamp:</b> {datetime.now().strftime('%d-%m-%Y %H:%M:%S')}"
+        )
+        send_telegram_message(msg)
+        return f"<h3>🧪 Diagnostic Test Result:</h3><pre>{json.dumps(res, indent=2)}</pre><p>Check Telegram @CRYPTOCREEN_BOT for alert!</p>", 200
+    except Exception as e:
+        return f"<h3>⚠️ Diagnostic Error:</h3><p>{e}</p>", 500
+
 TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
 CHAT_ID = "8938527650"
 STATE_FILE = "scanner_state.json"
