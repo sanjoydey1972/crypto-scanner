@@ -168,21 +168,36 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
     url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
 
     payload_variants = [
+        # Official CoinDCX Nested Order Wrapper (Required by CoinDCX API)
         {
             "timestamp": int(round(time.time() * 1000)),
-            "order_type": "market_order",
-            "side": side.lower(),
-            "pair": f"B-{coin}_USDT",
-            "total_quantity": quantity,
-            "leverage": leverage,
-            "notification": "no_notification",
-            "margin_currency_short_name": "INR"
+            "order": {
+                "side": side.lower(),
+                "pair": f"B-{coin}_USDT",
+                "order_type": "market_order",
+                "total_quantity": quantity,
+                "leverage": leverage,
+                "notification": "no_notification"
+            }
         },
         {
             "timestamp": int(round(time.time() * 1000)),
-            "order_type": "market_order",
+            "order": {
+                "side": side.lower(),
+                "pair": f"B-{coin}_USDT",
+                "order_type": "market_order",
+                "total_quantity": quantity,
+                "leverage": leverage,
+                "notification": "no_notification",
+                "margin_currency_short_name": "INR"
+            }
+        },
+        # Flat fallback variant
+        {
+            "timestamp": int(round(time.time() * 1000)),
             "side": side.lower(),
             "pair": f"B-{coin}_USDT",
+            "order_type": "market_order",
             "total_quantity": quantity,
             "leverage": leverage,
             "notification": "no_notification"
