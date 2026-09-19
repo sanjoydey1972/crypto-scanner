@@ -347,7 +347,7 @@ def run_scan():
     for cand in candidates:
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
         try:
-            if not btc_is_bullish and score < 90: continue
+            if not btc_is_bullish and score < 80: continue
             last_sent = state.get(symbol, 0)
             if time.time() - last_sent > 1800:
                 clean_symbol = symbol.replace("-", "")
