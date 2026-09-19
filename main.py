@@ -331,15 +331,15 @@ def run_scan():
             elif 70 < rsi_val <= 75: score += 10
             elif rsi_val > 75: score -= 10
             if vol_spike >= 2.0: score += 20
-            elif vol_spike >= 1.35: score += 10
+            elif vol_spike >= 1.20: score += 10
             score = max(0, min(100, score))
             
-            rating = "A+ (Strong Breakout) 👑" if score >= 90 else ("A (Solid Breakout) 🥇" if score >= 74 else "B (Moderate)")
+            rating = "A+ (Strong Breakout) 👑" if score >= 90 else ("A (Solid Breakout) 🥇" if score >= 70 else "B (Moderate)")
             is_above_cpr_tc = cmp > cpr['tc']
             is_supertrend_green = st_dir == 1
             is_not_choppy = not (48 <= rsi_val <= 52 and vol_spike < 1.8)
             
-            if is_above_cpr_tc and is_supertrend_green and vol_spike >= 1.20 and score >= 74 and is_not_choppy:
+            if is_above_cpr_tc and is_supertrend_green and vol_spike >= 1.20 and score >= 70 and is_not_choppy:
                 candidates.append({'symbol': symbol, 'score': score, 'rating': rating, 'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike})
         except Exception: pass
 
