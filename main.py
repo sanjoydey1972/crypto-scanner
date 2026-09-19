@@ -34,7 +34,7 @@ def catch_all(path):
 @app.route('/test-trade')
 def test_trade_endpoint():
     try:
-        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=112.5, margin_inr=500.0, leverage=10)
+        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=135.0, margin_inr=500.0, leverage=10)
         msg = (
             f"🧪 <b>SYSTEM DIAGNOSTIC TEST ALERT</b>\n\n"
             f"• <b>Render Cloud Bot:</b> 100% CONNECTED\n"
@@ -159,19 +159,21 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
         raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
         
         if coin == 'BTC': quantity = round(raw_qty, 3)
-        elif coin == 'ETH': quantity = round(raw_qty, 2)
+        elif coin in ['ETH', 'SOL']: quantity = round(raw_qty, 2)
         elif raw_qty >= 100: quantity = float(int(round(raw_qty)))
         elif raw_qty >= 10: quantity = round(raw_qty, 1)
         elif raw_qty >= 1: quantity = round(raw_qty, 2)
         else: quantity = round(raw_qty, 4)
     if quantity <= 0: quantity = 1.0
 
-    url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
+    futures_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
+    spot_url = "https://api.coindcx.com/exchange/v1/orders/create"
+    ts = int(round(time.time() * 1000))
 
-    payload_variants = [
-        # Variant 1: Official Nested Order object with timestamp
-        {
-            "timestamp": int(round(time.time() * 1000)),
+    endpoint_variants = [
+        # Variant 1: Nested Order, pair B-COIN_USDT, market_order
+        (futures_url, {
+            "timestamp": ts,
             "order": {
                 "side": side.lower(),
                 "pair": f"B-{coin}_USDT",
@@ -180,34 +182,63 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
                 "leverage": leverage,
                 "notification": "no_notification"
             }
-        },
-        # Variant 2: Nested Order with price specified
-        {
-            "timestamp": int(round(time.time() * 1000)),
+        }),
+        # Variant 2: Nested Order, pair B-COINUSDT, market_order
+        (futures_url, {
+            "timestamp": ts,
             "order": {
                 "side": side.lower(),
-                "pair": f"B-{coin}_USDT",
+                "pair": f"B-{coin}USDT",
                 "order_type": "market_order",
-                "price": str(cmp),
                 "total_quantity": quantity,
                 "leverage": leverage,
                 "notification": "no_notification"
             }
-        },
-        # Variant 3: Flat structure
-        {
-            "timestamp": int(round(time.time() * 1000)),
+        }),
+        # Variant 3: Nested Order, pair COINUSDT, market_order
+        (futures_url, {
+            "timestamp": ts,
+            "order": {
+                "side": side.lower(),
+                "pair": f"{coin}USDT",
+                "order_type": "market_order",
+                "total_quantity": quantity,
+                "leverage": leverage,
+                "notification": "no_notification"
+            }
+        }),
+        # Variant 4: Flat Order structure, B-COIN_USDT
+        (futures_url, {
+            "timestamp": ts,
             "side": side.lower(),
             "pair": f"B-{coin}_USDT",
             "order_type": "market_order",
             "total_quantity": quantity,
             "leverage": leverage,
             "notification": "no_notification"
-        }
+        }),
+        # Variant 5: Flat Order structure, order_type market
+        (futures_url, {
+            "timestamp": ts,
+            "side": side.lower(),
+            "pair": f"B-{coin}_USDT",
+            "order_type": "market",
+            "total_quantity": quantity,
+            "leverage": leverage
+        }),
+        # Variant 6: Fallback Spot/Margin API endpoint
+        (spot_url, {
+            "timestamp": ts,
+            "side": side.lower(),
+            "order_type": "market_order",
+            "market": f"{coin}USDT",
+            "total_quantity": quantity,
+            "leverage": leverage
+        })
     ]
 
-    last_err = ""
-    for body in payload_variants:
+    err_logs = []
+    for idx, (target_url, body) in enumerate(endpoint_variants, 1):
         try:
             json_body = json.dumps(body, separators=(',', ':'))
             signature = hmac.new(secret_key.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
@@ -217,24 +248,23 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
                 'X-AUTH-SIGNATURE': signature,
                 'User-Agent': 'Mozilla/5.0'
             }
-            req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers, method='POST')
-            with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+            req = urllib.request.Request(target_url, data=json_body.encode('utf-8'), headers=headers, method='POST')
+            with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 order_id = "EXECUTED"
                 if isinstance(data, dict): order_id = data.get('id', data.get('order_id', 'EXECUTED'))
                 elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict): order_id = data[0].get('id', 'EXECUTED')
-                return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': f"B-{coin}_USDT"}
+                return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': body.get('pair', body.get('market', f"B-{coin}_USDT"))}
         except urllib.error.HTTPError as e:
             try:
                 err_text = e.read().decode('utf-8')
-                last_err = f"HTTP {e.code}: {err_text}"
+                err_logs.append(f"V{idx}: HTTP {e.code} - {err_text}")
             except Exception:
-                last_err = str(e)
-            continue
+                err_logs.append(f"V{idx}: HTTP {e.code} - {e}")
         except Exception as e:
-            last_err = str(e)
-            continue
+            err_logs.append(f"V{idx}: {e}")
 
+    last_err = " | ".join(err_logs) if err_logs else "Unknown Error"
     return {'success': False, 'error': last_err}
 
 def load_state():
