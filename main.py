@@ -38,6 +38,56 @@ def save_active_trades():
         st["active_trades"] = ACTIVE_TRADES
         save_state(st)
 
+@app.route('/scan-now')
+def scan_now_endpoint():
+    try:
+        report_lines = []
+        for symbol in WATCHLIST:
+            try:
+                time.sleep(0.05)
+                m15_klines = fetch_klines_binance(symbol, '15m', 100)
+                if not m15_klines or len(m15_klines) < 20: continue
+                cmp = m15_klines[-1][4]
+                daily_klines = fetch_klines_binance(symbol, '1d', 2)
+                if not daily_klines or len(daily_klines) < 2: continue
+                cpr = calculate_cpr(daily_klines[0][2], daily_klines[0][3], daily_klines[0][4])
+                st_dir, st_val = calculate_supertrend(m15_klines)
+                close_prices = [k[4] for k in m15_klines]
+                rsi_val = calculate_rsi(close_prices)
+                vol_spike = calculate_volume_spike(m15_klines)
+                
+                score = 50
+                if cmp > cpr['tc']: score += 15
+                if cmp > cpr['r1']: score += 10
+                if 48 <= rsi_val <= 75: score += 20
+                elif rsi_val > 75: score -= 10
+                if vol_spike >= 2.0: score += 20
+                elif vol_spike >= 1.30: score += 10
+                elif vol_spike >= 1.15: score += 5
+                score = max(0, min(100, score))
+                
+                is_above_cpr_tc = cmp > cpr['tc']
+                is_st_green = st_dir == 1
+                t1 = (vol_spike >= 1.30 and score >= 70)
+                t2 = (vol_spike >= 1.15 and score >= 68)
+                
+                if is_above_cpr_tc and is_st_green and (t1 or t2):
+                    status = "🔥 TRIGGERED AUTO-TRADE"
+                elif is_above_cpr_tc and is_st_green:
+                    status = f"🟢 Bullish (Vol {vol_spike:.2f}x / Score {score})"
+                else:
+                    status = "⚪ Consolidating"
+                
+                report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | CPR TC: {cpr['tc']:<10.4f} | ST: {'GREEN' if is_st_green else 'RED':5s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
+            except Exception as e:
+                report_lines.append(f"{symbol:12s} | Error: {e}")
+        
+        now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+        html = f"<h2>⚡ LIVE 40-COIN MARKET SCANNER AUDIT REPORT</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
+        return html, 200
+    except Exception as e:
+        return f"<h3>⚠️ Scan Error:</h3><p>{e}</p>", 500
+
 @app.route('/close-sol')
 def close_sol_endpoint():
     try:
@@ -90,7 +140,7 @@ def catch_all(path):
             finally:
                 scan_lock.release()
         threading.Thread(target=async_scan, daemon=True).start()
-        return "⚡ OK - Live 40-Coin Market Scan Triggered!", 200
+        return "⚡ OK - Live 40-Coin Market Scan Triggered! Check /scan-now for live audit table.", 200
     return "⚡ OK - Market Scanner Currently Active", 200
 
 TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
@@ -572,6 +622,8 @@ def start_background_loop():
 
     t4 = threading.Thread(target=run_keep_alive_loop, daemon=True)
     t4.start()
+
+    send_telegram_message("⚡ <b>RENDER BOT ENGINE REBOOTED & 100% ONLINE!</b>\n\n• 24/7 Keep-Alive Active\n• Live Scanner Audit Endpoint: /scan-now")
 
 start_background_loop()
 
