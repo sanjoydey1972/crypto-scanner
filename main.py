@@ -358,26 +358,28 @@ def run_scan():
             rsi_val = calculate_rsi(close_prices)
             vol_spike = calculate_volume_spike(m15_klines)
             
+            # REFINED SCORING ENGINE:
             score = 50
-            if cmp > cpr['r1']: score += 10
-            if 50 <= rsi_val <= 70: score += 20
-            elif 70 < rsi_val <= 75: score += 10
-            elif rsi_val > 75: score -= 10
+            if cmp > cpr['tc']: score += 15       # Reward breaking CPR TC
+            if cmp > cpr['r1']: score += 10       # Reward crossing R1
+            if 48 <= rsi_val <= 75: score += 20   # Healthy bullish RSI range
+            elif rsi_val > 75: score -= 10        # Overbought penalty
+            
             if vol_spike >= 2.0: score += 20
-            elif vol_spike >= 1.35: score += 10
-            elif vol_spike >= 1.20: score += 5
+            elif vol_spike >= 1.30: score += 10
+            elif vol_spike >= 1.15: score += 5
             score = max(0, min(100, score))
             
-            rating = "A+ (Strong Breakout) 👑" if score >= 90 else ("A (Solid Breakout) 🥇" if score >= 72 else "B (Moderate)")
+            rating = "A+ (Strong Breakout) 👑" if score >= 85 else ("A (Solid Breakout) 🥇" if score >= 68 else "B (Moderate)")
             is_above_cpr_tc = cmp > cpr['tc']
             is_supertrend_green = st_dir == 1
-            is_not_choppy = True if vol_spike >= 1.20 else not (48 <= rsi_val <= 52)
+            is_not_choppy = True if vol_spike >= 1.15 else not (48 <= rsi_val <= 52)
             
-            # DUAL-TRIGGER ENHANCEMENT:
-            # Trigger 1: High Vol Spike >= 1.35x AND Score >= 74
-            # Trigger 2: Steady Momentum (Vol Spike >= 1.20x AND Score >= 72)
-            trigger_1 = (vol_spike >= 1.35 and score >= 74)
-            trigger_2 = (vol_spike >= 1.20 and score >= 72)
+            # OPTIMIZED DUAL-TRIGGER ENGINE:
+            # Trigger 1: High Vol Spike >= 1.30x AND Score >= 70
+            # Trigger 2: CPR TC + Supertrend Confluence (Vol Spike >= 1.15x AND Score >= 68)
+            trigger_1 = (vol_spike >= 1.30 and score >= 70)
+            trigger_2 = (vol_spike >= 1.15 and score >= 68)
             
             if is_above_cpr_tc and is_supertrend_green and (trigger_1 or trigger_2) and is_not_choppy:
                 candidates.append({'symbol': symbol, 'score': score, 'rating': rating, 'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike})
@@ -394,7 +396,7 @@ def run_scan():
                 sl = round(min(cpr['tc'], st_val) * 0.995, 4)
                 tp1 = round(max(cpr['r1'] * 0.998, cmp * 1.018), 4)
                 tp2 = round(max(cpr['r2'] * 0.998, tp1 * 1.025), 4)
-                lev_num = 10 if clean_symbol in ['SOLUSDT', 'AVAXUSDT', 'BTCUSDT', 'ETHUSDT', 'TAOUSDT', 'RENDERUSDT', 'APTUSDT'] else (7 if score >= 90 else 5)
+                lev_num = 10 if clean_symbol in ['SOLUSDT', 'AVAXUSDT', 'BTCUSDT', 'ETHUSDT', 'TAOUSDT', 'RENDERUSDT', 'APTUSDT'] else (7 if score >= 85 else 5)
                 
                 trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=500.0, leverage=lev_num)
                 
@@ -547,6 +549,18 @@ def start_background_loop():
             except Exception as e:
                 print(f"Hourly loop exception: {e}")
 
+    def run_keep_alive_loop():
+        time.sleep(15)
+        url = "https://crypto-scanner-ok3t.onrender.com/"
+        while True:
+            try:
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+                    pass
+            except Exception as e:
+                print(f"Keep-alive error: {e}")
+            time.sleep(240) # Self ping every 4 minutes to prevent Render Free Tier sleep
+
     t1 = threading.Thread(target=run_loop, daemon=True)
     t1.start()
     
@@ -555,6 +569,9 @@ def start_background_loop():
 
     t3 = threading.Thread(target=run_hourly_report_loop, daemon=True)
     t3.start()
+
+    t4 = threading.Thread(target=run_keep_alive_loop, daemon=True)
+    t4.start()
 
 start_background_loop()
 
