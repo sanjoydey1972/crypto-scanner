@@ -15,8 +15,70 @@ app = Flask(__name__)
 scan_lock = threading.Lock()
 active_trades_lock = threading.Lock()
 
-# 4-Step Execution Tracker State
-ACTIVE_TRADES = {}
+STATE_FILE = "scanner_state.json"
+
+def load_state():
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, 'r') as f: return json.load(f)
+        except Exception: pass
+    return {}
+
+def save_state(state):
+    try:
+        with open(STATE_FILE, 'w') as f: json.dump(state, f, indent=2)
+    except Exception: pass
+
+state_data = load_state()
+ACTIVE_TRADES = state_data.get("active_trades", {})
+
+def save_active_trades():
+    with active_trades_lock:
+        st = load_state()
+        st["active_trades"] = ACTIVE_TRADES
+        save_state(st)
+
+@app.route('/close-sol')
+def close_sol_endpoint():
+    try:
+        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="sell", cmp=108.23, leverage=10, custom_quantity=0.1)
+        with active_trades_lock:
+            ACTIVE_TRADES.pop('SOL-USDT', None)
+        save_active_trades()
+        send_telegram_message("🛡️ <b>SOL POSITION CLOSED SUCCESSFULLY VIA BOT ENDPOINT!</b>")
+        return f"<h3>✅ SOL Position Close Result:</h3><pre>{json.dumps(res, indent=2)}</pre>", 200
+    except Exception as e:
+        return f"<h3>⚠️ Error closing SOL:</h3><p>{e}</p>", 500
+
+@app.route('/test-trade')
+def test_trade_endpoint():
+    try:
+        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=112.20, margin_inr=100.0, leverage=10, custom_quantity=0.1)
+        if res.get('success'):
+            with active_trades_lock:
+                ACTIVE_TRADES['SOL-USDT'] = {
+                    'entry_price': 112.20,
+                    'total_qty': 0.1,
+                    'remaining_qty': 0.1,
+                    'tp1': 114.32,
+                    'tp2': 122.42,
+                    'sl': 110.03,
+                    'tp1_booked': False,
+                    'leverage': 10,
+                    'entry_time': time.time()
+                }
+            save_active_trades()
+        
+        msg = (
+            f"🧪 <b>SYSTEM DIAGNOSTIC TEST ALERT</b>\n\n"
+            f"• <b>Render Cloud Bot:</b> 100% CONNECTED\n"
+            f"• <b>CoinDCX Execution Test:</b> <code>{res}</code>\n"
+            f"• <b>Timestamp:</b> {datetime.now().strftime('%d-%m-%Y %H:%M:%S')}"
+        )
+        send_telegram_message(msg)
+        return f"<h3>🧪 Diagnostic Test Result:</h3><pre>{json.dumps(res, indent=2)}</pre><p>Check Telegram @CRYPTOCREEN_BOT for alert!</p>", 200
+    except Exception as e:
+        return f"<h3>⚠️ Diagnostic Error:</h3><p>{e}</p>", 500
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -31,27 +93,9 @@ def catch_all(path):
         return "⚡ OK - Live 40-Coin Market Scan Triggered!", 200
     return "⚡ OK - Market Scanner Currently Active", 200
 
-@app.route('/test-trade')
-def test_trade_endpoint():
-    try:
-        # Test order with minimum contract size 0.1 SOL (~119 INR margin required)
-        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=135.0, margin_inr=150.0, leverage=10, custom_quantity=0.1)
-        msg = (
-            f"🧪 <b>SYSTEM DIAGNOSTIC TEST ALERT</b>\n\n"
-            f"• <b>Render Cloud Bot:</b> 100% CONNECTED\n"
-            f"• <b>CoinDCX Execution Test:</b> <code>{res}</code>\n"
-            f"• <b>Timestamp:</b> {datetime.now().strftime('%d-%m-%Y %H:%M:%S')}"
-        )
-        send_telegram_message(msg)
-        return f"<h3>🧪 Diagnostic Test Result:</h3><pre>{json.dumps(res, indent=2)}</pre><p>Check Telegram @CRYPTOCREEN_BOT for alert!</p>", 200
-    except Exception as e:
-        return f"<h3>⚠️ Diagnostic Error:</h3><p>{e}</p>", 500
-
 TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
 CHAT_ID = "8938527650"
-STATE_FILE = "scanner_state.json"
 
-# Strict watchlist of top liquid coins verified to exist on CoinDCX Futures
 WATCHLIST = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AVAX-USDT', 'DOGE-USDT', 
     'XRP-USDT', 'ADA-USDT', 'LINK-USDT', 'NEAR-USDT', 'BCH-USDT', 
@@ -65,7 +109,6 @@ WATCHLIST = [
 
 ctx = ssl._create_unverified_context()
 
-# Gold-Standard Binance Market Data Fetcher
 def fetch_klines_binance(symbol, interval_str="15m", limit=100):
     clean_sym = symbol.replace("-", "").upper()
     url = f"https://api.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}"
@@ -172,7 +215,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
     ts = int(round(time.time() * 1000))
 
     endpoint_variants = [
-        # Variant 1: Official B-COIN_USDT format (Small qty: 0.1 SOL = ~1.35 USDT margin)
         (futures_url, {
             "timestamp": ts,
             "order": {
@@ -184,7 +226,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
                 "notification": "no_notification"
             }
         }),
-        # Variant 2: Official B-COINUSDT format
         (futures_url, {
             "timestamp": ts,
             "order": {
@@ -196,7 +237,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
                 "notification": "no_notification"
             }
         }),
-        # Variant 3: Spot/Margin Order format
         (spot_url, {
             "timestamp": ts,
             "side": side.lower(),
@@ -237,18 +277,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
     last_err = " | ".join(err_logs) if err_logs else "Unknown Error"
     return {'success': False, 'error': last_err}
 
-def load_state():
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, 'r') as f: return json.load(f)
-        except Exception: pass
-    return {}
-
-def save_state(state):
-    try:
-        with open(STATE_FILE, 'w') as f: json.dump(state, f, indent=2)
-    except Exception: pass
-
 def fetch_live_btc_price():
     try:
         url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
@@ -267,33 +295,15 @@ def fetch_coindcx_btc_inrm_price():
             data = json.loads(resp.read().decode('utf-8'))
             if isinstance(data, list) and len(data) > 0:
                 close_price = float(data[0].get('close', 0) or data[-1].get('close', 0))
-                if close_price > 0:
-                    return round(close_price, 1)
-    except Exception as e:
-        print(f"CoinDCX public fetch error: {e}")
-
-    try:
-        url = "https://api.coindcx.com/exchange/ticker"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=4) as resp:
-            tickers = json.loads(resp.read().decode('utf-8'))
-            for t in tickers:
-                if t.get('market') == 'BTCINR':
-                    btcinr = float(t.get('last_price', 0))
-                    if btcinr > 0:
-                        return float(btcinr) / 102.0
+                if close_price > 0: return round(close_price, 1)
     except Exception: pass
-
     btc_usd = fetch_live_btc_price()
     return round(btc_usd * 1.3136, 1)
 
 def send_hourly_market_report():
     try:
         btc_inrm_price = fetch_coindcx_btc_inrm_price()
-        
-        bull_coins = []
-        bear_coins = []
-        neutral_coins = []
+        bull_coins, bear_coins, neutral_coins = [], [], []
 
         for symbol in WATCHLIST:
             clean_sym = symbol.replace("-", "_")
@@ -304,17 +314,11 @@ def send_hourly_market_report():
                     close_prices = [k[4] for k in m15_klines]
                     rsi_val = calculate_rsi(close_prices)
                     st_dir, _ = calculate_supertrend(m15_klines)
-                    
-                    if st_dir == 1 or rsi_val >= 51:
-                        bull_coins.append(clean_sym)
-                    elif st_dir == -1 and rsi_val <= 46:
-                        bear_coins.append(clean_sym)
-                    else:
-                        neutral_coins.append(clean_sym)
-                else:
-                    bull_coins.append(clean_sym)
-            except Exception:
-                bull_coins.append(clean_sym)
+                    if st_dir == 1 or rsi_val >= 51: bull_coins.append(clean_sym)
+                    elif st_dir == -1 and rsi_val <= 46: bear_coins.append(clean_sym)
+                    else: neutral_coins.append(clean_sym)
+                else: bull_coins.append(clean_sym)
+            except Exception: bull_coins.append(clean_sym)
             
         now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
         bull_list_str = ", ".join(bull_coins[:15]) if bull_coins else "None currently"
@@ -339,13 +343,6 @@ def send_hourly_market_report():
 def run_scan():
     state = load_state()
     candidates = []
-    btc_cmp = fetch_live_btc_price()
-    btc_is_bullish = True
-    try:
-        btc_klines = fetch_klines_binance('BTC-USDT', '15m', 100)
-        btc_st_dir, _ = calculate_supertrend(btc_klines)
-        btc_is_bullish = (btc_st_dir == 1)
-    except Exception: pass
 
     for symbol in WATCHLIST:
         try:
@@ -368,17 +365,21 @@ def run_scan():
             elif rsi_val > 75: score -= 10
             if vol_spike >= 2.0: score += 20
             elif vol_spike >= 1.35: score += 10
+            elif vol_spike >= 1.20: score += 5
             score = max(0, min(100, score))
             
-            rating = "A+ (Strong Breakout) 👑" if score >= 90 else ("A (Solid Breakout) 🥇" if score >= 74 else "B (Moderate)")
+            rating = "A+ (Strong Breakout) 👑" if score >= 90 else ("A (Solid Breakout) 🥇" if score >= 72 else "B (Moderate)")
             is_above_cpr_tc = cmp > cpr['tc']
             is_supertrend_green = st_dir == 1
+            is_not_choppy = True if vol_spike >= 1.20 else not (48 <= rsi_val <= 52)
             
-            # True for volume breakout candidates
-            is_not_choppy = True if vol_spike >= 1.35 else not (48 <= rsi_val <= 52)
+            # DUAL-TRIGGER ENHANCEMENT:
+            # Trigger 1: High Vol Spike >= 1.35x AND Score >= 74
+            # Trigger 2: Steady Momentum (Vol Spike >= 1.20x AND Score >= 72)
+            trigger_1 = (vol_spike >= 1.35 and score >= 74)
+            trigger_2 = (vol_spike >= 1.20 and score >= 72)
             
-            # STRICT 75% WIN-RATE STRATEGY RULES: Score >= 74, Vol Spike >= 1.35x
-            if is_above_cpr_tc and is_supertrend_green and vol_spike >= 1.35 and score >= 74 and is_not_choppy:
+            if is_above_cpr_tc and is_supertrend_green and (trigger_1 or trigger_2) and is_not_choppy:
                 candidates.append({'symbol': symbol, 'score': score, 'rating': rating, 'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike})
         except Exception: pass
 
@@ -391,12 +392,9 @@ def run_scan():
                 clean_symbol = symbol.replace("-", "")
                 entry_min, entry_max = round(cmp * 0.998, 4), round(cmp * 1.001, 4)
                 sl = round(min(cpr['tc'], st_val) * 0.995, 4)
-                
-                # TARGET 1 & TARGET 2: CPR R1 & R2 with guaranteed minimum 1.8% space
                 tp1 = round(max(cpr['r1'] * 0.998, cmp * 1.018), 4)
                 tp2 = round(max(cpr['r2'] * 0.998, tp1 * 1.025), 4)
-                
-                lev_num = 10 if clean_symbol in ['SOLUSDT', 'AVAXUSDT', 'BTCUSDT', 'ETHUSDT'] else (7 if score >= 90 else 5)
+                lev_num = 10 if clean_symbol in ['SOLUSDT', 'AVAXUSDT', 'BTCUSDT', 'ETHUSDT', 'TAOUSDT', 'RENDERUSDT', 'APTUSDT'] else (7 if score >= 90 else 5)
                 
                 trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=500.0, leverage=lev_num)
                 
@@ -419,6 +417,7 @@ def run_scan():
                             'leverage': lev_num,
                             'entry_time': time.time()
                         }
+                    save_active_trades()
                 else:
                     exec_hdr = f"\n\n⚠️ <b>COINDCX EXECUTION NOTICE:</b>\n<code>{trade_res.get('error')}</code>"
 
@@ -444,7 +443,7 @@ def run_scan():
         except Exception: pass
 
 def monitor_active_positions():
-    time.sleep(15)
+    time.sleep(10)
     while True:
         try:
             with active_trades_lock:
@@ -473,12 +472,13 @@ def monitor_active_positions():
                                 trade['tp1_booked'] = True
                                 trade['remaining_qty'] = round(trade['total_qty'] - qty_80, 2)
                                 trade['sl'] = trade['entry_price']
+                            save_active_trades()
                             
                             send_telegram_message(
                                 f"🎯 <b>STEP 2 & 3 EXECUTED: TP1 REACHED!</b>\n\n"
                                 f"<b>Pair:</b> B-{clean_coin}_USDT\n"
                                 f"💰 <b>80% Profit Booked on CoinDCX!</b> (Qty: {qty_80})\n"
-                                f"🛡️ <b>SL Shifted to Entry:</b> <code>{trade['entry_price']}</code> (Trade is now 100% Risk-Free!)\n"
+                                f"🛡️ <b>SL Shifted to Entry:</b> <code>{trade['entry_price']}</code>\n"
                                 f"🚀 <b>Riding Remaining 20% to TP2 ({trade['tp2']})...</b>"
                             )
 
@@ -487,6 +487,7 @@ def monitor_active_positions():
                             res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=trade['remaining_qty'])
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
+                            save_active_trades()
                             
                             send_telegram_message(
                                 f"🚀 <b>STEP 4 EXECUTED: TP2 TARGET HIT!</b>\n\n"
@@ -498,21 +499,23 @@ def monitor_active_positions():
                             res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=trade['remaining_qty'])
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
+                            save_active_trades()
                             
                             send_telegram_message(
                                 f"🛡️ <b>STEP 4 EXECUTED: EXIT AT BREAKEVEN</b>\n\n"
                                 f"<b>Pair:</b> B-{clean_coin}_USDT\n"
                                 f"🔹 Remaining 20% Closed at Entry (<code>{cmp}</code>).\n"
-                                f"✅ <b>Net Trade Profit:</b> <b>80% Cash Locked in Wallet (₹0 Loss)</b>"
+                                f"✅ <b>Net Trade Profit:</b> <b>80% Cash Locked in Wallet</b>"
                             )
 
                     elif not trade['tp1_booked'] and cmp <= trade['sl']:
                         res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=trade['total_qty'])
                         with active_trades_lock:
                             ACTIVE_TRADES.pop(symbol, None)
+                        save_active_trades()
                         
                         send_telegram_message(
-                            f"🛑 <b>STOP LOSS EXECUTED</b>\n\n"
+                            f"🛑 <b>STOP LOSS EXECUTED VIA BOT MONITOR</b>\n\n"
                             f"<b>Pair:</b> B-{clean_coin}_USDT\n"
                             f"Position closed at Stop Loss: <code>{cmp}</code>"
                         )
