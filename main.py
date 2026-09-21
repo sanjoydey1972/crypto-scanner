@@ -38,111 +38,6 @@ def save_active_trades():
         st["active_trades"] = ACTIVE_TRADES
         save_state(st)
 
-@app.route('/scan-now')
-def scan_now_endpoint():
-    try:
-        report_lines = []
-        for symbol in WATCHLIST:
-            try:
-                time.sleep(0.05)
-                m15_klines = fetch_klines_binance(symbol, '15m', 100)
-                if not m15_klines or len(m15_klines) < 20: continue
-                cmp = m15_klines[-1][4]
-                daily_klines = fetch_klines_binance(symbol, '1d', 2)
-                if not daily_klines or len(daily_klines) < 2: continue
-                cpr = calculate_cpr(daily_klines[0][2], daily_klines[0][3], daily_klines[0][4])
-                st_dir, st_val = calculate_supertrend(m15_klines)
-                close_prices = [k[4] for k in m15_klines]
-                rsi_val = calculate_rsi(close_prices)
-                vol_spike = calculate_volume_spike(m15_klines)
-                
-                score = 50
-                if cmp > cpr['tc']: score += 15
-                if cmp > cpr['r1']: score += 10
-                if 48 <= rsi_val <= 75: score += 20
-                elif rsi_val > 75: score -= 10
-                if vol_spike >= 2.0: score += 20
-                elif vol_spike >= 1.30: score += 10
-                elif vol_spike >= 1.15: score += 5
-                score = max(0, min(100, score))
-                
-                is_above_cpr_tc = cmp > cpr['tc']
-                is_st_green = st_dir == 1
-                t1 = (vol_spike >= 1.30 and score >= 70)
-                t2 = (vol_spike >= 1.15 and score >= 68)
-                
-                if is_above_cpr_tc and is_st_green and (t1 or t2):
-                    status = "🔥 TRIGGERED AUTO-TRADE"
-                elif is_above_cpr_tc and is_st_green:
-                    status = f"🟢 Bullish (Vol {vol_spike:.2f}x / Score {score})"
-                else:
-                    status = "⚪ Consolidating"
-                
-                report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | CPR TC: {cpr['tc']:<10.4f} | ST: {'GREEN' if is_st_green else 'RED':5s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
-            except Exception as e:
-                report_lines.append(f"{symbol:12s} | Error: {e}")
-        
-        now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-        html = f"<h2>⚡ LIVE 40-COIN MARKET SCANNER AUDIT REPORT</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
-        return html, 200
-    except Exception as e:
-        return f"<h3>⚠️ Scan Error:</h3><p>{e}</p>", 500
-
-@app.route('/close-sol')
-def close_sol_endpoint():
-    try:
-        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="sell", cmp=108.23, leverage=10, custom_quantity=0.1)
-        with active_trades_lock:
-            ACTIVE_TRADES.pop('SOL-USDT', None)
-        save_active_trades()
-        send_telegram_message("🛡️ <b>SOL POSITION CLOSED SUCCESSFULLY VIA BOT ENDPOINT!</b>")
-        return f"<h3>✅ SOL Position Close Result:</h3><pre>{json.dumps(res, indent=2)}</pre>", 200
-    except Exception as e:
-        return f"<h3>⚠️ Error closing SOL:</h3><p>{e}</p>", 500
-
-@app.route('/test-trade')
-def test_trade_endpoint():
-    try:
-        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=112.20, margin_inr=100.0, leverage=10, custom_quantity=0.1)
-        if res.get('success'):
-            with active_trades_lock:
-                ACTIVE_TRADES['SOL-USDT'] = {
-                    'entry_price': 112.20,
-                    'total_qty': 0.1,
-                    'remaining_qty': 0.1,
-                    'tp1': 114.32,
-                    'tp2': 122.42,
-                    'sl': 110.03,
-                    'tp1_booked': False,
-                    'leverage': 10,
-                    'entry_time': time.time()
-                }
-            save_active_trades()
-        
-        msg = (
-            f"🧪 <b>SYSTEM DIAGNOSTIC TEST ALERT</b>\n\n"
-            f"• <b>Render Cloud Bot:</b> 100% CONNECTED\n"
-            f"• <b>CoinDCX Execution Test:</b> <code>{res}</code>\n"
-            f"• <b>Timestamp:</b> {datetime.now().strftime('%d-%m-%Y %H:%M:%S')}"
-        )
-        send_telegram_message(msg)
-        return f"<h3>🧪 Diagnostic Test Result:</h3><pre>{json.dumps(res, indent=2)}</pre><p>Check Telegram @CRYPTOCREEN_BOT for alert!</p>", 200
-    except Exception as e:
-        return f"<h3>⚠️ Diagnostic Error:</h3><p>{e}</p>", 500
-
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def catch_all(path):
-    if scan_lock.acquire(blocking=False):
-        def async_scan():
-            try:
-                run_scan()
-            finally:
-                scan_lock.release()
-        threading.Thread(target=async_scan, daemon=True).start()
-        return "⚡ OK - Live 40-Coin Market Scan Triggered! Check /scan-now for live audit table.", 200
-    return "⚡ OK - Market Scanner Currently Active", 200
-
 TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
 CHAT_ID = "8938527650"
 
@@ -159,16 +54,62 @@ WATCHLIST = [
 
 ctx = ssl._create_unverified_context()
 
-def fetch_klines_binance(symbol, interval_str="15m", limit=100):
-    clean_sym = symbol.replace("-", "").upper()
-    url = f"https://api.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}"
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-        raw_candles = json.loads(resp.read().decode('utf-8'))
-        formatted = []
-        for c in raw_candles:
-            formatted.append([int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])])
-        return formatted
+def fetch_klines(symbol, interval_str="15m", limit=100):
+    coin = symbol.split('-')[0].upper()
+    clean_sym = f"{coin}USDT"
+    
+    # Provider 1: Binance Vision Public Data API (No Cloud IP Geoblock / No HTTP 451)
+    try:
+        url = f"https://data-api.binance.vision/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            raw = json.loads(resp.read().decode('utf-8'))
+            if isinstance(raw, list) and len(raw) > 0:
+                formatted = []
+                for c in raw:
+                    formatted.append([int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])])
+                return formatted
+    except Exception: pass
+
+    # Provider 2: CoinDCX Public Candles API (Direct from exchange)
+    try:
+        pair_str = f"B-{coin}_USDT"
+        url = f"https://public.coindcx.com/market_data/candles/?pair={pair_str}&interval={interval_str}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            raw = json.loads(resp.read().decode('utf-8'))
+            if isinstance(raw, list) and len(raw) > 0:
+                raw_sorted = sorted(raw, key=lambda x: x.get('time', 0))
+                formatted = []
+                for c in raw_sorted[-limit:]:
+                    t = int(c.get('time', time.time()*1000))
+                    o = float(c.get('open', 0))
+                    h = float(c.get('high', 0))
+                    l = float(c.get('low', 0))
+                    cl = float(c.get('close', 0))
+                    v = float(c.get('volume', 0))
+                    formatted.append([t, o, h, l, cl, v])
+                if len(formatted) > 0:
+                    return formatted
+    except Exception: pass
+
+    # Provider 3: Bybit Public Market API (Global Cloud Fallback)
+    try:
+        bybit_interval = "15" if interval_str == "15m" else ("D" if interval_str == "1d" else "15")
+        url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={clean_sym}&interval={bybit_interval}&limit={limit}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            list_data = data.get('result', {}).get('list', [])
+            if list_data:
+                list_sorted = sorted(list_data, key=lambda x: int(x[0]))
+                formatted = []
+                for c in list_sorted:
+                    formatted.append([int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])])
+                return formatted
+    except Exception: pass
+
+    return []
 
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1: return 50.0
@@ -329,24 +270,12 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
 
 def fetch_live_btc_price():
     try:
-        url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            if 'price' in data: return float(data['price'])
+        klines = fetch_klines("BTC-USDT", "1m", 1)
+        if klines: return klines[-1][4]
     except Exception: pass
     return 60080.0
 
 def fetch_coindcx_btc_inrm_price():
-    try:
-        url = "https://public.coindcx.com/market_data/candles/?pair=B-BTC_USDT&interval=1m"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            if isinstance(data, list) and len(data) > 0:
-                close_price = float(data[0].get('close', 0) or data[-1].get('close', 0))
-                if close_price > 0: return round(close_price, 1)
-    except Exception: pass
     btc_usd = fetch_live_btc_price()
     return round(btc_usd * 1.3136, 1)
 
@@ -358,8 +287,8 @@ def send_hourly_market_report():
         for symbol in WATCHLIST:
             clean_sym = symbol.replace("-", "_")
             try:
-                time.sleep(0.1)
-                m15_klines = fetch_klines_binance(symbol, '15m', 30)
+                time.sleep(0.05)
+                m15_klines = fetch_klines(symbol, '15m', 30)
                 if m15_klines and len(m15_klines) >= 15:
                     close_prices = [k[4] for k in m15_klines]
                     rsi_val = calculate_rsi(close_prices)
@@ -390,18 +319,127 @@ def send_hourly_market_report():
     except Exception as e:
         print(f"Hourly report error: {e}")
 
+@app.route('/scan-now')
+def scan_now_endpoint():
+    try:
+        report_lines = []
+        for symbol in WATCHLIST:
+            try:
+                time.sleep(0.05)
+                m15_klines = fetch_klines(symbol, '15m', 100)
+                if not m15_klines or len(m15_klines) < 20: 
+                    report_lines.append(f"{symbol:12s} | Error: Could not fetch candle data")
+                    continue
+                cmp = m15_klines[-1][4]
+                daily_klines = fetch_klines(symbol, '1d', 2)
+                if not daily_klines or len(daily_klines) < 2: 
+                    daily_klines = m15_klines # Fallback
+                cpr = calculate_cpr(daily_klines[0][2], daily_klines[0][3], daily_klines[0][4])
+                st_dir, st_val = calculate_supertrend(m15_klines)
+                close_prices = [k[4] for k in m15_klines]
+                rsi_val = calculate_rsi(close_prices)
+                vol_spike = calculate_volume_spike(m15_klines)
+                
+                score = 50
+                if cmp > cpr['tc']: score += 15
+                if cmp > cpr['r1']: score += 10
+                if 48 <= rsi_val <= 75: score += 20
+                elif rsi_val > 75: score -= 10
+                if vol_spike >= 2.0: score += 20
+                elif vol_spike >= 1.30: score += 10
+                elif vol_spike >= 1.15: score += 5
+                score = max(0, min(100, score))
+                
+                is_above_cpr_tc = cmp > cpr['tc']
+                is_st_green = st_dir == 1
+                t1 = (vol_spike >= 1.30 and score >= 70)
+                t2 = (vol_spike >= 1.15 and score >= 68)
+                
+                if is_above_cpr_tc and is_st_green and (t1 or t2):
+                    status = "🔥 TRIGGERED AUTO-TRADE"
+                elif is_above_cpr_tc and is_st_green:
+                    status = f"🟢 Bullish (Vol {vol_spike:.2f}x / Score {score})"
+                else:
+                    status = "⚪ Consolidating"
+                
+                report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | CPR TC: {cpr['tc']:<10.4f} | ST: {'GREEN' if is_st_green else 'RED':5s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
+            except Exception as e:
+                report_lines.append(f"{symbol:12s} | Error: {e}")
+        
+        now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+        html = f"<h2>⚡ LIVE 40-COIN MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
+        return html, 200
+    except Exception as e:
+        return f"<h3>⚠️ Scan Error:</h3><p>{e}</p>", 500
+
+@app.route('/close-sol')
+def close_sol_endpoint():
+    try:
+        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="sell", cmp=108.23, leverage=10, custom_quantity=0.1)
+        with active_trades_lock:
+            ACTIVE_TRADES.pop('SOL-USDT', None)
+        save_active_trades()
+        send_telegram_message("🛡️ <b>SOL POSITION CLOSED SUCCESSFULLY VIA BOT ENDPOINT!</b>")
+        return f"<h3>✅ SOL Position Close Result:</h3><pre>{json.dumps(res, indent=2)}</pre>", 200
+    except Exception as e:
+        return f"<h3>⚠️ Error closing SOL:</h3><p>{e}</p>", 500
+
+@app.route('/test-trade')
+def test_trade_endpoint():
+    try:
+        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=112.20, margin_inr=100.0, leverage=10, custom_quantity=0.1)
+        if res.get('success'):
+            with active_trades_lock:
+                ACTIVE_TRADES['SOL-USDT'] = {
+                    'entry_price': 112.20,
+                    'total_qty': 0.1,
+                    'remaining_qty': 0.1,
+                    'tp1': 114.32,
+                    'tp2': 122.42,
+                    'sl': 110.03,
+                    'tp1_booked': False,
+                    'leverage': 10,
+                    'entry_time': time.time()
+                }
+            save_active_trades()
+        
+        msg = (
+            f"🧪 <b>SYSTEM DIAGNOSTIC TEST ALERT</b>\n\n"
+            f"• <b>Render Cloud Bot:</b> 100% CONNECTED\n"
+            f"• <b>CoinDCX Execution Test:</b> <code>{res}</code>\n"
+            f"• <b>Timestamp:</b> {datetime.now().strftime('%d-%m-%Y %H:%M:%S')}"
+        )
+        send_telegram_message(msg)
+        return f"<h3>🧪 Diagnostic Test Result:</h3><pre>{json.dumps(res, indent=2)}</pre><p>Check Telegram @CRYPTOCREEN_BOT for alert!</p>", 200
+    except Exception as e:
+        return f"<h3>⚠️ Diagnostic Error:</h3><p>{e}</p>", 500
+
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def catch_all(path):
+    if scan_lock.acquire(blocking=False):
+        def async_scan():
+            try:
+                run_scan()
+            finally:
+                scan_lock.release()
+        threading.Thread(target=async_scan, daemon=True).start()
+        return "⚡ OK - Live 40-Coin Market Scan Triggered! Check /scan-now for live audit table.", 200
+    return "⚡ OK - Market Scanner Currently Active", 200
+
 def run_scan():
     state = load_state()
     candidates = []
 
     for symbol in WATCHLIST:
         try:
-            time.sleep(0.2)
-            daily_klines = fetch_klines_binance(symbol, '1d', 2)
-            if len(daily_klines) < 2: continue
+            time.sleep(0.1)
+            daily_klines = fetch_klines(symbol, '1d', 2)
+            m15_klines = fetch_klines(symbol, '15m', 100)
+            if not m15_klines or len(m15_klines) < 20: continue
+            if not daily_klines or len(daily_klines) < 2: daily_klines = m15_klines
+            
             cpr = calculate_cpr(daily_klines[0][2], daily_klines[0][3], daily_klines[0][4])
-            m15_klines = fetch_klines_binance(symbol, '15m', 100)
-            if len(m15_klines) < 20: continue
             cmp = m15_klines[-1][4]
             st_dir, st_val = calculate_supertrend(m15_klines)
             close_prices = [k[4] for k in m15_klines]
@@ -504,7 +542,7 @@ def monitor_active_positions():
             for symbol in symbols_to_check:
                 try:
                     time.sleep(0.5)
-                    m15_klines = fetch_klines_binance(symbol, '15m', 5)
+                    m15_klines = fetch_klines(symbol, '15m', 5)
                     if not m15_klines: continue
                     cmp = m15_klines[-1][4]
                     
@@ -609,7 +647,7 @@ def start_background_loop():
                     pass
             except Exception as e:
                 print(f"Keep-alive error: {e}")
-            time.sleep(240) # Self ping every 4 minutes to prevent Render Free Tier sleep
+            time.sleep(240)
 
     t1 = threading.Thread(target=run_loop, daemon=True)
     t1.start()
@@ -623,7 +661,7 @@ def start_background_loop():
     t4 = threading.Thread(target=run_keep_alive_loop, daemon=True)
     t4.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT ENGINE REBOOTED & 100% ONLINE!</b>\n\n• 24/7 Keep-Alive Active\n• Live Scanner Audit Endpoint: /scan-now")
+    send_telegram_message("⚡ <b>RENDER BOT GEOBLOCK FIX DEPLOYED!</b>\n\n• Multi-provider klines (Binance Vision + CoinDCX + Bybit)\n• Geoblock HTTP 451 Resolved\n• Check /scan-now for live audit")
 
 start_background_loop()
 
