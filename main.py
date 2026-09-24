@@ -475,16 +475,41 @@ def run_scan():
         except Exception: pass
 
     candidates.sort(key=lambda x: x['score'], reverse=True)
+    
+    with active_trades_lock:
+        if len(ACTIVE_TRADES) >= 3:
+            return
+
     for cand in candidates:
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
         try:
             last_sent = state.get(symbol, 0)
             if time.time() - last_sent > 1800:
                 clean_symbol = symbol.replace("-", "")
-                entry_min, entry_max = round(cmp * 0.998, 4), round(cmp * 1.001, 4)
-                sl = round(min(cpr['tc'], st_val) * 0.995, 4)
-                tp1 = round(max(cpr['r1'] * 0.998, cmp * 1.018), 4)
-                tp2 = round(max(cpr['r2'] * 0.998, tp1 * 1.025), 4)
+                
+                # DYNAMIC DECIMAL FORMATTING & STRICT MAX 2.5% STOP-LOSS CAP:
+                if cmp < 0.001:
+                    entry_min, entry_max = round(cmp * 0.998, 8), round(cmp * 1.001, 8)
+                    sl_raw = min(cpr['tc'], st_val) * 0.995
+                    sl = round(max(sl_raw, cmp * 0.975), 8) # Max 2.5% SL Cap
+                    tp1 = round(max(cpr['r1'] * 0.998, cmp * 1.018), 8)
+                    tp2 = round(max(cpr['r2'] * 0.998, tp1 * 1.025), 8)
+                    cmp_str = f"{cmp:.8f}"
+                elif cmp < 1.0:
+                    entry_min, entry_max = round(cmp * 0.998, 6), round(cmp * 1.001, 6)
+                    sl_raw = min(cpr['tc'], st_val) * 0.995
+                    sl = round(max(sl_raw, cmp * 0.975), 6) # Max 2.5% SL Cap
+                    tp1 = round(max(cpr['r1'] * 0.998, cmp * 1.018), 6)
+                    tp2 = round(max(cpr['r2'] * 0.998, tp1 * 1.025), 6)
+                    cmp_str = f"{cmp:.6f}"
+                else:
+                    entry_min, entry_max = round(cmp * 0.998, 4), round(cmp * 1.001, 4)
+                    sl_raw = min(cpr['tc'], st_val) * 0.995
+                    sl = round(max(sl_raw, cmp * 0.975), 4) # Max 2.5% SL Cap
+                    tp1 = round(max(cpr['r1'] * 0.998, cmp * 1.018), 4)
+                    tp2 = round(max(cpr['r2'] * 0.998, tp1 * 1.025), 4)
+                    cmp_str = f"{cmp}"
+
                 lev_num = 10 if clean_symbol in ['SOLUSDT', 'AVAXUSDT', 'BTCUSDT', 'ETHUSDT', 'TAOUSDT', 'RENDERUSDT', 'APTUSDT'] else (7 if score >= 85 else 5)
                 
                 trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=500.0, leverage=lev_num)
@@ -521,9 +546,9 @@ def run_scan():
                     f"⚙️ <b>Trade Parameters:</b>\n"
                     f"• <b>Leverage:</b> <code>{lev_num}x (Isolated)</code>\n"
                     f"• <b>Margin:</b> <code>₹500 INR (Per Trade)</code>\n"
-                    f"• <b>Live CMP:</b> <code>${cmp}</code>\n\n"
+                    f"• <b>Live CMP:</b> <code>${cmp_str}</code>\n\n"
                     f"🔹 <b>Entry Range:</b> <code>{entry_min} - {entry_max}</code>\n"
-                    f"🔹 <b>Stop Loss:</b> <code>{sl}</code>\n"
+                    f"🔹 <b>Stop Loss:</b> <code>{sl}</code> (Max 2.5% Risk Cap)\n"
                     f"🎯 <b>TP1:</b> <code>{tp1}</code> | 🎯 <b>TP2:</b> <code>{tp2}</code>\n"
                     f"{exec_hdr}"
                 )
@@ -554,7 +579,10 @@ def monitor_active_positions():
                     clean_coin = symbol.split('-')[0].upper()
                     
                     if cmp >= trade['tp1'] and not trade['tp1_booked']:
-                        qty_80 = round(trade['total_qty'] * 0.8, 1)
+                        if trade['total_qty'] >= 50:
+                            qty_80 = float(int(round(trade['total_qty'] * 0.8)))
+                        else:
+                            qty_80 = round(trade['total_qty'] * 0.8, 1)
                         if qty_80 <= 0: qty_80 = trade['total_qty']
                         
                         res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=qty_80)
@@ -575,7 +603,7 @@ def monitor_active_positions():
 
                     elif trade['tp1_booked']:
                         if cmp >= trade['tp2']:
-                            res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=trade['remaining_qty'])
+                            res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['remaining_qty'], custom_quantity=trade['remaining_qty'])
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
                             save_active_trades()
@@ -662,7 +690,7 @@ def start_background_loop():
     t4 = threading.Thread(target=run_keep_alive_loop, daemon=True)
     t4.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT QUANTITY PRECISION FIX DEPLOYED!</b>\n\n• Step size calibrated to 0.1 precision\n• CoinDCX Futures Order Execution 100% Ready")
+    send_telegram_message("⚡ <b>RENDER BOT RISK MANAGEMENT UPGRADE DEPLOYED!</b>\n\n• Max 2.5% Stop-Loss Cap Applied\n• Max 3 Active Trades Limit Enforced\n• Large-Contract Exit Precision Active")
 
 start_background_loop()
 
