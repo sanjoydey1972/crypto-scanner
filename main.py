@@ -487,25 +487,25 @@ def run_scan():
             if time.time() - last_sent > 1800:
                 clean_symbol = symbol.replace("-", "")
                 
-                # DYNAMIC DECIMAL FORMATTING & STRICT MAX 2.5% STOP-LOSS CAP:
+                # NEW UPDATED CODE BLOCK WITH MAX 2.5% SL CAP:
                 if cmp < 0.001:
                     entry_min, entry_max = round(cmp * 0.998, 8), round(cmp * 1.001, 8)
                     sl_raw = min(cpr['tc'], st_val) * 0.995
-                    sl = round(max(sl_raw, cmp * 0.975), 8) # Max 2.5% SL Cap
+                    sl = round(max(sl_raw, cmp * 0.975), 8) # Max 2.5% SL Risk Cap
                     tp1 = round(max(cpr['r1'] * 0.998, cmp * 1.018), 8)
                     tp2 = round(max(cpr['r2'] * 0.998, tp1 * 1.025), 8)
                     cmp_str = f"{cmp:.8f}"
                 elif cmp < 1.0:
                     entry_min, entry_max = round(cmp * 0.998, 6), round(cmp * 1.001, 6)
                     sl_raw = min(cpr['tc'], st_val) * 0.995
-                    sl = round(max(sl_raw, cmp * 0.975), 6) # Max 2.5% SL Cap
+                    sl = round(max(sl_raw, cmp * 0.975), 6) # Max 2.5% SL Risk Cap
                     tp1 = round(max(cpr['r1'] * 0.998, cmp * 1.018), 6)
                     tp2 = round(max(cpr['r2'] * 0.998, tp1 * 1.025), 6)
                     cmp_str = f"{cmp:.6f}"
                 else:
                     entry_min, entry_max = round(cmp * 0.998, 4), round(cmp * 1.001, 4)
                     sl_raw = min(cpr['tc'], st_val) * 0.995
-                    sl = round(max(sl_raw, cmp * 0.975), 4) # Max 2.5% SL Cap
+                    sl = round(max(sl_raw, cmp * 0.975), 4) # Max 2.5% SL Risk Cap
                     tp1 = round(max(cpr['r1'] * 0.998, cmp * 1.018), 4)
                     tp2 = round(max(cpr['r2'] * 0.998, tp1 * 1.025), 4)
                     cmp_str = f"{cmp}"
