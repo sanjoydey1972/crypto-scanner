@@ -41,15 +41,15 @@ def save_active_trades():
 TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
 CHAT_ID = "8938527650"
 
+# CLEANED WATCHLIST: Removed inactive derivatives symbols (BONK, PEPE, SHIB, FLOKI) to ensure 100% trade execution
 WATCHLIST = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AVAX-USDT', 'DOGE-USDT', 
     'XRP-USDT', 'ADA-USDT', 'LINK-USDT', 'NEAR-USDT', 'BCH-USDT', 
-    'SUI-USDT', 'LTC-USDT', 'DOT-USDT', 'PEPE-USDT', 'OP-USDT', 
-    'ARB-USDT', 'APT-USDT', 'RENDER-USDT', 'INJ-USDT', 'FET-USDT', 
-    'TIA-USDT', 'WIF-USDT', 'SHIB-USDT', 'FLOKI-USDT', 'AAVE-USDT',
-    'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 'ICP-USDT', 'SAND-USDT',
-    'SEI-USDT', 'ORDI-USDT', 'FIL-USDT', 'JUP-USDT', 'BONK-USDT',
-    'STX-USDT', 'PENDLE-USDT', 'RUNE-USDT', 'IMX-USDT', 'KAS-USDT'
+    'SUI-USDT', 'LTC-USDT', 'DOT-USDT', 'OP-USDT', 'ARB-USDT', 
+    'APT-USDT', 'RENDER-USDT', 'INJ-USDT', 'FET-USDT', 'TIA-USDT', 
+    'WIF-USDT', 'AAVE-USDT', 'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 
+    'ICP-USDT', 'SAND-USDT', 'SEI-USDT', 'ORDI-USDT', 'FIL-USDT', 
+    'JUP-USDT', 'STX-USDT', 'PENDLE-USDT', 'RUNE-USDT', 'IMX-USDT', 'KAS-USDT'
 ]
 
 ctx = ssl._create_unverified_context()
@@ -193,10 +193,10 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
         position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
         raw_qty = position_value_usdt / cmp if cmp > 0 else 0.1
         
-        # QUANTITY STEP-SIZE CALIBRATION (Divisible by 0.1 for CoinDCX Futures):
+        # QUANTITY STEP-SIZE CALIBRATION (Integer step-size for quantities >= 50):
         if coin == 'BTC': quantity = round(max(0.001, raw_qty), 3)
         elif coin in ['ETH', 'SOL']: quantity = round(max(0.1, raw_qty), 1)
-        elif raw_qty >= 50: quantity = float(int(round(raw_qty)))
+        elif raw_qty >= 50: quantity = float(int(round(raw_qty)))  # Whole integer for large contract numbers (>50)
         elif raw_qty >= 1: quantity = round(raw_qty, 1)  # Strictly 1 decimal -> Divisible by 0.1!
         else: quantity = round(max(0.1, raw_qty), 1)
         
@@ -307,7 +307,7 @@ def send_hourly_market_report():
             f"📊 <b>AUTOMATED HOURLY MARKET CONDITION REPORT</b>\n\n"
             f"⏰ <b>Time:</b> {now_str}\n"
             f"✅ <b>Render Cloud Status:</b> 100% ONLINE (24/7 Active)\n\n"
-            f"🔍 <b>Market Overview (40 CoinDCX Futures Symbols):</b>\n"
+            f"🔍 <b>Market Overview (36 CoinDCX Futures Symbols):</b>\n"
             f"• <b>BTC Current Price:</b> <code>${btc_inrm_price:,.1f}</code>\n"
             f"🟢 <b>In Bull Run:</b> <code>{len(bull_coins)} coins</code>\n"
             f"🔴 <b>In Bear Run:</b> <code>{len(bear_coins)} coins</code>\n"
@@ -368,7 +368,7 @@ def scan_now_endpoint():
                 report_lines.append(f"{symbol:12s} | Error: {e}")
         
         now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-        html = f"<h2>⚡ LIVE 40-COIN MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
+        html = f"<h2>⚡ LIVE 36-COIN MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
         return html, 200
     except Exception as e:
         return f"<h3>⚠️ Scan Error:</h3><p>{e}</p>", 500
@@ -425,7 +425,7 @@ def catch_all(path):
             finally:
                 scan_lock.release()
         threading.Thread(target=async_scan, daemon=True).start()
-        return "⚡ OK - Live 40-Coin Market Scan Triggered! Check /scan-now for live audit table.", 200
+        return "⚡ OK - Live 36-Coin Market Scan Triggered! Check /scan-now for live audit table.", 200
     return "⚡ OK - Market Scanner Currently Active", 200
 
 def run_scan():
@@ -476,6 +476,7 @@ def run_scan():
 
     candidates.sort(key=lambda x: x['score'], reverse=True)
     
+    # MAX 3 CONCURRENT ACTIVE OPEN TRADES CAP (Preserves wallet cash USDT):
     with active_trades_lock:
         if len(ACTIVE_TRADES) >= 3:
             return
@@ -487,7 +488,7 @@ def run_scan():
             if time.time() - last_sent > 1800:
                 clean_symbol = symbol.replace("-", "")
                 
-                # NEW UPDATED CODE BLOCK WITH MAX 2.5% SL CAP:
+                # DYNAMIC DECIMAL FORMATTING & STRICT MAX 2.5% STOP-LOSS RISK CAP:
                 if cmp < 0.001:
                     entry_min, entry_max = round(cmp * 0.998, 8), round(cmp * 1.001, 8)
                     sl_raw = min(cpr['tc'], st_val) * 0.995
@@ -579,6 +580,7 @@ def monitor_active_positions():
                     clean_coin = symbol.split('-')[0].upper()
                     
                     if cmp >= trade['tp1'] and not trade['tp1_booked']:
+                        # INTEGER STEP-SIZE EXIT FORMATTER FOR LARGE CONTRACTS (>=50):
                         if trade['total_qty'] >= 50:
                             qty_80 = float(int(round(trade['total_qty'] * 0.8)))
                         else:
@@ -603,7 +605,7 @@ def monitor_active_positions():
 
                     elif trade['tp1_booked']:
                         if cmp >= trade['tp2']:
-                            res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['remaining_qty'], custom_quantity=trade['remaining_qty'])
+                            res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=trade['remaining_qty'])
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
                             save_active_trades()
@@ -690,7 +692,7 @@ def start_background_loop():
     t4 = threading.Thread(target=run_keep_alive_loop, daemon=True)
     t4.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT RISK MANAGEMENT UPGRADE DEPLOYED!</b>\n\n• Max 2.5% Stop-Loss Cap Applied\n• Max 3 Active Trades Limit Enforced\n• Large-Contract Exit Precision Active")
+    send_telegram_message("⚡ <b>RENDER BOT REJECTION-FREE UPGRADE DEPLOYED!</b>\n\n• Inactive Futures Symbols Cleaned (BONK/PEPE/SHIB/FLOKI Filtered)\n• Max 2.5% Stop-Loss Risk Cap Active\n• Large Contract Integer Exit Precision Active")
 
 start_background_loop()
 
