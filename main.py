@@ -41,18 +41,45 @@ def save_active_trades():
 TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
 CHAT_ID = "8938527650"
 
-# CLEANED WATCHLIST: Removed inactive derivatives symbols (BONK, PEPE, SHIB, FLOKI) to ensure 100% trade execution
-WATCHLIST = [
+# DYNAMIC COINDCX FUTURES WATCHLIST FETCHING: Automatically discovers all active CoinDCX futures market coins
+DEFAULT_FUTURES_WATCHLIST = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AVAX-USDT', 'DOGE-USDT', 
     'XRP-USDT', 'ADA-USDT', 'LINK-USDT', 'NEAR-USDT', 'BCH-USDT', 
     'SUI-USDT', 'LTC-USDT', 'DOT-USDT', 'OP-USDT', 'ARB-USDT', 
     'APT-USDT', 'RENDER-USDT', 'INJ-USDT', 'FET-USDT', 'TIA-USDT', 
     'WIF-USDT', 'AAVE-USDT', 'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 
     'ICP-USDT', 'SAND-USDT', 'SEI-USDT', 'ORDI-USDT', 'FIL-USDT', 
-    'JUP-USDT', 'STX-USDT', 'PENDLE-USDT', 'RUNE-USDT', 'IMX-USDT', 'KAS-USDT'
+    'JUP-USDT', 'STX-USDT', 'PENDLE-USDT', 'RUNE-USDT', 'IMX-USDT', 'KAS-USDT',
+    'ONDO-USDT', 'PEOPLE-USDT', 'GALA-USDT', 'CHZ-USDT', 'ALGO-USDT',
+    'PYTH-USDT', 'JTO-USDT', 'ENS-USDT', 'ENA-USDT', 'WLD-USDT', 'JASMY-USDT',
+    'STRK-USDT', 'BOME-USDT', 'NOT-USDT', 'TON-USDT', 'ZRO-USDT', 'POPCAT-USDT',
+    'MEW-USDT', 'NEIRO-USDT', 'TURBO-USDT', 'BLUR-USDT', 'TRX-USDT', 'XLM-USDT',
+    'LDO-USDT', 'CRV-USDT', 'SNX-USDT', 'MKR-USDT', 'COMP-USDT', 'DYDX-USDT'
 ]
 
 ctx = ssl._create_unverified_context()
+
+def fetch_dynamic_futures_watchlist():
+    try:
+        url = "https://public.coindcx.com/market_data/trade_pairs"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            pairs = json.loads(resp.read().decode('utf-8'))
+            if isinstance(pairs, list) and len(pairs) > 0:
+                fut_symbols = []
+                for p in pairs:
+                    pair_name = p.get('pair', '')
+                    if pair_name.startswith('B-') and ('USDT' in pair_name):
+                        coin = pair_name.replace('B-', '').replace('_USDT', '').replace('USDT', '').upper()
+                        if coin not in ['BONK', 'PEPE', 'SHIB', 'FLOKI']: # Exclude non-derivatives
+                            sym = f"{coin}-USDT"
+                            if sym not in fut_symbols: fut_symbols.append(sym)
+                if len(fut_symbols) >= 20:
+                    return fut_symbols
+    except Exception: pass
+    return DEFAULT_FUTURES_WATCHLIST
+
+WATCHLIST = fetch_dynamic_futures_watchlist()
 
 def fetch_klines(symbol, interval_str="15m", limit=100):
     coin = symbol.split('-')[0].upper()
@@ -285,7 +312,7 @@ def send_hourly_market_report():
         btc_inrm_price = fetch_coindcx_btc_inrm_price()
         bull_coins, bear_coins, neutral_coins = [], [], []
 
-        for symbol in WATCHLIST:
+        for symbol in WATCHLIST[:30]:
             clean_sym = symbol.replace("-", "_")
             try:
                 time.sleep(0.05)
@@ -307,7 +334,7 @@ def send_hourly_market_report():
             f"📊 <b>AUTOMATED HOURLY MARKET CONDITION REPORT</b>\n\n"
             f"⏰ <b>Time:</b> {now_str}\n"
             f"✅ <b>Render Cloud Status:</b> 100% ONLINE (24/7 Active)\n\n"
-            f"🔍 <b>Market Overview (36 CoinDCX Futures Symbols):</b>\n"
+            f"🔍 <b>Market Overview ({len(WATCHLIST)} CoinDCX Futures Symbols):</b>\n"
             f"• <b>BTC Current Price:</b> <code>${btc_inrm_price:,.1f}</code>\n"
             f"🟢 <b>In Bull Run:</b> <code>{len(bull_coins)} coins</code>\n"
             f"🔴 <b>In Bear Run:</b> <code>{len(bear_coins)} coins</code>\n"
@@ -368,7 +395,7 @@ def scan_now_endpoint():
                 report_lines.append(f"{symbol:12s} | Error: {e}")
         
         now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-        html = f"<h2>⚡ LIVE 36-COIN MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
+        html = f"<h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
         return html, 200
     except Exception as e:
         return f"<h3>⚠️ Scan Error:</h3><p>{e}</p>", 500
@@ -376,7 +403,7 @@ def scan_now_endpoint():
 @app.route('/close-sol')
 def close_sol_endpoint():
     try:
-        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="sell", cmp=108.23, leverage=10, custom_quantity=0.1)
+        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="sell", cmp=108.23, leverage=5, custom_quantity=0.1)
         with active_trades_lock:
             ACTIVE_TRADES.pop('SOL-USDT', None)
         save_active_trades()
@@ -388,7 +415,7 @@ def close_sol_endpoint():
 @app.route('/test-trade')
 def test_trade_endpoint():
     try:
-        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=112.20, margin_inr=100.0, leverage=10, custom_quantity=0.1)
+        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=112.20, margin_inr=500.0, leverage=5, custom_quantity=0.1)
         if res.get('success'):
             with active_trades_lock:
                 ACTIVE_TRADES['SOL-USDT'] = {
@@ -399,7 +426,7 @@ def test_trade_endpoint():
                     'tp2': 122.42,
                     'sl': 110.03,
                     'tp1_booked': False,
-                    'leverage': 10,
+                    'leverage': 5,
                     'entry_time': time.time()
                 }
             save_active_trades()
@@ -425,7 +452,7 @@ def catch_all(path):
             finally:
                 scan_lock.release()
         threading.Thread(target=async_scan, daemon=True).start()
-        return "⚡ OK - Live 36-Coin Market Scan Triggered! Check /scan-now for live audit table.", 200
+        return "⚡ OK - Live Dynamic Market Scan Triggered! Check /scan-now for live audit table.", 200
     return "⚡ OK - Market Scanner Currently Active", 200
 
 def run_scan():
@@ -434,7 +461,7 @@ def run_scan():
 
     for symbol in WATCHLIST:
         try:
-            time.sleep(0.1)
+            time.sleep(0.05)
             daily_klines = fetch_klines(symbol, '1d', 2)
             m15_klines = fetch_klines(symbol, '15m', 100)
             if not m15_klines or len(m15_klines) < 20: continue
@@ -465,8 +492,6 @@ def run_scan():
             is_not_choppy = True if vol_spike >= 1.15 else not (48 <= rsi_val <= 52)
             
             # OPTIMIZED DUAL-TRIGGER ENGINE:
-            # Trigger 1: High Vol Spike >= 1.30x AND Score >= 70
-            # Trigger 2: CPR TC + Supertrend Confluence (Vol Spike >= 1.15x AND Score >= 68)
             trigger_1 = (vol_spike >= 1.30 and score >= 70)
             trigger_2 = (vol_spike >= 1.15 and score >= 68)
             
@@ -511,15 +536,25 @@ def run_scan():
                     tp2 = round(max(cpr['r2'] * 0.998, tp1 * 1.025), 4)
                     cmp_str = f"{cmp}"
 
-                lev_num = 10 if clean_symbol in ['SOLUSDT', 'AVAXUSDT', 'BTCUSDT', 'ETHUSDT', 'TAOUSDT', 'RENDERUSDT', 'APTUSDT'] else (7 if score >= 85 else 5)
+                lev_num = 5  # Max 5x Leverage Cap: Keeps Liquidation 20% away so -2.5% SL ALWAYS triggers first!
                 
-                trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=500.0, leverage=lev_num)
+                # DYNAMIC MARGIN ALLOCATION PER COIN CONVICTION & LIQUIDITY TIER:
+                coin_name = clean_symbol[:-4]
+                if coin_name in ['BTC', 'ETH', 'SOL', 'AVAX', 'XRP', 'BCH', 'LTC']:
+                    coin_margin = 600.0  # Tier-1 High Liquidity Mega-Caps
+                elif score >= 85:
+                    coin_margin = 500.0  # A+ High-Conviction Breakouts
+                else:
+                    coin_margin = 400.0  # Standard Altcoin Signals
+                
+                trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=coin_margin, leverage=lev_num)
                 
                 if trade_res.get('success'):
                     exec_hdr = (
                         f"\n\n⚡ <b>AUTO-TRADE EXECUTED ON COINDCX FUTURES!</b>\n"
                         f"• <b>Status:</b> <code>SUCCESS (Order ID: {trade_res.get('order_id')})</code>\n"
-                        f"• <b>Quantity:</b> <code>{trade_res.get('quantity')} {clean_symbol[:-4]}</code>"
+                        f"• <b>Quantity:</b> <code>{trade_res.get('quantity')} {coin_name}</code>\n"
+                        f"• <b>Margin Allocated:</b> <code>₹{coin_margin:.0f} INR</code>"
                     )
                     
                     with active_trades_lock:
@@ -546,7 +581,7 @@ def run_scan():
                     f"🏆 <b>Signal Strength:</b> <code>{rating}</code>\n\n"
                     f"⚙️ <b>Trade Parameters:</b>\n"
                     f"• <b>Leverage:</b> <code>{lev_num}x (Isolated)</code>\n"
-                    f"• <b>Margin:</b> <code>₹500 INR (Per Trade)</code>\n"
+                    f"• <b>Margin Allocated:</b> <code>₹{coin_margin:.0f} INR</code>\n"
                     f"• <b>Live CMP:</b> <code>${cmp_str}</code>\n\n"
                     f"🔹 <b>Entry Range:</b> <code>{entry_min} - {entry_max}</code>\n"
                     f"🔹 <b>Stop Loss:</b> <code>{sl}</code> (Max 2.5% Risk Cap)\n"
@@ -560,7 +595,7 @@ def run_scan():
         except Exception: pass
 
 def monitor_active_positions():
-    time.sleep(10)
+    time.sleep(3)
     while True:
         try:
             with active_trades_lock:
@@ -568,10 +603,12 @@ def monitor_active_positions():
             
             for symbol in symbols_to_check:
                 try:
-                    time.sleep(0.5)
-                    m15_klines = fetch_klines(symbol, '15m', 5)
-                    if not m15_klines: continue
-                    cmp = m15_klines[-1][4]
+                    time.sleep(0.2)
+                    # HIGH-FREQUENCY 1-MINUTE CANDLE MONITORING (Catches 1m wicks instantly)
+                    m1_klines = fetch_klines(symbol, '1m', 3)
+                    if not m1_klines: continue
+                    cmp = m1_klines[-1][4]       # Current 1m Close Price
+                    low_price = m1_klines[-1][3] # Current 1m Low Wick Price
                     
                     with active_trades_lock:
                         if symbol not in ACTIVE_TRADES: continue
@@ -616,7 +653,7 @@ def monitor_active_positions():
                                 f"🔥 <b>100% Trade Successfully Closed!</b>\n"
                                 f"🏆 <b>Full Target Achieved at CMP:</b> <code>{cmp}</code>"
                             )
-                        elif cmp <= trade['sl']:
+                        elif cmp <= trade['sl'] or low_price <= trade['sl']:
                             res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=trade['remaining_qty'])
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
@@ -625,11 +662,11 @@ def monitor_active_positions():
                             send_telegram_message(
                                 f"🛡️ <b>STEP 4 EXECUTED: EXIT AT BREAKEVEN</b>\n\n"
                                 f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                                f"🔹 Remaining 20% Closed at Entry (<code>{cmp}</code>).\n"
+                                f"🔹 Remaining 20% Closed at Entry/SL (<code>{cmp}</code>).\n"
                                 f"✅ <b>Net Trade Profit:</b> <b>80% Cash Locked in Wallet</b>"
                             )
 
-                    elif not trade['tp1_booked'] and cmp <= trade['sl']:
+                    elif not trade['tp1_booked'] and (cmp <= trade['sl'] or low_price <= trade['sl']):
                         res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=trade['total_qty'])
                         with active_trades_lock:
                             ACTIVE_TRADES.pop(symbol, None)
@@ -638,13 +675,13 @@ def monitor_active_positions():
                         send_telegram_message(
                             f"🛑 <b>STOP LOSS EXECUTED VIA BOT MONITOR</b>\n\n"
                             f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                            f"Position closed at Stop Loss: <code>{cmp}</code>"
+                            f"Position closed at Stop Loss: <code>{cmp}</code> (Low Wick: <code>{low_price}</code>)"
                         )
                 except Exception as e:
                     print(f"Error monitoring {symbol}: {e}")
         except Exception as e:
             print(f"Position monitor exception: {e}")
-        time.sleep(10)
+        time.sleep(2)
 
 def start_background_loop():
     def run_loop():
@@ -692,7 +729,7 @@ def start_background_loop():
     t4 = threading.Thread(target=run_keep_alive_loop, daemon=True)
     t4.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT REJECTION-FREE UPGRADE DEPLOYED!</b>\n\n• Inactive Futures Symbols Cleaned (BONK/PEPE/SHIB/FLOKI Filtered)\n• Max 2.5% Stop-Loss Risk Cap Active\n• Large Contract Integer Exit Precision Active")
+    send_telegram_message("⚡ <b>RENDER BOT DYNAMIC FUTURES DISCOVERY DEPLOYED!</b>\n\n• Auto-Discovers All Active CoinDCX Futures Pairs\n• Dynamic Coin Margin Allocation Active (₹400 - ₹600 INR)\n• 1m Low-Wick 2s Monitor & 5x Leverage Safety Active")
 
 start_background_loop()
 
