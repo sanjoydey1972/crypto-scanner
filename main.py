@@ -353,6 +353,46 @@ def fetch_coindcx_wallet_balance_inr():
     except Exception: pass
     return 2500.0
 
+def sync_coindcx_live_positions():
+    api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
+    secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
+    if not api_key or not secret_key: return
+    try:
+        ts = int(round(time.time() * 1000))
+        json_body = json.dumps({"timestamp": ts}, separators=(',', ':'))
+        signature = hmac.new(secret_key.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
+        headers = {'Content-Type': 'application/json', 'X-AUTH-APIKEY': api_key, 'X-AUTH-SIGNATURE': signature, 'User-Agent': 'Mozilla/5.0'}
+        url = "https://api.coindcx.com/exchange/v1/derivatives/futures/positions"
+        req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers, method='POST')
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            positions = json.loads(resp.read().decode('utf-8'))
+            if isinstance(positions, list):
+                with active_trades_lock:
+                    for p in positions:
+                        pair = p.get('pair', '')
+                        qty = float(p.get('total_quantity', p.get('quantity', 0)))
+                        if qty > 0 and pair.startswith('B-'):
+                            coin = pair.replace('B-', '').replace('_USDT', '').replace('USDT', '')
+                            sym = f"{coin}-USDT"
+                            entry_price = float(p.get('entry_price', p.get('avg_price', 0)))
+                            if sym not in ACTIVE_TRADES and entry_price > 0:
+                                sl = round(entry_price * 0.975, 6) # -2.5% max SL
+                                tp1 = round(entry_price * 1.018, 6)
+                                tp2 = round(entry_price * 1.045, 6)
+                                ACTIVE_TRADES[sym] = {
+                                    'entry_price': entry_price,
+                                    'total_qty': qty,
+                                    'remaining_qty': qty,
+                                    'tp1': tp1,
+                                    'tp2': tp2,
+                                    'sl': sl,
+                                    'tp1_booked': False,
+                                    'leverage': int(p.get('leverage', 5)),
+                                    'entry_time': time.time()
+                                }
+                    save_active_trades()
+    except Exception: pass
+
 def send_hourly_market_report():
     try:
         btc_inrm_price = fetch_coindcx_btc_inrm_price()
@@ -645,6 +685,7 @@ def monitor_active_positions():
     time.sleep(3)
     while True:
         try:
+            sync_coindcx_live_positions()
             with active_trades_lock:
                 symbols_to_check = list(ACTIVE_TRADES.keys())
             
@@ -774,7 +815,7 @@ def start_background_loop():
     t4 = threading.Thread(target=run_keep_alive_loop, daemon=True)
     t4.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT DYNAMIC FUTURES DISCOVERY DEPLOYED!</b>\n\n• Auto-Discovers All Active CoinDCX Futures Pairs\n• Capital-Proportional Margin Scaling Active\n• 1m Low-Wick 2s Monitor & 5x Leverage Safety Active")
+    send_telegram_message("⚡ <b>RENDER BOT DYNAMIC FUTURES DISCOVERY DEPLOYED!</b>\n\n• Auto-Discovers All Active CoinDCX Futures Pairs\n• CoinDCX Live Position Auto-Sync Active\n• Capital-Proportional Margin Scaling Active\n• 1m Low-Wick 2s Monitor & 5x Leverage Safety Active")
 
 start_background_loop()
 
