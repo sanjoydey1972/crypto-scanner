@@ -752,16 +752,17 @@ def monitor_active_positions():
                                 f"✅ <b>Net Trade Profit:</b> <b>80% Cash Locked in Wallet</b>"
                             )
 
-                    elif not trade['tp1_booked'] and (cmp <= trade['sl'] or low_price <= trade['sl']):
+                    elif not trade['tp1_booked'] and (cmp <= trade['sl'] or low_price <= trade['sl'] or (trade['entry_price'] > 0 and (cmp - trade['entry_price'])/trade['entry_price'] <= -0.024)):
                         res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade['leverage'], custom_quantity=trade['total_qty'])
                         with active_trades_lock:
                             ACTIVE_TRADES.pop(symbol, None)
                         save_active_trades()
                         
                         send_telegram_message(
-                            f"🛑 <b>STOP LOSS EXECUTED VIA BOT MONITOR</b>\n\n"
+                            f"🛑 <b>STOP LOSS EXECUTED VIA BOT MONITOR (-2.5% RISK CAP)</b>\n\n"
                             f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                            f"Position closed at Stop Loss: <code>{cmp}</code> (Low Wick: <code>{low_price}</code>)"
+                            f"Position closed at Stop Loss: <code>{cmp}</code> (Low Wick: <code>{low_price}</code>)\n"
+                            f"🛡️ <i>Capped at Max -2.5% Price Drop (-12.5% ROE)</i>"
                         )
                 except Exception as e:
                     print(f"Error monitoring {symbol}: {e}")
@@ -815,7 +816,7 @@ def start_background_loop():
     t4 = threading.Thread(target=run_keep_alive_loop, daemon=True)
     t4.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT DYNAMIC FUTURES DISCOVERY DEPLOYED!</b>\n\n• Auto-Discovers All Active CoinDCX Futures Pairs\n• CoinDCX Live Position Auto-Sync Active\n• Capital-Proportional Margin Scaling Active\n• 1m Low-Wick 2s Monitor & 5x Leverage Safety Active")
+    send_telegram_message("⚡ <b>RENDER BOT DYNAMIC FUTURES DISCOVERY DEPLOYED!</b>\n\n• Auto-Discovers All Active CoinDCX Futures Pairs\n• CoinDCX Live Position Auto-Sync Active\n• Capital-Proportional Margin Scaling Active\n• Strict -2.4% Price Drop (-12% ROE) Hard Cut-off Active\n• 1m Low-Wick 2s Monitor & 5x Leverage Safety Active")
 
 start_background_loop()
 
