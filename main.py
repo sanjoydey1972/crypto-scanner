@@ -84,11 +84,13 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
     coin = symbol.split('-')[0].upper()
     clean_sym = f"{coin}USDT"
     
+    # 1000x Multiplier symbol alias mapping for meme/micro-cap tokens (Includes NOT)
     alt_symbols = [clean_sym]
-    if coin in ['POPCAT', 'MEW', 'CAT', 'NEIRO', 'TURBO', 'SATS', 'RATS', 'BOME', 'WHY', 'MOG', 'PEOPLE']:
+    if coin in ['POPCAT', 'MEW', 'CAT', 'NEIRO', 'TURBO', 'SATS', 'RATS', 'BOME', 'WHY', 'MOG', 'PEOPLE', 'NOT']:
         alt_symbols.append(f"1000{coin}USDT")
+        alt_symbols.append(f"10000{coin}USDT")
 
-    # Provider 1: Binance Vision Public Data API
+    # Provider 1: Binance Vision Public Data API (No Geoblock)
     for sym_variant in alt_symbols:
         try:
             url = f"https://data-api.binance.vision/api/v3/klines?symbol={sym_variant}&interval={interval_str}&limit={limit}"
