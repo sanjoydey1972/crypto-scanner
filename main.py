@@ -215,7 +215,7 @@ def send_telegram_message(message_text):
             'disable_web_page_preview': 'true'
         }).encode('utf-8')
         req = urllib.request.Request(url, data=payload, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+        with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
             return True
     except Exception as e:
         print(f"Telegram HTML error: {e}", flush=True)
@@ -227,7 +227,7 @@ def send_telegram_message(message_text):
                 'disable_web_page_preview': 'true'
             }).encode('utf-8')
             req = urllib.request.Request(url, data=payload, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
                 return True
         except Exception as e2:
             print(f"Telegram Plain Text fallback error: {e2}", flush=True)
@@ -538,10 +538,11 @@ def test_trade_endpoint():
                 }
             save_active_trades()
         
+        safe_res = html.escape(json.dumps(res))
         msg = (
             f"🧪 <b>SYSTEM DIAGNOSTIC TEST ALERT</b>\n\n"
             f"• <b>Render Cloud Bot:</b> 100% CONNECTED\n"
-            f"• <b>CoinDCX Execution Test:</b> <code>{res}</code>\n"
+            f"• <b>CoinDCX Execution Test:</b> <code>{safe_res}</code>\n"
             f"• <b>Timestamp:</b> {datetime.now().strftime('%d-%m-%Y %H:%M:%S')}"
         )
         send_telegram_message(msg)
