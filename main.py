@@ -43,7 +43,6 @@ def save_active_trades():
 TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
 CHAT_ID = "8938527650"
 
-# DYNAMIC COINDCX FUTURES WATCHLIST FETCHING: Automatically discovers all active CoinDCX futures market coins
 DEFAULT_FUTURES_WATCHLIST = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AVAX-USDT', 'DOGE-USDT', 
     'XRP-USDT', 'ADA-USDT', 'LINK-USDT', 'NEAR-USDT', 'BCH-USDT', 
@@ -73,7 +72,7 @@ def fetch_dynamic_futures_watchlist():
                     pair_name = p.get('pair', '')
                     if pair_name.startswith('B-') and ('USDT' in pair_name):
                         coin = pair_name.replace('B-', '').replace('_USDT', '').replace('USDT', '').upper()
-                        if coin not in ['BONK', 'PEPE', 'SHIB', 'FLOKI']: # Exclude non-derivatives
+                        if coin not in ['BONK', 'PEPE', 'SHIB', 'FLOKI']:
                             sym = f"{coin}-USDT"
                             if sym not in fut_symbols: fut_symbols.append(sym)
                 if len(fut_symbols) >= 20:
@@ -87,13 +86,11 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
     coin = symbol.split('-')[0].upper()
     clean_sym = f"{coin}USDT"
     
-    # 1000x Multiplier symbol alias mapping for meme/micro-cap tokens
     alt_symbols = [clean_sym]
     if coin in ['POPCAT', 'MEW', 'CAT', 'NEIRO', 'TURBO', 'SATS', 'RATS', 'BOME', 'WHY', 'MOG', 'PEOPLE', 'NOT']:
         alt_symbols.append(f"1000{coin}USDT")
         alt_symbols.append(f"10000{coin}USDT")
 
-    # Provider 1: Binance Vision Public Data API (No Geoblock)
     for sym_variant in alt_symbols:
         try:
             url = f"https://data-api.binance.vision/api/v3/klines?symbol={sym_variant}&interval={interval_str}&limit={limit}"
@@ -107,8 +104,7 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
                     return formatted
         except Exception: pass
 
-    # Provider 2: CoinDCX Public Candles API (Tries B-COIN_USDT and B-COINUSDT)
-    coindcx_pairs = [f"B-{coin}_USDT", f"B-{coin}USDT", f"B-1000{coin}_USDT"]
+    coindcx_pairs = [f"B-1000{coin}_USDT", f"B-1000{coin}USDT", f"B-{coin}_USDT", f"B-{coin}USDT"]
     for pair_str in coindcx_pairs:
         try:
             url = f"https://public.coindcx.com/market_data/candles/?pair={pair_str}&interval={interval_str}"
@@ -130,7 +126,6 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
                         return formatted
         except Exception: pass
 
-    # Provider 3: Bybit Public Market API (Supports 1m, 5m, 15m, 1d)
     bybit_interval = "1" if interval_str == "1m" else ("5" if interval_str == "5m" else ("15" if interval_str == "15m" else ("D" if interval_str == "1d" else "15")))
     for sym_variant in alt_symbols:
         try:
@@ -147,7 +142,6 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
                     return formatted
         except Exception: pass
 
-    # Provider 4: MEXC Public Market API
     for sym_variant in alt_symbols:
         try:
             url = f"https://api.mexc.com/api/v3/klines?symbol={sym_variant}&interval={interval_str}&limit={limit}"
@@ -161,87 +155,83 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
                     return formatted
         except Exception: pass
 
-    return []
-
-def calculate_rsi(prices, period=14):
-    if len(prices) < period + 1: return 50.0
-    deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
-    gains = [d if d > 0 else 0 for d in deltas]
-    losses = [-d if d < 0 else 0 for d in deltas]
-    avg_gain = sum(gains[:period]) / period
-    avg_loss = sum(losses[:period]) / period
-    for i in range(period, len(deltas)):
-        avg_gain = (avg_gain * 13 + gains[i]) / 14
-        avg_loss = (avg_loss * 13 + losses[i]) / 14
-    if avg_loss == 0: return 100.0
-    rs = avg_gain / avg_loss
-    return 100.0 - (100.0 / (1.0 + rs))
-
-def calculate_volume_spike(klines, period=20):
-    volumes = [float(k[5]) for k in klines]
-    current_vol = volumes[-1]
-    avg_vol = sum(volumes[-period-1:-1]) / period
-    return (current_vol / avg_vol) if avg_vol > 0 else 1.0
+    return None
 
 def calculate_cpr(high, low, close):
     pivot = (high + low + close) / 3.0
     bc = (high + low) / 2.0
     tc = (pivot - bc) + pivot
-    return {'pivot': pivot, 'tc': max(tc, bc), 'bc': min(tc, bc), 'r1': 2.0*pivot - low, 'r2': pivot + (high - low)}
+    top_cpr = max(tc, bc)
+    bottom_cpr = min(tc, bc)
+    r1 = (2 * pivot) - low
+    r2 = pivot + (high - low)
+    return {'pivot': pivot, 'tc': top_cpr, 'bc': bottom_cpr, 'r1': r1, 'r2': r2}
 
 def calculate_supertrend(klines, period=10, multiplier=3.0):
-    closes = [float(k[4]) for k in klines]
-    highs = [float(k[2]) for k in klines]
-    lows = [float(k[3]) for k in klines]
-    tr_list = [highs[0] - lows[0]]
-    for i in range(1, len(klines)):
-        tr_list.append(max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1])))
-    atr_list = []
-    for i in range(len(tr_list)):
-        if i < period - 1: atr_list.append(0.0)
-        elif i == period - 1: atr_list.append(sum(tr_list[:period]) / period)
-        else: atr_list.append((atr_list[-1] * (period - 1) + tr_list[i]) / period)
-    st_val, st_dir = [0.0]*len(klines), [1]*len(klines)
-    basic_ub, basic_lb = [0.0]*len(klines), [0.0]*len(klines)
-    final_ub, final_lb = [0.0]*len(klines), [0.0]*len(klines)
-    for i in range(len(klines)):
-        hl2 = (highs[i] + lows[i]) / 2.0
-        basic_ub[i], basic_lb[i] = hl2 + multiplier * atr_list[i], hl2 - multiplier * atr_list[i]
-        if i == 0:
-            final_ub[i], final_lb[i], st_val[i] = basic_ub[i], basic_lb[i], basic_ub[i]
-        else:
-            final_ub[i] = basic_ub[i] if basic_ub[i] < final_ub[i-1] or closes[i-1] > final_ub[i-1] else final_ub[i-1]
-            final_lb[i] = basic_lb[i] if basic_lb[i] > final_lb[i-1] or closes[i-1] < final_lb[i-1] else final_lb[i-1]
-            if closes[i] > final_ub[i-1]: st_dir[i] = 1
-            elif closes[i] < final_lb[i-1]: st_dir[i] = -1
-            else: st_dir[i] = st_dir[i-1]
-            st_val[i] = final_lb[i] if st_dir[i] == 1 else final_ub[i]
-    return st_dir[-1], st_val[-1]
+    try:
+        if len(klines) < period + 1: return 1, klines[-1][4] * 0.98
+        hl2 = [(k[2] + k[3]) / 2.0 for k in klines]
+        tr = []
+        for i in range(1, len(klines)):
+            h, l, prev_c = klines[i][2], klines[i][3], klines[i-1][4]
+            tr.append(max(h - l, abs(h - prev_c), abs(l - prev_c)))
+        atr = sum(tr[-period:]) / period
+        up = hl2[-1] - (multiplier * atr)
+        dn = hl2[-1] + (multiplier * atr)
+        close = klines[-1][4]
+        trend = 1 if close > up else -1
+        st_val = up if trend == 1 else dn
+        return trend, st_val
+    except Exception:
+        return 1, klines[-1][4] * 0.98
 
-def send_telegram_message(text):
+def calculate_rsi(close_prices, period=14):
+    if len(close_prices) < period + 1: return 50.0
+    gains, losses = [], []
+    for i in range(1, len(close_prices)):
+        change = close_prices[i] - close_prices[i-1]
+        gains.append(change if change > 0 else 0)
+        losses.append(abs(change) if change < 0 else 0)
+    avg_gain = sum(gains[-period:]) / period
+    avg_loss = sum(losses[-period:]) / period
+    if avg_loss == 0: return 100.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+def calculate_volume_spike(klines, period=20):
+    if len(klines) < period + 1: return 1.0
+    current_vol = klines[-1][5]
+    avg_vol = sum([k[5] for k in klines[-(period+1):-1]]) / period
+    if avg_vol == 0: return 1.0
+    return current_vol / avg_vol
+
+def send_telegram_message(message_text):
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        data = urllib.parse.urlencode({'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'HTML'}).encode('utf-8')
-        req = urllib.request.Request(url, data=data, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx) as resp:
-            res = json.loads(resp.read().decode('utf-8'))
-            if res.get('ok'):
-                return True
+        payload = urllib.parse.urlencode({
+            'chat_id': CHAT_ID,
+            'text': message_text,
+            'parse_mode': 'HTML',
+            'disable_web_page_preview': 'true'
+        }).encode('utf-8')
+        req = urllib.request.Request(url, data=payload, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            return True
     except Exception as e:
-        print(f"Telegram HTML error: {e}")
-
-    # Plain text fallback to guarantee 100% delivery even if HTML entity parsing fails
-    try:
-        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        plain_text = re.sub(r'<[^>]*>', '', text)
-        data = urllib.parse.urlencode({'chat_id': CHAT_ID, 'text': plain_text}).encode('utf-8')
-        req = urllib.request.Request(url, data=data, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx) as resp:
-            res = json.loads(resp.read().decode('utf-8'))
-            return res.get('ok', False)
-    except Exception as e2:
-        print(f"Telegram Plain Text fallback error: {e2}")
-        return False
+        print(f"Telegram HTML error: {e}", flush=True)
+        try:
+            clean_text = re.sub(r'<[^>]+>', '', message_text)
+            payload = urllib.parse.urlencode({
+                'chat_id': CHAT_ID,
+                'text': clean_text,
+                'disable_web_page_preview': 'true'
+            }).encode('utf-8')
+            req = urllib.request.Request(url, data=payload, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+                return True
+        except Exception as e2:
+            print(f"Telegram Plain Text fallback error: {e2}", flush=True)
+            return False
 
 def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0, leverage=5, custom_quantity=None):
     api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
@@ -259,11 +249,10 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
         position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
         raw_qty = position_value_usdt / cmp if cmp > 0 else 0.1
         
-        # QUANTITY STEP-SIZE CALIBRATION (Integer step-size for quantities >= 50):
         if coin == 'BTC': quantity = round(max(0.001, raw_qty), 3)
         elif coin in ['ETH', 'SOL']: quantity = round(max(0.1, raw_qty), 1)
-        elif raw_qty >= 50: quantity = float(int(round(raw_qty)))  # Whole integer for large contract numbers (>50)
-        elif raw_qty >= 1: quantity = round(raw_qty, 1)  # Strictly 1 decimal -> Divisible by 0.1!
+        elif raw_qty >= 50: quantity = float(int(round(raw_qty)))
+        elif raw_qty >= 1: quantity = round(raw_qty, 1)
         else: quantity = round(max(0.1, raw_qty), 1)
         
     if quantity <= 0: quantity = 0.1
@@ -272,56 +261,42 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
     spot_url = "https://api.coindcx.com/exchange/v1/orders/create"
     ts = int(round(time.time() * 1000))
 
-    endpoint_variants = [
-        (futures_url, {
+    pairs_to_try = []
+    if coin in ['POPCAT', 'MEW', 'CAT', 'NEIRO', 'TURBO', 'SATS', 'RATS', 'BOME', 'WHY', 'MOG', 'PEOPLE', 'NOT', 'FLOKI', 'BONK', 'PEPE', 'SHIB']:
+        pairs_to_try.extend([f"B-1000{coin}_USDT", f"B-1000{coin}USDT"])
+    pairs_to_try.extend([f"B-{coin}_USDT", f"B-{coin}USDT"])
+
+    endpoint_variants = []
+    for pair_name in pairs_to_try:
+        endpoint_variants.append((futures_url, {
             "timestamp": ts,
             "order": {
                 "side": side.lower(),
-                "pair": f"B-{coin}_USDT",
+                "pair": pair_name,
                 "order_type": "market_order",
                 "total_quantity": quantity,
                 "leverage": leverage,
                 "notification": "no_notification"
             }
-        }),
-        (futures_url, {
-            "timestamp": ts,
-            "order": {
-                "side": side.lower(),
-                "pair": f"B-{coin}USDT",
-                "order_type": "market_order",
-                "total_quantity": quantity,
-                "leverage": leverage,
-                "notification": "no_notification"
-            }
-        }),
-        (futures_url, {
+        }))
+        endpoint_variants.append((futures_url, {
             "timestamp": ts,
             "side": side.lower(),
-            "pair": f"B-{coin}_USDT",
+            "pair": pair_name,
             "order_type": "market_order",
             "total_quantity": quantity,
             "leverage": leverage,
             "notification": "no_notification"
-        }),
-        (futures_url, {
-            "timestamp": ts,
-            "side": side.lower(),
-            "pair": f"B-{coin}USDT",
-            "order_type": "market_order",
-            "total_quantity": quantity,
-            "leverage": leverage,
-            "notification": "no_notification"
-        }),
-        (spot_url, {
-            "timestamp": ts,
-            "side": side.lower(),
-            "order_type": "market_order",
-            "market": f"{coin}INR",
-            "total_quantity": quantity,
-            "leverage": leverage
-        })
-    ]
+        }))
+
+    endpoint_variants.append((spot_url, {
+        "timestamp": ts,
+        "side": side.lower(),
+        "order_type": "market_order",
+        "market": f"{coin}INR",
+        "total_quantity": quantity,
+        "leverage": leverage
+    }))
 
     err_logs = []
     for idx, (target_url, body) in enumerate(endpoint_variants, 1):
@@ -340,6 +315,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
                 order_id = "EXECUTED"
                 if isinstance(data, dict): order_id = data.get('id', data.get('order_id', 'EXECUTED'))
                 elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict): order_id = data[0].get('id', 'EXECUTED')
+                print(f"[{datetime.now()}] ✅ CoinDCX Order Placed: {symbol} Qty: {quantity} OrderID: {order_id}", flush=True)
                 return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': body.get('pair', body.get('market', f"B-{coin}_USDT"))}
         except urllib.error.HTTPError as e:
             try:
@@ -351,6 +327,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
             err_logs.append(f"V{idx}: {e}")
 
     last_err = " | ".join(err_logs) if err_logs else "Unknown Error"
+    print(f"[{datetime.now()}] ⚠️ CoinDCX Order Failed: {symbol} Err: {last_err}", flush=True)
     return {'success': False, 'error': last_err}
 
 def fetch_live_btc_price():
@@ -413,7 +390,7 @@ def sync_coindcx_live_positions():
                             sym = f"{coin}-USDT"
                             entry_price = float(p.get('entry_price', p.get('avg_price', 0)))
                             if sym not in ACTIVE_TRADES and entry_price > 0:
-                                sl = round(entry_price * 0.975, 6) # -2.5% max SL
+                                sl = round(entry_price * 0.975, 6)
                                 tp1 = round(entry_price * 1.018, 6)
                                 tp2 = round(entry_price * 1.045, 6)
                                 ACTIVE_TRADES[sym] = {
@@ -468,12 +445,18 @@ def send_hourly_market_report():
         )
         send_telegram_message(msg)
     except Exception as e:
-        print(f"Hourly report error: {e}")
+        print(f"Hourly report error: {e}", flush=True)
 
 @app.route('/scan-now')
 def scan_now_endpoint():
     try:
+        run_scan()
+        
         report_lines = []
+        sync_coindcx_live_positions()
+        with active_trades_lock:
+            active_symbols = list(ACTIVE_TRADES.keys())
+
         for symbol in WATCHLIST:
             try:
                 time.sleep(0.05)
@@ -483,8 +466,7 @@ def scan_now_endpoint():
                     continue
                 cmp = m15_klines[-1][4]
                 daily_klines = fetch_klines(symbol, '1d', 2)
-                if not daily_klines or len(daily_klines) < 2: 
-                    daily_klines = m15_klines # Fallback
+                if not daily_klines or len(daily_klines) < 2: daily_klines = m15_klines
                 cpr = calculate_cpr(daily_klines[0][2], daily_klines[0][3], daily_klines[0][4])
                 st_dir, st_val = calculate_supertrend(m15_klines)
                 close_prices = [k[4] for k in m15_klines]
@@ -506,8 +488,10 @@ def scan_now_endpoint():
                 t2 = (cmp > cpr['r1'] and vol_spike >= 0.95 and score >= 65)
                 t3 = (vol_spike >= 0.95 and score >= 68)
                 
-                if is_above_cpr_tc and is_st_green and (t1 or t2 or t3):
-                    status = "🔥 TRIGGERED AUTO-TRADE"
+                if symbol in active_symbols:
+                    status = "🔥 ACTIVE OPEN POSITION ON COINDCX"
+                elif is_above_cpr_tc and is_st_green and (t1 or t2 or t3):
+                    status = "⚡ BREAKOUT CANDIDATE (Order Trigger Attempted)"
                 elif is_above_cpr_tc and is_st_green:
                     status = f"🟢 Bullish (Vol {vol_spike:.2f}x / Score {score})"
                 else:
@@ -579,6 +563,7 @@ def catch_all(path):
     return "⚡ OK - Market Scanner Currently Active", 200
 
 def run_scan():
+    print(f"[{datetime.now()}] 🔍 Running live 36-coin futures scan loop...", flush=True)
     state = load_state()
     candidates = []
 
@@ -597,25 +582,20 @@ def run_scan():
             rsi_val = calculate_rsi(close_prices)
             vol_spike = calculate_volume_spike(m15_klines)
             
-            # REFINED SENSITIVE SCORING ENGINE:
             score = 50
-            if cmp > cpr['tc']: score += 15       # Reward breaking CPR TC
-            if cmp > cpr['r1']: score += 15       # Reward crossing R1
-            if 45 <= rsi_val <= 82: score += 20   # Expanded healthy bullish RSI range (up to 82)
+            if cmp > cpr['tc']: score += 15
+            if cmp > cpr['r1']: score += 15
+            if 45 <= rsi_val <= 82: score += 20
             
             if vol_spike >= 1.50: score += 20
             elif vol_spike >= 1.15: score += 10
-            elif vol_spike >= 0.95: score += 5    # Accept steady volume
+            elif vol_spike >= 0.95: score += 5
             score = max(0, min(100, score))
             
             rating = "A+ (Strong Breakout) 👑" if score >= 80 else ("A (Solid Breakout) 🥇" if score >= 65 else "B (Moderate)")
             is_above_cpr_tc = cmp > cpr['tc']
             is_supertrend_green = st_dir == 1
             
-            # FLEXIBLE DYNAMIC 3-WAY TRIGGER ENGINE:
-            # Trigger 1: High Vol Spike >= 1.15x AND Score >= 65
-            # Trigger 2: Resistance R1 Breakout (CMP > R1) AND Vol >= 0.95x AND Score >= 65
-            # Trigger 3: CPR TC + Supertrend Confluence (Vol >= 0.95x AND Score >= 68)
             trigger_1 = (vol_spike >= 1.15 and score >= 65)
             trigger_2 = (cmp > cpr['r1'] and vol_spike >= 0.95 and score >= 65)
             trigger_3 = (vol_spike >= 0.95 and score >= 68)
@@ -626,8 +606,6 @@ def run_scan():
 
     candidates.sort(key=lambda x: x['score'], reverse=True)
     
-    # 5 MAX CONCURRENT ACTIVE OPEN TRADES CAP (Expanded from 3 to 5 slots):
-    # Telegram alerts will ALWAYS deliver 100% of signals even if 5 slots are full or exchange margin is exhausted!
     with active_trades_lock:
         active_count = len(ACTIVE_TRADES)
 
@@ -635,49 +613,47 @@ def run_scan():
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
         try:
             last_sent = state.get(symbol, 0)
-            if time.time() - last_sent > 1800:
+            if time.time() - last_sent > 600:
                 clean_symbol = symbol.replace("-", "")
+                print(f"[{datetime.now()}] 🔥 Breakout Candidate Triggered: {symbol} Score: {score}", flush=True)
                 
-                # DYNAMIC DECIMAL FORMATTING & STRICT MAX 2.5% STOP-LOSS RISK CAP:
                 if cmp < 0.001:
                     entry_min, entry_max = round(cmp * 0.998, 8), round(cmp * 1.001, 8)
                     sl_raw = min(cpr['tc'], st_val) * 0.995
-                    sl = round(max(sl_raw, cmp * 0.975), 8) # Max 2.5% SL Risk Cap
+                    sl = round(max(sl_raw, cmp * 0.975), 8)
                     tp1 = round(max(cpr['r1'] * 0.998, cmp * 1.018), 8)
                     tp2 = round(max(cpr['r2'] * 0.998, tp1 * 1.025), 8)
                     cmp_str = f"{cmp:.8f}"
                 elif cmp < 1.0:
                     entry_min, entry_max = round(cmp * 0.998, 6), round(cmp * 1.001, 6)
                     sl_raw = min(cpr['tc'], st_val) * 0.995
-                    sl = round(max(sl_raw, cmp * 0.975), 6) # Max 2.5% SL Risk Cap
+                    sl = round(max(sl_raw, cmp * 0.975), 6)
                     tp1 = round(max(cpr['r1'] * 0.998, cmp * 1.018), 6)
                     tp2 = round(max(cpr['r2'] * 0.998, tp1 * 1.025), 6)
                     cmp_str = f"{cmp:.6f}"
                 else:
                     entry_min, entry_max = round(cmp * 0.998, 4), round(cmp * 1.001, 4)
                     sl_raw = min(cpr['tc'], st_val) * 0.995
-                    sl = round(max(sl_raw, cmp * 0.975), 4) # Max 2.5% SL Risk Cap
+                    sl = round(max(sl_raw, cmp * 0.975), 4)
                     tp1 = round(max(cpr['r1'] * 0.998, cmp * 1.018), 4)
                     tp2 = round(max(cpr['r2'] * 0.998, tp1 * 1.025), 4)
                     cmp_str = f"{cmp}"
 
-                lev_num = 5  # Max 5x Leverage Cap: Keeps Liquidation 20% away so -2.5% SL ALWAYS triggers first!
+                lev_num = 5
                 
-                # CAPITAL-PROPORTIONAL MARGIN SCALING (Auto-Scaled from Wallet Balance):
                 coin_name = clean_symbol[:-4]
                 wallet_balance_inr = fetch_coindcx_wallet_balance_inr()
                 capital_scale_factor = max(1.0, wallet_balance_inr / 2500.0)
                 
                 if coin_name in ['BTC', 'ETH', 'SOL', 'AVAX', 'XRP', 'BCH', 'LTC']:
-                    base_margin = 450.0  # Tier-1 High Liquidity Mega-Caps
+                    base_margin = 450.0
                 elif score >= 85:
-                    base_margin = 380.0  # A+ High-Conviction Breakouts
+                    base_margin = 380.0
                 else:
-                    base_margin = 320.0  # Standard Altcoin Signals
+                    base_margin = 320.0
                 
                 coin_margin = base_margin * capital_scale_factor
 
-                # 5 MAX CONCURRENT OPEN SLOTS CONTROL:
                 if active_count >= 5:
                     exec_hdr = f"\n\n📢 <b>SIGNAL ONLY (CoinDCX Auto-Execution Skipped):</b>\n<code>Max 5 Active Open Trade Slots Full ({active_count}/5 Active)</code>"
                 else:
@@ -740,11 +716,10 @@ def monitor_active_positions():
             for symbol in symbols_to_check:
                 try:
                     time.sleep(0.2)
-                    # HIGH-FREQUENCY 1-MINUTE CANDLE MONITORING (Catches 1m wicks instantly)
                     m1_klines = fetch_klines(symbol, '1m', 3)
                     if not m1_klines: continue
-                    cmp = m1_klines[-1][4]       # Current 1m Close Price
-                    low_price = m1_klines[-1][3] # Current 1m Low Wick Price
+                    cmp = m1_klines[-1][4]
+                    low_price = m1_klines[-1][3]
                     
                     with active_trades_lock:
                         if symbol not in ACTIVE_TRADES: continue
@@ -753,7 +728,6 @@ def monitor_active_positions():
                     clean_coin = symbol.split('-')[0].upper()
                     
                     if cmp >= trade['tp1'] and not trade['tp1_booked']:
-                        # INTEGER STEP-SIZE EXIT FORMATTER FOR LARGE CONTRACTS (>=50):
                         if trade['total_qty'] >= 50:
                             qty_80 = float(int(round(trade['total_qty'] * 0.8)))
                         else:
@@ -815,9 +789,9 @@ def monitor_active_positions():
                             f"🛡️ <i>Capped at Max -2.5% Price Drop (-12.5% ROE)</i>"
                         )
                 except Exception as e:
-                    print(f"Error monitoring {symbol}: {e}")
+                    print(f"Error monitoring {symbol}: {e}", flush=True)
         except Exception as e:
-            print(f"Position monitor exception: {e}")
+            print(f"Position monitor exception: {e}", flush=True)
         time.sleep(2)
 
 def start_background_loop():
@@ -827,7 +801,7 @@ def start_background_loop():
             try:
                 run_scan()
             except Exception as e:
-                print(f"Scan loop exception: {e}")
+                print(f"Scan loop exception: {e}", flush=True)
             time.sleep(180)
 
     def run_hourly_report_loop():
@@ -838,7 +812,7 @@ def start_background_loop():
                 time.sleep(3600)
                 send_hourly_market_report()
             except Exception as e:
-                print(f"Hourly loop exception: {e}")
+                print(f"Hourly loop exception: {e}", flush=True)
 
     def run_keep_alive_loop():
         time.sleep(15)
@@ -849,8 +823,8 @@ def start_background_loop():
                 with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
                     pass
             except Exception as e:
-                print(f"Keep-alive error: {e}")
-            time.sleep(240)
+                print(f"Keep-alive error: {e}", flush=True)
+            time.sleep(180)
 
     t1 = threading.Thread(target=run_loop, daemon=True)
     t1.start()
@@ -870,5 +844,5 @@ start_background_loop()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    print(f"Starting server on port {port}...")
+    print(f"Starting server on port {port}...", flush=True)
     app.run(host="0.0.0.0", port=port)
