@@ -472,8 +472,10 @@ def scan_now_endpoint():
                 t1 = (vol_spike >= 1.30 and score >= 70)
                 t2 = (vol_spike >= 1.15 and score >= 68)
                 
+                has_triggers = False
                 if is_above_cpr_tc and is_st_green and (t1 or t2):
                     status = "🔥 TRIGGERED AUTO-TRADE"
+                    has_triggers = True
                 elif is_above_cpr_tc and is_st_green:
                     status = f"🟢 Bullish (Vol {vol_spike:.2f}x / Score {score})"
                 else:
@@ -483,6 +485,9 @@ def scan_now_endpoint():
             except Exception as e:
                 report_lines.append(f"{symbol:12s} | Error: {e}")
         
+        if any("TRIGGERED AUTO-TRADE" in line for line in report_lines):
+            threading.Thread(target=run_scan, daemon=True).start()
+
         now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
         html = f"<h2>⚡ LIVE 36-COIN MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
         return html, 200
@@ -534,15 +539,7 @@ def test_trade_endpoint():
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def catch_all(path):
-    if scan_lock.acquire(blocking=False):
-        def async_scan():
-            try:
-                run_scan()
-            finally:
-                scan_lock.release()
-        threading.Thread(target=async_scan, daemon=True).start()
-        return "⚡ OK - Live 36-Coin Market Scan Triggered! Check /scan-now for live audit table.", 200
-    return "⚡ OK - Market Scanner Currently Active", 200
+    return "⚡ OK - Render Bot 24/7 Scanner Active! Check /scan-now for live audit table.", 200
 
 def run_scan():
     state = load_state()
@@ -791,12 +788,10 @@ def start_background_loop():
         time.sleep(5)
         while True:
             try:
-                if scan_lock.acquire(blocking=False):
-                    try: run_scan()
-                    finally: scan_lock.release()
+                run_scan()
             except Exception as e:
                 print(f"Scan loop exception: {e}")
-            time.sleep(300)
+            time.sleep(180)
 
     def run_hourly_report_loop():
         time.sleep(10)
