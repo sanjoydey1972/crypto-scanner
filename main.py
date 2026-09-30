@@ -507,7 +507,7 @@ def scan_now_endpoint():
                 t2 = (vol_spike >= 1.15 and score >= 68)
                 
                 has_triggers = False
-                if is_above_cpr_tc and is_supertrend_green and (t1 or t2):
+                if is_above_cpr_tc and is_st_green and (t1 or t2):
                     status = "🔥 TRIGGERED AUTO-TRADE"
                     has_triggers = True
                 elif is_above_cpr_tc and is_st_green:
