@@ -59,6 +59,7 @@ DEFAULT_FUTURES_WATCHLIST = [
 ]
 
 ctx = ssl._create_unverified_context()
+LAST_SCAN_HTML = "<h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT</h2><p>Initializing first scan loop, please refresh in 10 seconds...</p>"
 
 def fetch_dynamic_futures_watchlist():
     try:
@@ -449,63 +450,15 @@ def send_hourly_market_report():
 
 @app.route('/scan-now')
 def scan_now_endpoint():
-    try:
-        run_scan()
-        
-        report_lines = []
-        sync_coindcx_live_positions()
-        with active_trades_lock:
-            active_symbols = list(ACTIVE_TRADES.keys())
-
-        for symbol in WATCHLIST:
+    global LAST_SCAN_HTML
+    if scan_lock.acquire(blocking=False):
+        def async_trigger():
             try:
-                time.sleep(0.05)
-                m15_klines = fetch_klines(symbol, '15m', 100)
-                if not m15_klines or len(m15_klines) < 20: 
-                    report_lines.append(f"{symbol:12s} | Error: Could not fetch candle data")
-                    continue
-                cmp = m15_klines[-1][4]
-                daily_klines = fetch_klines(symbol, '1d', 2)
-                if not daily_klines or len(daily_klines) < 2: daily_klines = m15_klines
-                cpr = calculate_cpr(daily_klines[0][2], daily_klines[0][3], daily_klines[0][4])
-                st_dir, st_val = calculate_supertrend(m15_klines)
-                close_prices = [k[4] for k in m15_klines]
-                rsi_val = calculate_rsi(close_prices)
-                vol_spike = calculate_volume_spike(m15_klines)
-                
-                score = 50
-                if cmp > cpr['tc']: score += 15
-                if cmp > cpr['r1']: score += 15
-                if 45 <= rsi_val <= 82: score += 20
-                if vol_spike >= 1.50: score += 20
-                elif vol_spike >= 1.15: score += 10
-                elif vol_spike >= 0.95: score += 5
-                score = max(0, min(100, score))
-                
-                is_above_cpr_tc = cmp > cpr['tc']
-                is_st_green = st_dir == 1
-                t1 = (vol_spike >= 1.15 and score >= 65)
-                t2 = (cmp > cpr['r1'] and vol_spike >= 0.95 and score >= 65)
-                t3 = (vol_spike >= 0.95 and score >= 68)
-                
-                if symbol in active_symbols:
-                    status = "🔥 ACTIVE OPEN POSITION ON COINDCX"
-                elif is_above_cpr_tc and is_st_green and (t1 or t2 or t3):
-                    status = "⚡ BREAKOUT CANDIDATE (Order Trigger Attempted)"
-                elif is_above_cpr_tc and is_st_green:
-                    status = f"🟢 Bullish (Vol {vol_spike:.2f}x / Score {score})"
-                else:
-                    status = "⚪ Consolidating"
-                
-                report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | CPR TC: {cpr['tc']:<10.4f} | ST: {'GREEN' if is_st_green else 'RED':5s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
-            except Exception as e:
-                report_lines.append(f"{symbol:12s} | Error: {e}")
-        
-        now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-        html = f"<h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
-        return html, 200
-    except Exception as e:
-        return f"<h3>⚠️ Scan Error:</h3><p>{e}</p>", 500
+                run_scan()
+            finally:
+                scan_lock.release()
+        threading.Thread(target=async_trigger, daemon=True).start()
+    return LAST_SCAN_HTML, 200
 
 @app.route('/close-sol')
 def close_sol_endpoint():
@@ -553,6 +506,7 @@ def test_trade_endpoint():
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def catch_all(path):
+    global LAST_SCAN_HTML
     if scan_lock.acquire(blocking=False):
         def async_scan():
             try:
@@ -560,20 +514,27 @@ def catch_all(path):
             finally:
                 scan_lock.release()
         threading.Thread(target=async_scan, daemon=True).start()
-        return "⚡ OK - Live Dynamic Market Scan Triggered! Check /scan-now for live audit table.", 200
-    return "⚡ OK - Market Scanner Currently Active", 200
+    return LAST_SCAN_HTML, 200
 
 def run_scan():
+    global LAST_SCAN_HTML
     print(f"[{datetime.now()}] 🔍 Running live 36-coin futures scan loop...", flush=True)
     state = load_state()
     candidates = []
+    report_lines = []
+    
+    sync_coindcx_live_positions()
+    with active_trades_lock:
+        active_symbols = list(ACTIVE_TRADES.keys())
 
     for symbol in WATCHLIST:
         try:
             time.sleep(0.05)
             daily_klines = fetch_klines(symbol, '1d', 2)
             m15_klines = fetch_klines(symbol, '15m', 100)
-            if not m15_klines or len(m15_klines) < 20: continue
+            if not m15_klines or len(m15_klines) < 20: 
+                report_lines.append(f"{symbol:12s} | Error: Could not fetch candle data")
+                continue
             if not daily_klines or len(daily_klines) < 2: daily_klines = m15_klines
             
             cpr = calculate_cpr(daily_klines[0][2], daily_klines[0][3], daily_klines[0][4])
@@ -601,9 +562,24 @@ def run_scan():
             trigger_2 = (cmp > cpr['r1'] and vol_spike >= 0.95 and score >= 65)
             trigger_3 = (vol_spike >= 0.95 and score >= 68)
             
+            if symbol in active_symbols:
+                status = "🔥 ACTIVE OPEN POSITION ON COINDCX"
+            elif is_above_cpr_tc and is_supertrend_green and (trigger_1 or trigger_2 or trigger_3):
+                status = "⚡ BREAKOUT CANDIDATE (Order Trigger Attempted)"
+            elif is_above_cpr_tc and is_supertrend_green:
+                status = f"🟢 Bullish (Vol {vol_spike:.2f}x / Score {score})"
+            else:
+                status = "⚪ Consolidating"
+
+            report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | CPR TC: {cpr['tc']:<10.4f} | ST: {'GREEN' if is_supertrend_green else 'RED':5s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
+            
             if is_above_cpr_tc and is_supertrend_green and (trigger_1 or trigger_2 or trigger_3):
                 candidates.append({'symbol': symbol, 'score': score, 'rating': rating, 'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike})
-        except Exception: pass
+        except Exception as e:
+            report_lines.append(f"{symbol:12s} | Error: {e}")
+
+    now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+    LAST_SCAN_HTML = f"<h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
 
     candidates.sort(key=lambda x: x['score'], reverse=True)
     
