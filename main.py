@@ -8,6 +8,8 @@ import time
 import threading
 import hmac
 import hashlib
+import html
+import re
 from datetime import datetime
 from flask import Flask
 
@@ -222,9 +224,23 @@ def send_telegram_message(text):
         data = urllib.parse.urlencode({'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'HTML'}).encode('utf-8')
         req = urllib.request.Request(url, data=data, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, context=ctx) as resp:
-            return json.loads(resp.read().decode('utf-8')).get('ok')
+            res = json.loads(resp.read().decode('utf-8'))
+            if res.get('ok'):
+                return True
     except Exception as e:
-        print(f"Telegram error: {e}")
+        print(f"Telegram HTML error: {e}")
+
+    # Plain text fallback to guarantee 100% delivery even if HTML entity parsing fails
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+        plain_text = re.sub(r'<[^>]*>', '', text)
+        data = urllib.parse.urlencode({'chat_id': CHAT_ID, 'text': plain_text}).encode('utf-8')
+        req = urllib.request.Request(url, data=data, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx) as resp:
+            res = json.loads(resp.read().decode('utf-8'))
+            return res.get('ok', False)
+    except Exception as e2:
+        print(f"Telegram Plain Text fallback error: {e2}")
         return False
 
 def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0, leverage=5, custom_quantity=None):
@@ -278,6 +294,24 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
                 "leverage": leverage,
                 "notification": "no_notification"
             }
+        }),
+        (futures_url, {
+            "timestamp": ts,
+            "side": side.lower(),
+            "pair": f"B-{coin}_USDT",
+            "order_type": "market_order",
+            "total_quantity": quantity,
+            "leverage": leverage,
+            "notification": "no_notification"
+        }),
+        (futures_url, {
+            "timestamp": ts,
+            "side": side.lower(),
+            "pair": f"B-{coin}USDT",
+            "order_type": "market_order",
+            "total_quantity": quantity,
+            "leverage": leverage,
+            "notification": "no_notification"
         }),
         (spot_url, {
             "timestamp": ts,
@@ -473,7 +507,7 @@ def scan_now_endpoint():
                 t2 = (vol_spike >= 1.15 and score >= 68)
                 
                 has_triggers = False
-                if is_above_cpr_tc and is_st_green and (t1 or t2):
+                if is_above_cpr_tc and is_supertrend_green and (t1 or t2):
                     status = "🔥 TRIGGERED AUTO-TRADE"
                     has_triggers = True
                 elif is_above_cpr_tc and is_st_green:
@@ -669,7 +703,8 @@ def run_scan():
                             }
                         save_active_trades()
                     else:
-                        exec_hdr = f"\n\n📢 <b>SIGNAL ONLY (CoinDCX Auto-Execution Notice):</b>\n<code>{trade_res.get('error')}</code>"
+                        safe_err = html.escape(str(trade_res.get('error', 'Unknown Error')))
+                        exec_hdr = f"\n\n📢 <b>SIGNAL ONLY (CoinDCX Auto-Execution Notice):</b>\n<code>{safe_err}</code>"
 
                 msg = (
                     f"🟢 <b>NEW BULLISH BREAKOUT SIGNAL</b>\n\n"
