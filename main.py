@@ -147,7 +147,7 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
                     return formatted
         except Exception: pass
 
-    # Provider 4: MEXC Public Market API (High Altcoin Coverage for KAS, POPCAT, MEW)
+    # Provider 4: MEXC Public Market API
     for sym_variant in alt_symbols:
         try:
             url = f"https://api.mexc.com/api/v3/klines?symbol={sym_variant}&interval={interval_str}&limit={limit}"
@@ -435,7 +435,7 @@ def send_hourly_market_report():
         btc_inrm_price = fetch_coindcx_btc_inrm_price()
         bull_coins, bear_coins, neutral_coins = [], [], []
 
-        for symbol in WATCHLIST:
+        for symbol in WATCHLIST[:30]:
             clean_sym = symbol.replace("-", "_")
             try:
                 time.sleep(0.05)
@@ -457,7 +457,7 @@ def send_hourly_market_report():
             f"📊 <b>AUTOMATED HOURLY MARKET CONDITION REPORT</b>\n\n"
             f"⏰ <b>Time:</b> {now_str}\n"
             f"✅ <b>Render Cloud Status:</b> 100% ONLINE (24/7 Active)\n\n"
-            f"🔍 <b>Market Overview (36 CoinDCX Futures Symbols):</b>\n"
+            f"🔍 <b>Market Overview ({len(WATCHLIST)} CoinDCX Futures Symbols):</b>\n"
             f"• <b>BTC Current Price:</b> <code>${btc_inrm_price:,.1f}</code>\n"
             f"🟢 <b>In Bull Run:</b> <code>{len(bull_coins)} coins</code>\n"
             f"🔴 <b>In Bear Run:</b> <code>{len(bear_coins)} coins</code>\n"
@@ -493,23 +493,21 @@ def scan_now_endpoint():
                 
                 score = 50
                 if cmp > cpr['tc']: score += 15
-                if cmp > cpr['r1']: score += 10
-                if 48 <= rsi_val <= 75: score += 20
-                elif rsi_val > 75: score -= 10
-                if vol_spike >= 2.0: score += 20
-                elif vol_spike >= 1.30: score += 10
-                elif vol_spike >= 1.15: score += 5
+                if cmp > cpr['r1']: score += 15
+                if 45 <= rsi_val <= 82: score += 20
+                if vol_spike >= 1.50: score += 20
+                elif vol_spike >= 1.15: score += 10
+                elif vol_spike >= 0.95: score += 5
                 score = max(0, min(100, score))
                 
                 is_above_cpr_tc = cmp > cpr['tc']
                 is_st_green = st_dir == 1
-                t1 = (vol_spike >= 1.30 and score >= 70)
-                t2 = (vol_spike >= 1.15 and score >= 68)
+                t1 = (vol_spike >= 1.15 and score >= 65)
+                t2 = (cmp > cpr['r1'] and vol_spike >= 0.95 and score >= 65)
+                t3 = (vol_spike >= 0.95 and score >= 68)
                 
-                has_triggers = False
-                if is_above_cpr_tc and is_st_green and (t1 or t2):
+                if is_above_cpr_tc and is_st_green and (t1 or t2 or t3):
                     status = "🔥 TRIGGERED AUTO-TRADE"
-                    has_triggers = True
                 elif is_above_cpr_tc and is_st_green:
                     status = f"🟢 Bullish (Vol {vol_spike:.2f}x / Score {score})"
                 else:
@@ -519,11 +517,8 @@ def scan_now_endpoint():
             except Exception as e:
                 report_lines.append(f"{symbol:12s} | Error: {e}")
         
-        if any("TRIGGERED AUTO-TRADE" in line for line in report_lines):
-            threading.Thread(target=run_scan, daemon=True).start()
-
         now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-        html = f"<h2>⚡ LIVE 36-COIN MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
+        html = f"<h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
         return html, 200
     except Exception as e:
         return f"<h3>⚠️ Scan Error:</h3><p>{e}</p>", 500
@@ -531,7 +526,7 @@ def scan_now_endpoint():
 @app.route('/close-sol')
 def close_sol_endpoint():
     try:
-        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="sell", cmp=108.23, leverage=10, custom_quantity=0.1)
+        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="sell", cmp=108.23, leverage=5, custom_quantity=0.1)
         with active_trades_lock:
             ACTIVE_TRADES.pop('SOL-USDT', None)
         save_active_trades()
@@ -543,7 +538,7 @@ def close_sol_endpoint():
 @app.route('/test-trade')
 def test_trade_endpoint():
     try:
-        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=112.20, margin_inr=100.0, leverage=10, custom_quantity=0.1)
+        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=112.20, margin_inr=500.0, leverage=5, custom_quantity=0.1)
         if res.get('success'):
             with active_trades_lock:
                 ACTIVE_TRADES['SOL-USDT'] = {
@@ -554,7 +549,7 @@ def test_trade_endpoint():
                     'tp2': 122.42,
                     'sl': 110.03,
                     'tp1_booked': False,
-                    'leverage': 10,
+                    'leverage': 5,
                     'entry_time': time.time()
                 }
             save_active_trades()
@@ -573,7 +568,15 @@ def test_trade_endpoint():
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def catch_all(path):
-    return "⚡ OK - Render Bot 24/7 Scanner Active! Check /scan-now for live audit table.", 200
+    if scan_lock.acquire(blocking=False):
+        def async_scan():
+            try:
+                run_scan()
+            finally:
+                scan_lock.release()
+        threading.Thread(target=async_scan, daemon=True).start()
+        return "⚡ OK - Live Dynamic Market Scan Triggered! Check /scan-now for live audit table.", 200
+    return "⚡ OK - Market Scanner Currently Active", 200
 
 def run_scan():
     state = load_state()
@@ -581,7 +584,7 @@ def run_scan():
 
     for symbol in WATCHLIST:
         try:
-            time.sleep(0.1)
+            time.sleep(0.05)
             daily_klines = fetch_klines(symbol, '1d', 2)
             m15_klines = fetch_klines(symbol, '15m', 100)
             if not m15_klines or len(m15_klines) < 20: continue
@@ -594,30 +597,30 @@ def run_scan():
             rsi_val = calculate_rsi(close_prices)
             vol_spike = calculate_volume_spike(m15_klines)
             
-            # REFINED SCORING ENGINE:
+            # REFINED SENSITIVE SCORING ENGINE:
             score = 50
             if cmp > cpr['tc']: score += 15       # Reward breaking CPR TC
-            if cmp > cpr['r1']: score += 10       # Reward crossing R1
-            if 48 <= rsi_val <= 75: score += 20   # Healthy bullish RSI range
-            elif rsi_val > 75: score -= 10        # Overbought penalty
+            if cmp > cpr['r1']: score += 15       # Reward crossing R1
+            if 45 <= rsi_val <= 82: score += 20   # Expanded healthy bullish RSI range (up to 82)
             
-            if vol_spike >= 2.0: score += 20
-            elif vol_spike >= 1.30: score += 10
-            elif vol_spike >= 1.15: score += 5
+            if vol_spike >= 1.50: score += 20
+            elif vol_spike >= 1.15: score += 10
+            elif vol_spike >= 0.95: score += 5    # Accept steady volume
             score = max(0, min(100, score))
             
-            rating = "A+ (Strong Breakout) 👑" if score >= 85 else ("A (Solid Breakout) 🥇" if score >= 68 else "B (Moderate)")
+            rating = "A+ (Strong Breakout) 👑" if score >= 80 else ("A (Solid Breakout) 🥇" if score >= 65 else "B (Moderate)")
             is_above_cpr_tc = cmp > cpr['tc']
             is_supertrend_green = st_dir == 1
-            is_not_choppy = True if vol_spike >= 1.15 else not (48 <= rsi_val <= 52)
             
-            # OPTIMIZED DUAL-TRIGGER ENGINE:
-            # Trigger 1: High Vol Spike >= 1.30x AND Score >= 70
-            # Trigger 2: CPR TC + Supertrend Confluence (Vol Spike >= 1.15x AND Score >= 68)
-            trigger_1 = (vol_spike >= 1.30 and score >= 70)
-            trigger_2 = (vol_spike >= 1.15 and score >= 68)
+            # FLEXIBLE DYNAMIC 3-WAY TRIGGER ENGINE:
+            # Trigger 1: High Vol Spike >= 1.15x AND Score >= 65
+            # Trigger 2: Resistance R1 Breakout (CMP > R1) AND Vol >= 0.95x AND Score >= 65
+            # Trigger 3: CPR TC + Supertrend Confluence (Vol >= 0.95x AND Score >= 68)
+            trigger_1 = (vol_spike >= 1.15 and score >= 65)
+            trigger_2 = (cmp > cpr['r1'] and vol_spike >= 0.95 and score >= 65)
+            trigger_3 = (vol_spike >= 0.95 and score >= 68)
             
-            if is_above_cpr_tc and is_supertrend_green and (trigger_1 or trigger_2) and is_not_choppy:
+            if is_above_cpr_tc and is_supertrend_green and (trigger_1 or trigger_2 or trigger_3):
                 candidates.append({'symbol': symbol, 'score': score, 'rating': rating, 'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike})
         except Exception: pass
 
@@ -625,6 +628,8 @@ def run_scan():
     
     # 5 MAX CONCURRENT ACTIVE OPEN TRADES CAP (Expanded from 3 to 5 slots):
     # Telegram alerts will ALWAYS deliver 100% of signals even if 5 slots are full or exchange margin is exhausted!
+    with active_trades_lock:
+        active_count = len(ACTIVE_TRADES)
 
     for cand in candidates:
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
@@ -658,13 +663,13 @@ def run_scan():
 
                 lev_num = 5  # Max 5x Leverage Cap: Keeps Liquidation 20% away so -2.5% SL ALWAYS triggers first!
                 
-                # DYNAMIC MARGIN ALLOCATION FOR 5-SLOT SYSTEM (Auto-Scaled):
+                # CAPITAL-PROPORTIONAL MARGIN SCALING (Auto-Scaled from Wallet Balance):
                 coin_name = clean_symbol[:-4]
                 wallet_balance_inr = fetch_coindcx_wallet_balance_inr()
                 capital_scale_factor = max(1.0, wallet_balance_inr / 2500.0)
                 
                 if coin_name in ['BTC', 'ETH', 'SOL', 'AVAX', 'XRP', 'BCH', 'LTC']:
-                    base_margin = 450.0  # Tier-1 High Liquidity Mega-Caps (Fits 5 slots in balance)
+                    base_margin = 450.0  # Tier-1 High Liquidity Mega-Caps
                 elif score >= 85:
                     base_margin = 380.0  # A+ High-Conviction Breakouts
                 else:
@@ -672,10 +677,7 @@ def run_scan():
                 
                 coin_margin = base_margin * capital_scale_factor
 
-                # 5 MAX SLOTS EXECUTION CONTROL:
-                with active_trades_lock:
-                    active_count = len(ACTIVE_TRADES)
-
+                # 5 MAX CONCURRENT OPEN SLOTS CONTROL:
                 if active_count >= 5:
                     exec_hdr = f"\n\n📢 <b>SIGNAL ONLY (CoinDCX Auto-Execution Skipped):</b>\n<code>Max 5 Active Open Trade Slots Full ({active_count}/5 Active)</code>"
                 else:
@@ -714,7 +716,7 @@ def run_scan():
                     f"🏆 <b>Signal Strength:</b> <code>{rating}</code>\n\n"
                     f"⚙️ <b>Trade Parameters:</b>\n"
                     f"• <b>Leverage:</b> <code>{lev_num}x (Isolated)</code>\n"
-                    f"• <b>Margin:</b> <code>₹{coin_margin:.0f} INR (Auto-Scaled {capital_scale_factor:.2f}x)</code>\n"
+                    f"• <b>Margin Allocated:</b> <code>₹{coin_margin:.0f} INR (Auto-Scaled {capital_scale_factor:.2f}x)</code>\n"
                     f"• <b>Live CMP:</b> <code>${cmp_str}</code>\n\n"
                     f"🔹 <b>Entry Range:</b> <code>{entry_min} - {entry_max}</code>\n"
                     f"🔹 <b>Stop Loss:</b> <code>{sl}</code> (Max 2.5% Risk Cap)\n"
