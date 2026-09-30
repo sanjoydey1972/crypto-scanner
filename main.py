@@ -59,7 +59,7 @@ DEFAULT_FUTURES_WATCHLIST = [
 ]
 
 ctx = ssl._create_unverified_context()
-LAST_SCAN_HTML = "<h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT</h2><p>Initializing first scan loop, please refresh in 10 seconds...</p>"
+LAST_SCAN_HTML = "<h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT</h2><p>Scanning markets in background, please refresh...</p>"
 
 def fetch_dynamic_futures_watchlist():
     try:
@@ -96,7 +96,7 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
         try:
             url = f"https://data-api.binance.vision/api/v3/klines?symbol={sym_variant}&interval={interval_str}&limit={limit}"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, context=ctx, timeout=4) as resp:
+            with urllib.request.urlopen(req, context=ctx, timeout=3) as resp:
                 raw = json.loads(resp.read().decode('utf-8'))
                 if isinstance(raw, list) and len(raw) > 0:
                     formatted = []
@@ -110,7 +110,7 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
         try:
             url = f"https://public.coindcx.com/market_data/candles/?pair={pair_str}&interval={interval_str}"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, context=ctx, timeout=4) as resp:
+            with urllib.request.urlopen(req, context=ctx, timeout=3) as resp:
                 raw = json.loads(resp.read().decode('utf-8'))
                 if isinstance(raw, list) and len(raw) > 0:
                     raw_sorted = sorted(raw, key=lambda x: x.get('time', 0))
@@ -125,35 +125,6 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
                         formatted.append([t, o, h, l, cl, v])
                     if len(formatted) > 0:
                         return formatted
-        except Exception: pass
-
-    bybit_interval = "1" if interval_str == "1m" else ("5" if interval_str == "5m" else ("15" if interval_str == "15m" else ("D" if interval_str == "1d" else "15")))
-    for sym_variant in alt_symbols:
-        try:
-            url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={sym_variant}&interval={bybit_interval}&limit={limit}"
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, context=ctx, timeout=4) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
-                list_data = data.get('result', {}).get('list', [])
-                if list_data:
-                    list_sorted = sorted(list_data, key=lambda x: int(x[0]))
-                    formatted = []
-                    for c in list_sorted:
-                        formatted.append([int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])])
-                    return formatted
-        except Exception: pass
-
-    for sym_variant in alt_symbols:
-        try:
-            url = f"https://api.mexc.com/api/v3/klines?symbol={sym_variant}&interval={interval_str}&limit={limit}"
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, context=ctx, timeout=4) as resp:
-                raw = json.loads(resp.read().decode('utf-8'))
-                if isinstance(raw, list) and len(raw) > 0:
-                    formatted = []
-                    for c in raw:
-                        formatted.append([int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])])
-                    return formatted
         except Exception: pass
 
     return None
@@ -416,7 +387,7 @@ def send_hourly_market_report():
         for symbol in WATCHLIST[:30]:
             clean_sym = symbol.replace("-", "_")
             try:
-                time.sleep(0.05)
+                time.sleep(0.02)
                 m15_klines = fetch_klines(symbol, '15m', 30)
                 if m15_klines and len(m15_klines) >= 15:
                     close_prices = [k[4] for k in m15_klines]
@@ -527,18 +498,19 @@ def run_scan():
     with active_trades_lock:
         active_symbols = list(ACTIVE_TRADES.keys())
 
-    for symbol in WATCHLIST:
+    for idx, symbol in enumerate(WATCHLIST, 1):
         try:
-            time.sleep(0.05)
-            daily_klines = fetch_klines(symbol, '1d', 2)
+            time.sleep(0.01)
             m15_klines = fetch_klines(symbol, '15m', 100)
             if not m15_klines or len(m15_klines) < 20: 
                 report_lines.append(f"{symbol:12s} | Error: Could not fetch candle data")
                 continue
-            if not daily_klines or len(daily_klines) < 2: daily_klines = m15_klines
             
-            cpr = calculate_cpr(daily_klines[0][2], daily_klines[0][3], daily_klines[0][4])
             cmp = m15_klines[-1][4]
+            high_24h = max([k[2] for k in m15_klines[-96:]])
+            low_24h = min([k[3] for k in m15_klines[-96:]])
+            cpr = calculate_cpr(high_24h, low_24h, cmp)
+            
             st_dir, st_val = calculate_supertrend(m15_klines)
             close_prices = [k[4] for k in m15_klines]
             rsi_val = calculate_rsi(close_prices)
@@ -573,13 +545,18 @@ def run_scan():
 
             report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | CPR TC: {cpr['tc']:<10.4f} | ST: {'GREEN' if is_supertrend_green else 'RED':5s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
             
+            # REAL-TIME DYNAMIC TABLE UPDATE: HTML is updated immediately after every 5 coins scanned!
+            if idx % 5 == 0 or idx == len(WATCHLIST):
+                now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+                LAST_SCAN_HTML = f"<h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str} (Progress: {idx}/{len(WATCHLIST)} coins scanned)</p><pre>" + "\n".join(report_lines) + "</pre>"
+
             if is_above_cpr_tc and is_supertrend_green and (trigger_1 or trigger_2 or trigger_3):
                 candidates.append({'symbol': symbol, 'score': score, 'rating': rating, 'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike})
         except Exception as e:
             report_lines.append(f"{symbol:12s} | Error: {e}")
 
     now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-    LAST_SCAN_HTML = f"<h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
+    LAST_SCAN_HTML = f"<h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str} (Complete: {len(WATCHLIST)} coins scanned)</p><pre>" + "\n".join(report_lines) + "</pre>"
 
     candidates.sort(key=lambda x: x['score'], reverse=True)
     
@@ -773,7 +750,7 @@ def monitor_active_positions():
 
 def start_background_loop():
     def run_loop():
-        time.sleep(5)
+        time.sleep(2)
         while True:
             try:
                 run_scan()
