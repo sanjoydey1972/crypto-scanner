@@ -212,6 +212,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
         return {'success': False, 'error': 'CoinDCX API credentials missing.'}
         
     coin = symbol.split('-')[0].upper()
+    futures_coin = f"1000{coin}" if coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI'] else coin
     
     if custom_quantity is not None:
         quantity = custom_quantity
@@ -221,7 +222,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
         raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
         
         # QUANTITY STEP-SIZE CALIBRATION FOR COINDCX FUTURES:
-        # Solves "Quantity should be divisible by 1.0" error for altcoins
         if coin == 'BTC': 
             quantity = round(max(0.001, raw_qty), 3)
         elif coin in ['ETH', 'SOL']: 
@@ -229,7 +229,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
         elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']: 
             quantity = float(int(max(1000.0, raw_qty)))
         else: 
-            # ALL OTHER COINS (UNI, NEAR, LINK, DOT, AVAX, LTC, etc.) REQUIRE INTEGER QUANTITIES (divisible by 1.0)!
             quantity = float(int(max(1.0, round(raw_qty))))
         
     if quantity <= 0: quantity = 1.0 if coin not in ['BTC', 'ETH', 'SOL'] else (0.001 if coin == 'BTC' else 0.1)
@@ -238,13 +237,12 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
     spot_url = "https://api.coindcx.com/exchange/v1/orders/create"
     ts = int(round(time.time() * 1000))
 
-    # SOLVES HTTP 400 "Quantity should be divisible by 1.0" & HTTP 422 "Order leverage must be equal to position leverage":
     endpoint_variants = [
         (futures_url, {
             "timestamp": ts,
             "order": {
                 "side": side.lower(),
-                "pair": f"B-{coin}_USDT",
+                "pair": f"B-{futures_coin}_USDT",
                 "order_type": "market_order",
                 "total_quantity": quantity,
                 "leverage": leverage,
@@ -255,7 +253,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
             "timestamp": ts,
             "order": {
                 "side": side.lower(),
-                "pair": f"B-{coin}_USDT",
+                "pair": f"B-{futures_coin}_USDT",
                 "order_type": "market_order",
                 "total_quantity": float(int(round(quantity))) if coin not in ['BTC', 'ETH', 'SOL'] else quantity,
                 "leverage": leverage,
@@ -266,7 +264,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
             "timestamp": ts,
             "order": {
                 "side": side.lower(),
-                "pair": f"B-{coin}_USDT",
+                "pair": f"B-{futures_coin}_USDT",
                 "order_type": "market_order",
                 "total_quantity": quantity,
                 "leverage": 10 if leverage == 5 else 5,
@@ -300,7 +298,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
                 order_id = "EXECUTED"
                 if isinstance(data, dict): order_id = data.get('id', data.get('order_id', 'EXECUTED'))
                 elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict): order_id = data[0].get('id', 'EXECUTED')
-                return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': body.get('pair', body.get('market', f"B-{coin}_USDT"))}
+                return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': body.get('pair', body.get('market', f"B-{futures_coin}_USDT"))}
         except urllib.error.HTTPError as e:
             try:
                 err_text = e.read().decode('utf-8')
@@ -594,6 +592,8 @@ def monitor_active_positions():
                     time.sleep(0.5)
                     m15_klines = fetch_klines(symbol, '15m', 5)
                     if not m15_klines: continue
+                    high_price = m15_klines[-1][2]
+                    low_price = m15_klines[-1][3]
                     cmp = m15_klines[-1][4]
                     
                     with active_trades_lock:
@@ -602,37 +602,43 @@ def monitor_active_positions():
                     
                     clean_coin = symbol.split('-')[0].upper()
                     
-                    # TARGET REACHED (ROE +20%): Close 100% position
-                    if cmp >= trade['tp1']:
+                    # TARGET REACHED (ROE +20%): High Wick or CMP hits TP1
+                    if high_price >= trade['tp1'] or cmp >= trade['tp1']:
                         res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 5), custom_quantity=trade['total_qty'])
-                        with active_trades_lock:
-                            ACTIVE_TRADES.pop(symbol, None)
-                        save_active_trades()
-                        
-                        send_telegram_message(
-                            f"🎯 <b>TARGET REACHED (ROE +20%)!</b>\n\n"
-                            f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                            f"🔥 <b>100% Target Hit at CMP:</b> <code>{cmp}</code> (Entry: <code>{trade['entry_price']}</code>)\n"
-                            f"💰 <b>Trade Successfully Closed with Profit!</b>"
-                        )
+                        if res.get('success'):
+                            with active_trades_lock:
+                                ACTIVE_TRADES.pop(symbol, None)
+                            save_active_trades()
+                            
+                            send_telegram_message(
+                                f"🎯 <b>TARGET REACHED (ROE +20%)!</b>\n\n"
+                                f"<b>Pair:</b> B-{clean_coin}_USDT\n"
+                                f"🔥 <b>100% Target Hit at CMP:</b> <code>{cmp}</code> (Entry: <code>{trade['entry_price']}</code>)\n"
+                                f"💰 <b>Trade Successfully Closed with Profit!</b>"
+                            )
+                        else:
+                            print(f"TP Close failed for {symbol}: {res.get('error')}")
 
-                    # STOP LOSS HIT (ROE -20%): Close 100% position
-                    elif cmp <= trade['sl']:
+                    # STOP LOSS HIT (ROE -20%): Low Wick or CMP hits SL
+                    elif low_price <= trade['sl'] or cmp <= trade['sl']:
                         res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 5), custom_quantity=trade['total_qty'])
-                        with active_trades_lock:
-                            ACTIVE_TRADES.pop(symbol, None)
-                        save_active_trades()
-                        
-                        send_telegram_message(
-                            f"🛑 <b>STOP LOSS EXECUTED (ROE -20%)</b>\n\n"
-                            f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                            f"Position closed at Stop Loss: <code>{cmp}</code> (Entry: <code>{trade['entry_price']}</code>)"
-                        )
+                        if res.get('success'):
+                            with active_trades_lock:
+                                ACTIVE_TRADES.pop(symbol, None)
+                            save_active_trades()
+                            
+                            send_telegram_message(
+                                f"🛑 <b>STOP LOSS EXECUTED (ROE -20%)</b>\n\n"
+                                f"<b>Pair:</b> B-{clean_coin}_USDT\n"
+                                f"Position closed at Stop Loss: <code>{cmp}</code> (Entry: <code>{trade['entry_price']}</code>)"
+                            )
+                        else:
+                            print(f"SL Close failed for {symbol}: {res.get('error')}")
                 except Exception as e:
                     print(f"Error monitoring {symbol}: {e}")
         except Exception as e:
             print(f"Position monitor exception: {e}")
-        time.sleep(10)
+        time.sleep(5)
 
 def start_background_loop():
     def run_loop():
