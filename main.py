@@ -186,26 +186,33 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
         
     coin = symbol.split('-')[0].upper()
     
+    # 1. DYNAMIC MINIMUM QUANTITY CALIBRATION PER COIN REQUIREMENT:
+    min_qty = 0.1
+    if coin == 'BTC': min_qty = 0.001
+    elif coin in ['ETH', 'SOL', 'LTC', 'AVAX', 'BCH', 'AAVE']: min_qty = 0.1
+    elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']: min_qty = 1000.0
+    
     if custom_quantity is not None:
         quantity = custom_quantity
     else:
         usdt_inr_rate = 88.5
         position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
-        raw_qty = position_value_usdt / cmp if cmp > 0 else 0.1
+        raw_qty = position_value_usdt / cmp if cmp > 0 else min_qty
         
-        # QUANTITY STEP-SIZE CALIBRATION (Divisible by 0.1 for CoinDCX Futures):
-        if coin == 'BTC': quantity = round(max(0.001, raw_qty), 3)
-        elif coin in ['ETH', 'SOL']: quantity = round(max(0.1, raw_qty), 1)
+        # QUANTITY STEP-SIZE & MINIMUM ORDER SCALING:
+        if coin == 'BTC': quantity = round(max(min_qty, raw_qty), 3)
+        elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']: quantity = float(int(max(min_qty, raw_qty)))
         elif raw_qty >= 50: quantity = float(int(round(raw_qty)))
-        elif raw_qty >= 1: quantity = round(raw_qty, 1)  # Strictly 1 decimal -> Divisible by 0.1!
-        else: quantity = round(max(0.1, raw_qty), 1)
+        elif raw_qty >= 1: quantity = round(raw_qty, 1)
+        else: quantity = round(max(min_qty, raw_qty), 1)
         
-    if quantity <= 0: quantity = 0.1
+    if quantity <= 0: quantity = min_qty
 
     futures_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
     spot_url = "https://api.coindcx.com/exchange/v1/orders/create"
     ts = int(round(time.time() * 1000))
 
+    # 2. MULTI-LEVERAGE FALLBACK TO SOLVE "Order leverage must be equal to position leverage" (HTTP 422):
     endpoint_variants = [
         (futures_url, {
             "timestamp": ts,
@@ -215,6 +222,17 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
                 "order_type": "market_order",
                 "total_quantity": quantity,
                 "leverage": leverage,
+                "notification": "no_notification"
+            }
+        }),
+        (futures_url, {
+            "timestamp": ts,
+            "order": {
+                "side": side.lower(),
+                "pair": f"B-{coin}_USDT",
+                "order_type": "market_order",
+                "total_quantity": quantity,
+                "leverage": 10 if leverage == 5 else 5, # Auto-adapts if position leverage on CoinDCX is set to 10
                 "notification": "no_notification"
             }
         }),
