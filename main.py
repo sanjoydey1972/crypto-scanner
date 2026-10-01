@@ -59,7 +59,23 @@ DEFAULT_FUTURES_WATCHLIST = [
 ]
 
 ctx = ssl._create_unverified_context()
-LAST_SCAN_HTML = "<h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT</h2><p>Scanning markets in background, please refresh...</p>"
+
+LAST_SCAN_HTML = """<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="refresh" content="5">
+    <title>CoinDCX Futures Scanner Audit</title>
+    <style>
+        body { font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+        h2 { color: #58a6ff; }
+        pre { background: #161b22; padding: 15px; border-radius: 6px; color: #3fb950; }
+    </style>
+</head>
+<body>
+    <h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT</h2>
+    <p>Scanner initializing and querying live market data...</p>
+</body>
+</html>"""
 
 def fetch_dynamic_futures_watchlist():
     try:
@@ -88,15 +104,16 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
     clean_sym = f"{coin}USDT"
     
     alt_symbols = [clean_sym]
-    if coin in ['POPCAT', 'MEW', 'CAT', 'NEIRO', 'TURBO', 'SATS', 'RATS', 'BOME', 'WHY', 'MOG', 'PEOPLE', 'NOT']:
-        alt_symbols.append(f"1000{coin}USDT")
+    if coin in ['POPCAT', 'MEW', 'CAT', 'NEIRO', 'TURBO', 'SATS', 'RATS', 'BOME', 'WHY', 'MOG', 'PEOPLE', 'NOT', 'FLOKI', 'BONK', 'PEPE', 'SHIB']:
+        alt_symbols.insert(0, f"1000{coin}USDT")
         alt_symbols.append(f"10000{coin}USDT")
 
+    # Fast Endpoint 1: Binance Futures API (Ultra fast & accurate for futures symbols)
     for sym_variant in alt_symbols:
         try:
-            url = f"https://data-api.binance.vision/api/v3/klines?symbol={sym_variant}&interval={interval_str}&limit={limit}"
+            url = f"https://fapi.binance.com/fapi/v1/klines?symbol={sym_variant}&interval={interval_str}&limit={limit}"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, context=ctx, timeout=3) as resp:
+            with urllib.request.urlopen(req, context=ctx, timeout=2) as resp:
                 raw = json.loads(resp.read().decode('utf-8'))
                 if isinstance(raw, list) and len(raw) > 0:
                     formatted = []
@@ -105,12 +122,41 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
                     return formatted
         except Exception: pass
 
+    # Fast Endpoint 2: Binance Spot API
+    for sym_variant in alt_symbols:
+        try:
+            url = f"https://api.binance.com/api/v3/klines?symbol={sym_variant}&interval={interval_str}&limit={limit}"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, context=ctx, timeout=2) as resp:
+                raw = json.loads(resp.read().decode('utf-8'))
+                if isinstance(raw, list) and len(raw) > 0:
+                    formatted = []
+                    for c in raw:
+                        formatted.append([int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])])
+                    return formatted
+        except Exception: pass
+
+    # Endpoint 3: Binance Vision
+    for sym_variant in alt_symbols:
+        try:
+            url = f"https://data-api.binance.vision/api/v3/klines?symbol={sym_variant}&interval={interval_str}&limit={limit}"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, context=ctx, timeout=2) as resp:
+                raw = json.loads(resp.read().decode('utf-8'))
+                if isinstance(raw, list) and len(raw) > 0:
+                    formatted = []
+                    for c in raw:
+                        formatted.append([int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])])
+                    return formatted
+        except Exception: pass
+
+    # Endpoint 4: CoinDCX Public Candles Fallback
     coindcx_pairs = [f"B-1000{coin}_USDT", f"B-1000{coin}USDT", f"B-{coin}_USDT", f"B-{coin}USDT"]
     for pair_str in coindcx_pairs:
         try:
             url = f"https://public.coindcx.com/market_data/candles/?pair={pair_str}&interval={interval_str}"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, context=ctx, timeout=3) as resp:
+            with urllib.request.urlopen(req, context=ctx, timeout=2) as resp:
                 raw = json.loads(resp.read().decode('utf-8'))
                 if isinstance(raw, list) and len(raw) > 0:
                     raw_sorted = sorted(raw, key=lambda x: x.get('time', 0))
@@ -138,6 +184,33 @@ def calculate_cpr(high, low, close):
     r1 = (2 * pivot) - low
     r2 = pivot + (high - low)
     return {'pivot': pivot, 'tc': top_cpr, 'bc': bottom_cpr, 'r1': r1, 'r2': r2}
+
+CPR_CACHE = {} # Cache daily CPR per symbol for 30 minutes to optimize speed
+
+def get_daily_cpr(symbol, m15_klines):
+    now = time.time()
+    if symbol in CPR_CACHE and (now - CPR_CACHE[symbol]['timestamp']) < 1800:
+        return CPR_CACHE[symbol]['cpr']
+    
+    daily_klines = fetch_klines(symbol, '1d', 3)
+    if daily_klines and len(daily_klines) >= 2:
+        prev_day = daily_klines[-2] # Completed yesterday's 1d candle
+        cpr = calculate_cpr(prev_day[2], prev_day[3], prev_day[4])
+        CPR_CACHE[symbol] = {'cpr': cpr, 'timestamp': now}
+        return cpr
+    
+    if m15_klines and len(m15_klines) >= 40:
+        prev_bars = m15_klines[:-8] if len(m15_klines) >= 48 else m15_klines[:len(m15_klines)//2]
+        p_high = max([k[2] for k in prev_bars])
+        p_low = min([k[3] for k in prev_bars])
+        p_close = prev_bars[-1][4]
+        cpr = calculate_cpr(p_high, p_low, p_close)
+        CPR_CACHE[symbol] = {'cpr': cpr, 'timestamp': now}
+        return cpr
+
+    cmp = m15_klines[-1][4] if m15_klines else 1.0
+    cpr = calculate_cpr(cmp * 1.01, cmp * 0.99, cmp)
+    return cpr
 
 def calculate_supertrend(klines, period=10, multiplier=3.0):
     try:
@@ -387,7 +460,7 @@ def send_hourly_market_report():
         for symbol in WATCHLIST[:30]:
             clean_sym = symbol.replace("-", "_")
             try:
-                time.sleep(0.02)
+                time.sleep(0.01)
                 m15_klines = fetch_klines(symbol, '15m', 30)
                 if m15_klines and len(m15_klines) >= 15:
                     close_prices = [k[4] for k in m15_klines]
@@ -425,7 +498,7 @@ def scan_now_endpoint():
     if scan_lock.acquire(blocking=False):
         def async_trigger():
             try:
-                run_scan()
+                run_scan_internal()
             finally:
                 scan_lock.release()
         threading.Thread(target=async_trigger, daemon=True).start()
@@ -481,15 +554,15 @@ def catch_all(path):
     if scan_lock.acquire(blocking=False):
         def async_scan():
             try:
-                run_scan()
+                run_scan_internal()
             finally:
                 scan_lock.release()
         threading.Thread(target=async_scan, daemon=True).start()
     return LAST_SCAN_HTML, 200
 
-def run_scan():
+def run_scan_internal():
     global LAST_SCAN_HTML
-    print(f"[{datetime.now()}] 🔍 Running live 36-coin futures scan loop...", flush=True)
+    print(f"[{datetime.now()}] 🔍 Running ultra-fast futures market scan...", flush=True)
     state = load_state()
     candidates = []
     report_lines = []
@@ -498,19 +571,17 @@ def run_scan():
     with active_trades_lock:
         active_symbols = list(ACTIVE_TRADES.keys())
 
+    total_coins = len(WATCHLIST)
+
     for idx, symbol in enumerate(WATCHLIST, 1):
         try:
-            time.sleep(0.01)
             m15_klines = fetch_klines(symbol, '15m', 100)
             if not m15_klines or len(m15_klines) < 20: 
                 report_lines.append(f"{symbol:12s} | Error: Could not fetch candle data")
                 continue
             
             cmp = m15_klines[-1][4]
-            high_24h = max([k[2] for k in m15_klines[-96:]])
-            low_24h = min([k[3] for k in m15_klines[-96:]])
-            cpr = calculate_cpr(high_24h, low_24h, cmp)
-            
+            cpr = get_daily_cpr(symbol, m15_klines)
             st_dir, st_val = calculate_supertrend(m15_klines)
             close_prices = [k[4] for k in m15_klines]
             rsi_val = calculate_rsi(close_prices)
@@ -530,13 +601,11 @@ def run_scan():
             is_above_cpr_tc = cmp > cpr['tc']
             is_supertrend_green = st_dir == 1
             
-            trigger_1 = (vol_spike >= 1.15 and score >= 65)
-            trigger_2 = (cmp > cpr['r1'] and vol_spike >= 0.95 and score >= 65)
-            trigger_3 = (vol_spike >= 0.95 and score >= 68)
+            trigger = (vol_spike >= 0.85 and score >= 60)
             
             if symbol in active_symbols:
                 status = "🔥 ACTIVE OPEN POSITION ON COINDCX"
-            elif is_above_cpr_tc and is_supertrend_green and (trigger_1 or trigger_2 or trigger_3):
+            elif is_above_cpr_tc and is_supertrend_green and trigger:
                 status = "⚡ BREAKOUT CANDIDATE (Order Trigger Attempted)"
             elif is_above_cpr_tc and is_supertrend_green:
                 status = f"🟢 Bullish (Vol {vol_spike:.2f}x / Score {score})"
@@ -545,18 +614,51 @@ def run_scan():
 
             report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | CPR TC: {cpr['tc']:<10.4f} | ST: {'GREEN' if is_supertrend_green else 'RED':5s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
             
-            # REAL-TIME DYNAMIC TABLE UPDATE: HTML is updated immediately after every 5 coins scanned!
-            if idx % 5 == 0 or idx == len(WATCHLIST):
-                now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-                LAST_SCAN_HTML = f"<h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str} (Progress: {idx}/{len(WATCHLIST)} coins scanned)</p><pre>" + "\n".join(report_lines) + "</pre>"
+            # Progressively update HTML live on every single coin
+            now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+            LAST_SCAN_HTML = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="refresh" content="10">
+    <title>CoinDCX Futures Scanner Audit</title>
+    <style>
+        body {{ font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }}
+        h2 {{ color: #58a6ff; }}
+        pre {{ background: #161b22; padding: 15px; border-radius: 6px; overflow-x: auto; color: #3fb950; font-size: 13px; }}
+        .info {{ color: #8b949e; font-size: 14px; margin-bottom: 15px; }}
+    </style>
+</head>
+<body>
+    <h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT (CoinDCX 5x Futures)</h2>
+    <div class="info"><b>Server Time:</b> {now_str} UTC+5:30 | <b>Progress:</b> {idx}/{total_coins} coins scanned (Auto-refreshes every 10s)</div>
+    <pre>""" + "\n".join(report_lines) + """</pre>
+</body>
+</html>"""
 
-            if is_above_cpr_tc and is_supertrend_green and (trigger_1 or trigger_2 or trigger_3):
+            if is_above_cpr_tc and is_supertrend_green and trigger:
                 candidates.append({'symbol': symbol, 'score': score, 'rating': rating, 'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike})
         except Exception as e:
             report_lines.append(f"{symbol:12s} | Error: {e}")
 
     now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-    LAST_SCAN_HTML = f"<h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str} (Complete: {len(WATCHLIST)} coins scanned)</p><pre>" + "\n".join(report_lines) + "</pre>"
+    LAST_SCAN_HTML = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="refresh" content="10">
+    <title>CoinDCX Futures Scanner Audit</title>
+    <style>
+        body {{ font-family: monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }}
+        h2 {{ color: #58a6ff; }}
+        pre {{ background: #161b22; padding: 15px; border-radius: 6px; overflow-x: auto; color: #3fb950; font-size: 13px; }}
+        .info {{ color: #8b949e; font-size: 14px; margin-bottom: 15px; }}
+    </style>
+</head>
+<body>
+    <h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT (CoinDCX 5x Futures)</h2>
+    <div class="info"><b>Server Time:</b> {now_str} UTC+5:30 | <b>Status:</b> Complete ({total_coins} coins scanned) | <b>Candidates Found:</b> {len(candidates)} (Auto-refreshes every 10s)</div>
+    <pre>""" + "\n".join(report_lines) + """</pre>
+</body>
+</html>"""
 
     candidates.sort(key=lambda x: x['score'], reverse=True)
     
@@ -567,7 +669,7 @@ def run_scan():
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
         try:
             last_sent = state.get(symbol, 0)
-            if time.time() - last_sent > 600:
+            if time.time() - last_sent > 600: # 10-minute alert cooldown per coin
                 clean_symbol = symbol.replace("-", "")
                 print(f"[{datetime.now()}] 🔥 Breakout Candidate Triggered: {symbol} Score: {score}", flush=True)
                 
@@ -657,7 +759,8 @@ def run_scan():
                 if ok:
                     state[symbol] = time.time()
                     save_state(state)
-        except Exception: pass
+        except Exception as e:
+            print(f"Error executing candidate {cand.get('symbol')}: {e}", flush=True)
 
 def monitor_active_positions():
     time.sleep(3)
@@ -753,10 +856,14 @@ def start_background_loop():
         time.sleep(2)
         while True:
             try:
-                run_scan()
+                if scan_lock.acquire(blocking=False):
+                    try:
+                        run_scan_internal()
+                    finally:
+                        scan_lock.release()
             except Exception as e:
                 print(f"Scan loop exception: {e}", flush=True)
-            time.sleep(180)
+            time.sleep(60)
 
     def run_hourly_report_loop():
         time.sleep(10)
@@ -792,7 +899,7 @@ def start_background_loop():
     t4 = threading.Thread(target=run_keep_alive_loop, daemon=True)
     t4.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT DYNAMIC FUTURES DISCOVERY DEPLOYED!</b>\n\n• Auto-Discovers All Active CoinDCX Futures Pairs\n• Dynamic Coin Margin Allocation Active (₹400 - ₹600 INR)\n• 1m Low-Wick 2s Monitor & 5x Leverage Safety Active")
+    send_telegram_message("⚡ <b>RENDER BOT DYNAMIC FUTURES DISCOVERY DEPLOYED!</b>\n\n• Auto-Discovers All Active CoinDCX Futures Pairs\n• Dynamic Coin Margin Allocation Active (₹320 - ₹450 INR)\n• 1m Low-Wick 2s Monitor & 5x Leverage Safety Active")
 
 start_background_loop()
 
