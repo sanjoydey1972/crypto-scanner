@@ -395,7 +395,7 @@ def test_trade_endpoint():
                     'entry_price': 112.20,
                     'total_qty': 0.1,
                     'remaining_qty': 0.1,
-                    'tp1': round(112.20 * 1.02, 2),
+                    'tp1': round(112.20 * 1.04, 2),
                     'sl': round(112.20 * 0.96, 2),
                     'leverage': 5,
                     'entry_time': time.time()
@@ -481,10 +481,10 @@ def run_scan():
                 clean_symbol = symbol.replace("-", "")
                 entry_min, entry_max = round(cmp * 0.998, 4), round(cmp * 1.001, 4)
                 
-                # REVISED SL & TARGET LOGIC (ROE -20% SL, ROE +10% TP):
-                # 5x Leverage: ROE -20% = -4.0% price move; ROE +10% = +2.0% price move
+                # REVISED SL & TARGET LOGIC (ROE -20% SL, ROE +20% TP):
+                # 5x Leverage: ROE -20% = -4.0% price move; ROE +20% = +4.0% price move
                 sl = round(cmp * 0.96, 4)
-                tp1 = round(cmp * 1.02, 4)
+                tp1 = round(cmp * 1.04, 4)
                 lev_num = 5  # Fixed 5x Leverage for all coins
                 
                 trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=500.0, leverage=lev_num)
@@ -522,7 +522,7 @@ def run_scan():
                     f"• <b>Live CMP:</b> <code>${cmp}</code>\n\n"
                     f"🔹 <b>Entry Range:</b> <code>{entry_min} - {entry_max}</code>\n"
                     f"🔹 <b>Stop Loss (ROE -20%):</b> <code>{sl}</code>\n"
-                    f"🎯 <b>Target (ROE +10%):</b> <code>{tp1}</code>\n"
+                    f"🎯 <b>Target (ROE +20%):</b> <code>{tp1}</code>\n"
                     f"{exec_hdr}"
                 )
                 ok = send_telegram_message(msg)
@@ -551,7 +551,7 @@ def monitor_active_positions():
                     
                     clean_coin = symbol.split('-')[0].upper()
                     
-                    # TARGET REACHED (ROE +10%): Close 100% position
+                    # TARGET REACHED (ROE +20%): Close 100% position
                     if cmp >= trade['tp1']:
                         res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 5), custom_quantity=trade['total_qty'])
                         with active_trades_lock:
@@ -559,7 +559,7 @@ def monitor_active_positions():
                         save_active_trades()
                         
                         send_telegram_message(
-                            f"🎯 <b>TARGET REACHED (ROE +10%)!</b>\n\n"
+                            f"🎯 <b>TARGET REACHED (ROE +20%)!</b>\n\n"
                             f"<b>Pair:</b> B-{clean_coin}_USDT\n"
                             f"🔥 <b>100% Target Hit at CMP:</b> <code>{cmp}</code> (Entry: <code>{trade['entry_price']}</code>)\n"
                             f"💰 <b>Trade Successfully Closed with Profit!</b>"
