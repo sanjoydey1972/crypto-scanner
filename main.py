@@ -177,6 +177,33 @@ def send_telegram_message(text):
         print(f"Telegram error: {e}")
         return False
 
+# CAPITAL-PROPORTIONAL MARGIN SCALING ENGINE:
+def fetch_coindcx_wallet_balance_inr():
+    api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
+    secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
+    if not api_key or not secret_key: return 2500.0
+    
+    try:
+        ts = int(round(time.time() * 1000))
+        json_body = json.dumps({"timestamp": ts}, separators=(',', ':'))
+        signature = hmac.new(secret_key.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
+        headers = {'Content-Type': 'application/json', 'X-AUTH-APIKEY': api_key, 'X-AUTH-SIGNATURE': signature, 'User-Agent': 'Mozilla/5.0'}
+        url = "https://api.coindcx.com/exchange/v1/users/balances"
+        req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers, method='POST')
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            balances = json.loads(resp.read().decode('utf-8'))
+            usdt_bal, inr_bal = 0.0, 0.0
+            if isinstance(balances, list):
+                for b in balances:
+                    currency = b.get('currency', '')
+                    balance_val = float(b.get('balance', 0)) + float(b.get('locked_balance', 0))
+                    if currency == 'USDT': usdt_bal = balance_val
+                    elif currency == 'INR': inr_bal = balance_val
+            total_inr = (usdt_bal * 88.5) + inr_bal
+            if total_inr >= 1000.0: return total_inr
+    except Exception: pass
+    return 2500.0
+
 def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0, leverage=5, custom_quantity=None):
     api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
     secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
@@ -490,6 +517,12 @@ def run_scan():
         except Exception: pass
 
     candidates.sort(key=lambda x: x['score'], reverse=True)
+
+    # CAPITAL-PROPORTIONAL MARGIN SCALING CALCULATION:
+    wallet_balance_inr = fetch_coindcx_wallet_balance_inr()
+    capital_scale_factor = max(1.0, wallet_balance_inr / 2500.0)
+    coin_margin = 500.0 * capital_scale_factor
+
     for cand in candidates:
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
         try:
@@ -504,13 +537,14 @@ def run_scan():
                 tp1 = round(cmp * 1.04, 4)
                 lev_num = 5  # Fixed 5x Leverage for all coins
                 
-                trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=500.0, leverage=lev_num)
+                trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=coin_margin, leverage=lev_num)
                 
                 if trade_res.get('success'):
                     exec_hdr = (
                         f"\n\n⚡ <b>AUTO-TRADE EXECUTED ON COINDCX FUTURES!</b>\n"
                         f"• <b>Status:</b> <code>SUCCESS (Order ID: {trade_res.get('order_id')})</code>\n"
-                        f"• <b>Quantity:</b> <code>{trade_res.get('quantity')} {clean_symbol[:-4]}</code>"
+                        f"• <b>Quantity:</b> <code>{trade_res.get('quantity')} {clean_symbol[:-4]}</code>\n"
+                        f"• <b>Margin Allocated:</b> <code>₹{coin_margin:.0f} INR</code>"
                     )
                     
                     with active_trades_lock:
@@ -535,7 +569,7 @@ def run_scan():
                     f"🏆 <b>Signal Strength:</b> <code>{rating}</code>\n\n"
                     f"⚙️ <b>Trade Parameters:</b>\n"
                     f"• <b>Leverage:</b> <code>5x (Isolated)</code>\n"
-                    f"• <b>Margin:</b> <code>₹500 INR (Per Trade)</code>\n"
+                    f"• <b>Margin:</b> <code>₹{coin_margin:.0f} INR (Per Trade)</code>\n"
                     f"• <b>Live CMP:</b> <code>${cmp}</code>\n\n"
                     f"🔹 <b>Entry Range:</b> <code>{entry_min} - {entry_max}</code>\n"
                     f"🔹 <b>Stop Loss (ROE -20%):</b> <code>{sl}</code>\n"
