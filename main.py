@@ -204,7 +204,7 @@ def fetch_coindcx_wallet_balance_inr():
     except Exception: pass
     return 2500.0
 
-def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0, leverage=5, custom_quantity=None):
+def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0, leverage=5, custom_quantity=None, tp_price=None, sl_price=None):
     api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
     secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
     
@@ -221,56 +221,50 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=500.0,
         position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
         raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
         
-        # QUANTITY STEP-SIZE CALIBRATION FOR COINDCX FUTURES:
+        # LOGIC 1 FIX: High-priced coins (BCH, AAVE, LTC, AVAX, BNB) use 0.01 fractional decimal precision (keeping margin strictly at ₹500 INR)
         if coin == 'BTC': 
             quantity = round(max(0.001, raw_qty), 3)
-        elif coin in ['ETH', 'SOL']: 
-            quantity = round(max(0.1, raw_qty), 1)
+        elif coin in ['ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX', 'BNB']: 
+            quantity = round(max(0.01, raw_qty), 2)
         elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']: 
             quantity = float(int(max(1000.0, raw_qty)))
+        elif cmp >= 10.0:
+            quantity = round(max(0.1, raw_qty), 1)
         else: 
             quantity = float(int(max(1.0, round(raw_qty))))
         
-    if quantity <= 0: quantity = 1.0 if coin not in ['BTC', 'ETH', 'SOL'] else (0.001 if coin == 'BTC' else 0.1)
+    if quantity <= 0: quantity = 0.01 if coin in ['ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX', 'BNB'] else (0.001 if coin == 'BTC' else 1.0)
 
     futures_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
     spot_url = "https://api.coindcx.com/exchange/v1/orders/create"
     ts = int(round(time.time() * 1000))
 
+    # LOGIC 2 FIX: Attach exchange-native TP & SL parameters directly to CoinDCX order book
+    futures_order_payload = {
+        "side": side.lower(),
+        "pair": f"B-{futures_coin}_USDT",
+        "order_type": "market_order",
+        "total_quantity": quantity,
+        "leverage": leverage,
+        "notification": "no_notification"
+    }
+    if tp_price is not None:
+        futures_order_payload["take_profit_price"] = tp_price
+        futures_order_payload["take_profit"] = tp_price
+    if sl_price is not None:
+        futures_order_payload["stop_loss_price"] = sl_price
+        futures_order_payload["stop_loss"] = sl_price
+
+    futures_order_payload_quantized = dict(futures_order_payload)
+    futures_order_payload_quantized["total_quantity"] = float(int(round(quantity))) if cmp < 10.0 and coin not in ['BTC', 'ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX'] else quantity
+
+    futures_order_payload_lev10 = dict(futures_order_payload)
+    futures_order_payload_lev10["leverage"] = 10 if leverage == 5 else 5
+
     endpoint_variants = [
-        (futures_url, {
-            "timestamp": ts,
-            "order": {
-                "side": side.lower(),
-                "pair": f"B-{futures_coin}_USDT",
-                "order_type": "market_order",
-                "total_quantity": quantity,
-                "leverage": leverage,
-                "notification": "no_notification"
-            }
-        }),
-        (futures_url, {
-            "timestamp": ts,
-            "order": {
-                "side": side.lower(),
-                "pair": f"B-{futures_coin}_USDT",
-                "order_type": "market_order",
-                "total_quantity": float(int(round(quantity))) if coin not in ['BTC', 'ETH', 'SOL'] else quantity,
-                "leverage": leverage,
-                "notification": "no_notification"
-            }
-        }),
-        (futures_url, {
-            "timestamp": ts,
-            "order": {
-                "side": side.lower(),
-                "pair": f"B-{futures_coin}_USDT",
-                "order_type": "market_order",
-                "total_quantity": quantity,
-                "leverage": 10 if leverage == 5 else 5,
-                "notification": "no_notification"
-            }
-        }),
+        (futures_url, {"timestamp": ts, "order": futures_order_payload}),
+        (futures_url, {"timestamp": ts, "order": futures_order_payload_quantized}),
+        (futures_url, {"timestamp": ts, "order": futures_order_payload_lev10}),
         (spot_url, {
             "timestamp": ts,
             "side": side.lower(),
@@ -430,7 +424,7 @@ def close_sol_endpoint():
 @app.route('/test-trade')
 def test_trade_endpoint():
     try:
-        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=112.20, margin_inr=100.0, leverage=5, custom_quantity=0.1)
+        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=112.20, margin_inr=100.0, leverage=5, custom_quantity=0.1, tp_price=116.68, sl_price=107.71)
         if res.get('success'):
             with active_trades_lock:
                 ACTIVE_TRADES['SOL-USDT'] = {
@@ -535,7 +529,7 @@ def run_scan():
                 tp1 = round(cmp * 1.04, 4)
                 lev_num = 5  # Fixed 5x Leverage for all coins
                 
-                trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=coin_margin, leverage=lev_num)
+                trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=coin_margin, leverage=lev_num, tp_price=tp1, sl_price=sl)
                 
                 if trade_res.get('success'):
                     exec_hdr = (
