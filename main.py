@@ -16,6 +16,7 @@ scan_lock = threading.Lock()
 active_trades_lock = threading.Lock()
 
 STATE_FILE = "scanner_state.json"
+AUTO_TRADING_ENABLED = True  # GLOBAL MOBILE ON/OFF SWITCH FLAG
 
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -529,7 +530,11 @@ def run_scan():
                 tp1 = round(cmp * 1.04, 4)
                 lev_num = 5  # Fixed 5x Leverage for all coins
                 
-                trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=coin_margin, leverage=lev_num, tp_price=tp1, sl_price=sl)
+                # EXECUTE TRADE ONLY IF AUTO-TRADING IS ACTIVE:
+                if AUTO_TRADING_ENABLED:
+                    trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=coin_margin, leverage=lev_num, tp_price=tp1, sl_price=sl)
+                else:
+                    trade_res = {'success': False, 'error': 'Auto-trading currently PAUSED via Mobile Telegram command (/stop).'}
                 
                 if trade_res.get('success'):
                     exec_hdr = (
@@ -634,6 +639,32 @@ def monitor_active_positions():
             print(f"Position monitor exception: {e}")
         time.sleep(5)
 
+# MOBILE TELEGRAM ON/OFF COMMAND LISTENER (/stop & /start)
+def run_telegram_command_listener():
+    global AUTO_TRADING_ENABLED
+    last_update_id = 0
+    time.sleep(10)
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=5"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                if data.get('ok') and isinstance(data.get('result'), list):
+                    for item in data['result']:
+                        last_update_id = item.get('update_id', last_update_id)
+                        message = item.get('message', {})
+                        text = message.get('text', '').strip().lower()
+                        
+                        if text in ['/stop', '/pause', 'stop', 'pause']:
+                            AUTO_TRADING_ENABLED = False
+                            send_telegram_message("🛑 <b>AUTO-TRADING PAUSED VIA MOBILE COMMAND!</b>\n\n• Signals will still be reported.\n• Auto-order execution on CoinDCX is OFF.")
+                        elif text in ['/start', '/resume', 'start', 'resume']:
+                            AUTO_TRADING_ENABLED = True
+                            send_telegram_message("🟢 <b>AUTO-TRADING ACTIVATED VIA MOBILE COMMAND!</b>\n\n• Auto-order execution on CoinDCX is ON.")
+        except Exception: pass
+        time.sleep(3)
+
 def start_background_loop():
     def run_loop():
         time.sleep(5)
@@ -680,7 +711,10 @@ def start_background_loop():
     t4 = threading.Thread(target=run_keep_alive_loop, daemon=True)
     t4.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT QUANTITY PRECISION FIX DEPLOYED!</b>\n\n• Step size calibrated to 0.1 precision\n• CoinDCX Futures Order Execution 100% Ready")
+    t5 = threading.Thread(target=run_telegram_command_listener, daemon=True)
+    t5.start()
+
+    send_telegram_message("⚡ <b>RENDER BOT QUANTITY PRECISION & MOBILE ON/OFF SWITCH DEPLOYED!</b>\n\n• Fractional step-size calibrated to 0.01 precision\n• Exchange-native TP & SL orders active\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
 
 start_background_loop()
 
