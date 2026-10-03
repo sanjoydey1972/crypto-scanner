@@ -39,7 +39,7 @@ def save_active_trades():
         st["active_trades"] = ACTIVE_TRADES
         save_state(st)
 
-TOKEN = "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
+TOKEN = "8788523087:AAGgfn0-JpnnIlqdxNDj-2an-pGp0WORnqA"
 CHAT_ID = "8938527650"
 
 WATCHLIST = [
