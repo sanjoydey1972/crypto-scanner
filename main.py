@@ -205,7 +205,7 @@ def fetch_coindcx_wallet_balance_inr():
     except Exception: pass
     return 2500.0
 
-def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0, leverage=5, custom_quantity=None, tp_price=None, sl_price=None):
+def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0, leverage=7, custom_quantity=None, tp_price=None, sl_price=None):
     api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
     secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
     
@@ -260,7 +260,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     futures_order_payload_quantized["total_quantity"] = float(int(round(quantity))) if cmp < 10.0 and coin not in ['BTC', 'ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX'] else quantity
 
     futures_order_payload_lev10 = dict(futures_order_payload)
-    futures_order_payload_lev10["leverage"] = 10 if leverage == 5 else 5
+    futures_order_payload_lev10["leverage"] = 10 if leverage == 7 else 7
 
     endpoint_variants = [
         (futures_url, {"timestamp": ts, "order": futures_order_payload}),
@@ -413,7 +413,7 @@ def scan_now_endpoint():
 @app.route('/close-sol')
 def close_sol_endpoint():
     try:
-        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="sell", cmp=108.23, leverage=5, custom_quantity=0.1)
+        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="sell", cmp=108.23, leverage=7, custom_quantity=0.1)
         with active_trades_lock:
             ACTIVE_TRADES.pop('SOL-USDT', None)
         save_active_trades()
@@ -427,9 +427,9 @@ def test_trade_endpoint():
     try:
         sol_klines = fetch_klines("SOL-USDT", "15m", 5)
         live_cmp = sol_klines[-1][4] if sol_klines else 118.80
-        live_tp = round(live_cmp * 1.02, 2)
-        live_sl = round(live_cmp * 0.98, 2)
-        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=live_cmp, margin_inr=1000.0, leverage=5, custom_quantity=0.1, tp_price=live_tp, sl_price=live_sl)
+        live_tp = round(live_cmp * 1.00714, 4)
+        live_sl = round(live_cmp * 0.98, 4)
+        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=live_cmp, margin_inr=1000.0, leverage=7, custom_quantity=0.1, tp_price=live_tp, sl_price=live_sl)
         if res.get('success'):
             with active_trades_lock:
                 ACTIVE_TRADES['SOL-USDT'] = {
@@ -438,7 +438,7 @@ def test_trade_endpoint():
                     'remaining_qty': 0.1,
                     'tp1': live_tp,
                     'sl': live_sl,
-                    'leverage': 5,
+                    'leverage': 7,
                     'entry_time': time.time()
                 }
             save_active_trades()
@@ -529,11 +529,11 @@ def run_scan():
                 clean_symbol = symbol.replace("-", "")
                 entry_min, entry_max = round(cmp * 0.998, 4), round(cmp * 1.001, 4)
                 
-                # REVISED SL & TARGET LOGIC (ROE -10% SL, ROE +10% TP):
-                # 5x Leverage: ROE -10% = -2.0% price move; ROE +10% = +2.0% price move
+                # REVISED SL & TARGET LOGIC (ROE -14% SL, ROE +5% TP):
+                # 7x Leverage: ROE -14% = -2.0% price move; ROE +5% = +0.714% price move
                 sl = round(cmp * 0.98, 4)
-                tp1 = round(cmp * 1.02, 4)
-                lev_num = 5  # Fixed 5x Leverage for all coins
+                tp1 = round(cmp * 1.00714, 4)
+                lev_num = 7  # Fixed 7x Leverage for all coins
                 
                 # EXECUTE TRADE ONLY IF AUTO-TRADING IS ACTIVE:
                 if AUTO_TRADING_ENABLED:
@@ -570,12 +570,12 @@ def run_scan():
                     f"🔥 <b>Confluence Score:</b> <code>{score} / 100</code>\n"
                     f"🏆 <b>Signal Strength:</b> <code>{rating}</code>\n\n"
                     f"⚙️ <b>Trade Parameters:</b>\n"
-                    f"• <b>Leverage:</b> <code>5x (Isolated)</code>\n"
+                    f"• <b>Leverage:</b> <code>7x (Isolated)</code>\n"
                     f"• <b>Margin:</b> <code>₹{coin_margin:.0f} INR (Per Trade)</code>\n"
                     f"• <b>Live CMP:</b> <code>${cmp}</code>\n\n"
                     f"🔹 <b>Entry Range:</b> <code>{entry_min} - {entry_max}</code>\n"
-                    f"🔹 <b>Stop Loss (ROE -10%):</b> <code>{sl}</code>\n"
-                    f"🎯 <b>Target (ROE +10%):</b> <code>{tp1}</code>\n"
+                    f"🔹 <b>Stop Loss (ROE -14%):</b> <code>{sl}</code>\n"
+                    f"🎯 <b>Target (ROE +5%):</b> <code>{tp1}</code>\n"
                     f"{exec_hdr}"
                 )
                 ok = send_telegram_message(msg)
@@ -587,6 +587,9 @@ def run_scan():
 def monitor_active_positions():
     time.sleep(10)
     while True:
+        if not AUTO_TRADING_ENABLED:
+            time.sleep(5)
+            continue
         try:
             with active_trades_lock:
                 symbols_to_check = list(ACTIVE_TRADES.keys())
@@ -606,16 +609,16 @@ def monitor_active_positions():
                     
                     clean_coin = symbol.split('-')[0].upper()
                     
-                    # TARGET REACHED (ROE +10%): High Wick or CMP hits TP1
+                    # TARGET REACHED (ROE +5%): High Wick or CMP hits TP1
                     if high_price >= trade['tp1'] or cmp >= trade['tp1']:
-                        res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 5), custom_quantity=trade['total_qty'])
+                        res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=trade['total_qty'])
                         if res.get('success'):
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
                             save_active_trades()
                             
                             send_telegram_message(
-                                f"🎯 <b>TARGET REACHED (ROE +10%)!</b>\n\n"
+                                f"🎯 <b>TARGET REACHED (ROE +5%)!</b>\n\n"
                                 f"<b>Pair:</b> B-{clean_coin}_USDT\n"
                                 f"🔥 <b>100% Target Hit at CMP:</b> <code>{cmp}</code> (Entry: <code>{trade['entry_price']}</code>)\n"
                                 f"💰 <b>Trade Successfully Closed with Profit!</b>"
@@ -623,16 +626,16 @@ def monitor_active_positions():
                         else:
                             print(f"TP Close failed for {symbol}: {res.get('error')}")
 
-                    # STOP LOSS HIT (ROE -10%): Low Wick or CMP hits SL
+                    # STOP LOSS HIT (ROE -14%): Low Wick or CMP hits SL
                     elif low_price <= trade['sl'] or cmp <= trade['sl']:
-                        res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 5), custom_quantity=trade['total_qty'])
+                        res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=trade['total_qty'])
                         if res.get('success'):
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
                             save_active_trades()
                             
                             send_telegram_message(
-                                f"🛑 <b>STOP LOSS EXECUTED (ROE -10%)</b>\n\n"
+                                f"🛑 <b>STOP LOSS EXECUTED (ROE -14%)</b>\n\n"
                                 f"<b>Pair:</b> B-{clean_coin}_USDT\n"
                                 f"Position closed at Stop Loss: <code>{cmp}</code> (Entry: <code>{trade['entry_price']}</code>)"
                             )
@@ -719,7 +722,7 @@ def start_background_loop():
     t5 = threading.Thread(target=run_telegram_command_listener, daemon=True)
     t5.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT MARGIN ₹1000 & ROE ±10% TARGET SYSTEM DEPLOYED!</b>\n\n• Margin set to ₹1000 INR (Per Trade)\n• Target set to +10% ROE (+2.0% price move)\n• Stop Loss set to -10% ROE (-2.0% price move)\n• Fractional step-size calibrated to 0.01 precision\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
+    send_telegram_message("⚡ <b>RENDER BOT MARGIN ₹1000 & 7X LEVERAGE SYSTEM DEPLOYED!</b>\n\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +5% ROE (+0.714% price move)\n• Stop Loss set to -14% ROE (-2.0% price move)\n• Position monitor frozen when paused via /stop\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
 
 start_background_loop()
 
