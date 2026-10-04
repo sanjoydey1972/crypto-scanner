@@ -14,6 +14,8 @@ from flask import Flask
 app = Flask(__name__)
 scan_lock = threading.Lock()
 active_trades_lock = threading.Lock()
+bg_started_lock = threading.Lock()
+BACKGROUND_INITIALIZED = False
 
 STATE_FILE = "scanner_state.json"
 AUTO_TRADING_ENABLED = True  # GLOBAL MOBILE ON/OFF SWITCH FLAG
@@ -673,7 +675,7 @@ def run_telegram_command_listener():
                                     send_telegram_message("🛑 <b>AUTO-TRADING PAUSED VIA MOBILE COMMAND!</b>\n\n• Signals will still be reported.\n• Auto-order execution on CoinDCX is OFF.")
                                 elif text in ['/start', '/resume', 'start', 'resume']:
                                     AUTO_TRADING_ENABLED = True
-                                    send_telegram_message("🟢 <b>AUTO-TRADING ACTIVATED VIA MOBILE COMMAND!</b>\n\n• Auto-order execution on CoinDCX is ON.")
+                                    send_telegram_message("🟢 <b>AUTO-TRADING ACTIVATED VIA MOBILE COMMAND!</b>\n\n• Signals & Auto-order execution on CoinDCX are ON.")
                                 elif text in ['/status', 'status']:
                                     status_str = "🟢 ACTIVE (ON)" if AUTO_TRADING_ENABLED else "🛑 PAUSED (OFF)"
                                     send_telegram_message(f"🤖 <b>BOT STATUS:</b> {status_str}\n\n• Leverage: 7x\n• Margin: ₹1,000 INR\n• Target: ROE +5%\n• Stop Loss: ROE -14%")
@@ -681,6 +683,12 @@ def run_telegram_command_listener():
         time.sleep(3)
 
 def start_background_loop():
+    global BACKGROUND_INITIALIZED
+    with bg_started_lock:
+        if BACKGROUND_INITIALIZED:
+            return
+        BACKGROUND_INITIALIZED = True
+
     def run_loop():
         time.sleep(5)
         while True:
