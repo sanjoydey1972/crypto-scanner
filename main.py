@@ -645,11 +645,11 @@ def monitor_active_positions():
             print(f"Position monitor exception: {e}")
         time.sleep(5)
 
-# MOBILE TELEGRAM ON/OFF COMMAND LISTENER (/stop & /start)
+# MOBILE TELEGRAM ON/OFF COMMAND LISTENER (/stop, /start & /status)
 def run_telegram_command_listener():
     global AUTO_TRADING_ENABLED
     last_update_id = 0
-    time.sleep(10)
+    time.sleep(5)
     while True:
         try:
             url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=5"
@@ -657,17 +657,26 @@ def run_telegram_command_listener():
             with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 if data.get('ok') and isinstance(data.get('result'), list):
-                    for item in data['result']:
-                        last_update_id = item.get('update_id', last_update_id)
-                        message = item.get('message', {})
-                        text = message.get('text', '').strip().lower()
-                        
-                        if text in ['/stop', '/pause', 'stop', 'pause']:
-                            AUTO_TRADING_ENABLED = False
-                            send_telegram_message("🛑 <b>AUTO-TRADING PAUSED VIA MOBILE COMMAND!</b>\n\n• Signals will still be reported.\n• Auto-order execution on CoinDCX is OFF.")
-                        elif text in ['/start', '/resume', 'start', 'resume']:
-                            AUTO_TRADING_ENABLED = True
-                            send_telegram_message("🟢 <b>AUTO-TRADING ACTIVATED VIA MOBILE COMMAND!</b>\n\n• Auto-order execution on CoinDCX is ON.")
+                    updates = data['result']
+                    if updates:
+                        if last_update_id == 0:
+                            # Clear old message queue history on server boot
+                            last_update_id = updates[-1].get('update_id', 0)
+                        else:
+                            for item in updates:
+                                last_update_id = item.get('update_id', last_update_id)
+                                message = item.get('message', {})
+                                text = message.get('text', '').strip().lower()
+                                
+                                if text in ['/stop', '/pause', 'stop', 'pause']:
+                                    AUTO_TRADING_ENABLED = False
+                                    send_telegram_message("🛑 <b>AUTO-TRADING PAUSED VIA MOBILE COMMAND!</b>\n\n• Signals will still be reported.\n• Auto-order execution on CoinDCX is OFF.")
+                                elif text in ['/start', '/resume', 'start', 'resume']:
+                                    AUTO_TRADING_ENABLED = True
+                                    send_telegram_message("🟢 <b>AUTO-TRADING ACTIVATED VIA MOBILE COMMAND!</b>\n\n• Auto-order execution on CoinDCX is ON.")
+                                elif text in ['/status', 'status']:
+                                    status_str = "🟢 ACTIVE (ON)" if AUTO_TRADING_ENABLED else "🛑 PAUSED (OFF)"
+                                    send_telegram_message(f"🤖 <b>BOT STATUS:</b> {status_str}\n\n• Leverage: 7x\n• Margin: ₹1,000 INR\n• Target: ROE +5%\n• Stop Loss: ROE -14%")
         except Exception: pass
         time.sleep(3)
 
