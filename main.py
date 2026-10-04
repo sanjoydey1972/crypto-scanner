@@ -178,58 +178,32 @@ def send_telegram_message(text):
         print(f"Telegram error: {e}")
         return False
 
-# CAPITAL & AVAILABLE BALANCE WALLET ENGINE:
-def fetch_coindcx_wallet_balances():
+# CAPITAL-PROPORTIONAL MARGIN SCALING ENGINE:
+def fetch_coindcx_wallet_balance_inr():
     api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
     secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
-    if not api_key or not secret_key: return {'total_inr': 2500.0, 'available_usdt': 25.0}
+    if not api_key or not secret_key: return 2500.0
     
-    usdt_total, usdt_avail, inr_total = 0.0, 0.0, 0.0
-    ts = int(round(time.time() * 1000))
-    json_body = json.dumps({"timestamp": ts}, separators=(',', ':'))
-    signature = hmac.new(secret_key.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
-    headers = {'Content-Type': 'application/json', 'X-AUTH-APIKEY': api_key, 'X-AUTH-SIGNATURE': signature, 'User-Agent': 'Mozilla/5.0'}
-
-    # 1. Try Futures Wallet Balances Endpoint
     try:
-        fut_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/balances"
-        req = urllib.request.Request(fut_url, data=json_body.encode('utf-8'), headers=headers, method='POST')
-        with urllib.request.urlopen(req, context=ctx, timeout=4) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            if isinstance(data, list):
-                for b in data:
-                    curr = b.get('currency', '')
-                    if curr == 'USDT':
-                        usdt_avail = max(usdt_avail, float(b.get('balance', b.get('available_balance', 0))))
-                        usdt_total = max(usdt_total, usdt_avail + float(b.get('locked_balance', 0)))
-            elif isinstance(data, dict):
-                usdt_avail = max(usdt_avail, float(data.get('balance', data.get('available_balance', 0))))
-    except Exception: pass
-
-    # 2. Try Standard Balances Endpoint
-    try:
-        spot_url = "https://api.coindcx.com/exchange/v1/users/balances"
-        req = urllib.request.Request(spot_url, data=json_body.encode('utf-8'), headers=headers, method='POST')
-        with urllib.request.urlopen(req, context=ctx, timeout=4) as resp:
+        ts = int(round(time.time() * 1000))
+        json_body = json.dumps({"timestamp": ts}, separators=(',', ':'))
+        signature = hmac.new(secret_key.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
+        headers = {'Content-Type': 'application/json', 'X-AUTH-APIKEY': api_key, 'X-AUTH-SIGNATURE': signature, 'User-Agent': 'Mozilla/5.0'}
+        url = "https://api.coindcx.com/exchange/v1/users/balances"
+        req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers, method='POST')
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
             balances = json.loads(resp.read().decode('utf-8'))
+            usdt_bal, inr_bal = 0.0, 0.0
             if isinstance(balances, list):
                 for b in balances:
                     currency = b.get('currency', '')
-                    avail = float(b.get('balance', 0))
-                    total = avail + float(b.get('locked_balance', 0))
-                    if currency == 'USDT':
-                        usdt_avail = max(usdt_avail, avail)
-                        usdt_total = max(usdt_total, total)
-                    elif currency == 'INR':
-                        inr_total = total
+                    balance_val = float(b.get('balance', 0)) + float(b.get('locked_balance', 0))
+                    if currency == 'USDT': usdt_bal = balance_val
+                    elif currency == 'INR': inr_bal = balance_val
+            total_inr = (usdt_bal * 88.5) + inr_bal
+            if total_inr >= 1000.0: return total_inr
     except Exception: pass
-
-    total_inr = (usdt_total * 88.5) + inr_total
-    return {'total_inr': max(1000.0, total_inr), 'available_usdt': max(25.0, usdt_avail) if usdt_avail == 0 else usdt_avail}
-
-def fetch_coindcx_wallet_balance_inr():
-    b = fetch_coindcx_wallet_balances()
-    return b.get('total_inr', 2500.0)
+    return 2500.0
 
 def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0, leverage=7, custom_quantity=None, tp_price=None, sl_price=None):
     api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
@@ -242,25 +216,14 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     futures_coin = f"1000{coin}" if coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI'] else coin
     pair_name = f"B-{futures_coin}_USDT"
     
-    # Check available USDT balance before opening position (prevents 422 Insufficient Wallet Balance)
-    usdt_inr_rate = 88.5
-    wallet_info = fetch_coindcx_wallet_balances()
-    avail_usdt = wallet_info.get('available_usdt', 25.0)
-    
-    if side.lower() == "buy":
-        req_margin_usdt = margin_inr / usdt_inr_rate
-        if avail_usdt < 2.0:
-            return {'success': False, 'error': f"Insufficient Available Balance: ${avail_usdt:.2f} USDT free (active positions are locking margin)."}
-        if avail_usdt < req_margin_usdt:
-            # Dynamically adjust margin to fit remaining available USDT (leave 10% safety buffer for fees)
-            margin_inr = avail_usdt * usdt_inr_rate * 0.90
-            
     if custom_quantity is not None:
         quantity = custom_quantity
     else:
+        usdt_inr_rate = 88.5
         position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
         raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
         
+        # High-priced coins (BCH, AAVE, LTC, AVAX, BNB) use 0.01 fractional decimal precision
         if coin == 'BTC': 
             quantity = round(max(0.001, raw_qty), 3)
         elif coin in ['ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX', 'BNB']: 
