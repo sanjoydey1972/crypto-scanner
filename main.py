@@ -214,6 +214,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         
     coin = symbol.split('-')[0].upper()
     futures_coin = f"1000{coin}" if coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI'] else coin
+    pair_name = f"B-{futures_coin}_USDT"
     
     if custom_quantity is not None:
         quantity = custom_quantity
@@ -236,32 +237,46 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         
     if quantity <= 0: quantity = 0.01 if coin in ['ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX', 'BNB'] else (0.001 if coin == 'BTC' else 1.0)
 
+    # Clean TP / SL price formatting to match exact tick decimal precision
+    formatted_tp = None
+    formatted_sl = None
+    if tp_price is not None:
+        if cmp >= 100: formatted_tp = round(float(tp_price), 2)
+        elif cmp >= 1.0: formatted_tp = round(float(tp_price), 4)
+        else: formatted_tp = round(float(tp_price), 6)
+        
+    if sl_price is not None:
+        if cmp >= 100: formatted_sl = round(float(sl_price), 2)
+        elif cmp >= 1.0: formatted_sl = round(float(sl_price), 4)
+        else: formatted_sl = round(float(sl_price), 6)
+
     futures_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
+    tpsl_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/positions/create_tpsl"
     spot_url = "https://api.coindcx.com/exchange/v1/orders/create"
     ts = int(round(time.time() * 1000))
 
-    futures_order_payload = {
+    # Variant 1: Pure Futures Market Order WITH valid take_profit_price and stop_loss_price (No extra invalid keys)
+    futures_order_payload_tpsl = {
         "side": side.lower(),
-        "pair": f"B-{futures_coin}_USDT",
+        "pair": pair_name,
         "order_type": "market_order",
         "total_quantity": quantity,
         "leverage": leverage,
         "notification": "no_notification"
     }
-    if tp_price is not None:
-        futures_order_payload["take_profit_price"] = tp_price
-        futures_order_payload["take_profit"] = tp_price
-    if sl_price is not None:
-        futures_order_payload["stop_loss_price"] = sl_price
-        futures_order_payload["stop_loss"] = sl_price
+    if formatted_tp is not None:
+        futures_order_payload_tpsl["take_profit_price"] = formatted_tp
+    if formatted_sl is not None:
+        futures_order_payload_tpsl["stop_loss_price"] = formatted_sl
 
-    futures_order_payload_quantized = dict(futures_order_payload)
-    futures_order_payload_quantized["total_quantity"] = float(int(round(quantity))) if cmp < 10.0 and coin not in ['BTC', 'ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX'] else quantity
+    # Variant 2: Quantized Integer Qty with TP/SL
+    futures_order_payload_quantized_tpsl = dict(futures_order_payload_tpsl)
+    futures_order_payload_quantized_tpsl["total_quantity"] = float(int(round(quantity))) if cmp < 10.0 and coin not in ['BTC', 'ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX'] else quantity
 
-    # Clean futures payload without inline TP/SL (resolves CoinDCX 422 TP/SL validation errors)
+    # Variant 3: Clean futures payload without inline TP/SL (Fallback)
     futures_order_payload_clean = {
         "side": side.lower(),
-        "pair": f"B-{futures_coin}_USDT",
+        "pair": pair_name,
         "order_type": "market_order",
         "total_quantity": quantity,
         "leverage": leverage,
@@ -269,9 +284,9 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     }
 
     endpoint_variants = [
-        (futures_url, {"timestamp": ts, "order": futures_order_payload}),
-        (futures_url, {"timestamp": ts, "order": futures_order_payload_quantized}),
-        (futures_url, {"timestamp": ts, "order": futures_order_payload_clean}),
+        (futures_url, {"timestamp": ts, "order": futures_order_payload_tpsl}, True),
+        (futures_url, {"timestamp": ts, "order": futures_order_payload_quantized_tpsl}, True),
+        (futures_url, {"timestamp": ts, "order": futures_order_payload_clean}, False),
         (spot_url, {
             "timestamp": ts,
             "side": side.lower(),
@@ -279,12 +294,14 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
             "market": f"{coin}INR",
             "total_quantity": quantity,
             "leverage": leverage
-        })
+        }, False)
     ]
 
     err_logs = []
-    for idx, (target_url, body) in enumerate(endpoint_variants, 1):
+    for idx, (target_url, body, has_tpsl_inline) in enumerate(endpoint_variants, 1):
         try:
+            ts_now = int(round(time.time() * 1000))
+            body["timestamp"] = ts_now
             json_body = json.dumps(body, separators=(',', ':'))
             signature = hmac.new(secret_key.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
             headers = {
@@ -299,7 +316,33 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
                 order_id = "EXECUTED"
                 if isinstance(data, dict): order_id = data.get('id', data.get('order_id', 'EXECUTED'))
                 elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict): order_id = data[0].get('id', 'EXECUTED')
-                return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': body.get('pair', body.get('market', f"B-{futures_coin}_USDT"))}
+                
+                # If market order executed without inline TP/SL, attach TP & SL via CoinDCX position TP/SL API call:
+                if not has_tpsl_inline and (formatted_tp is not None or formatted_sl is not None) and side.lower() == "buy":
+                    try:
+                        time.sleep(0.5)
+                        tpsl_ts = int(round(time.time() * 1000))
+                        tpsl_body = {
+                            "timestamp": tpsl_ts,
+                            "pair": pair_name,
+                            "take_profit_price": formatted_tp,
+                            "stop_loss_price": formatted_sl
+                        }
+                        tpsl_json = json.dumps(tpsl_body, separators=(',', ':'))
+                        tpsl_sig = hmac.new(secret_key.encode('utf-8'), tpsl_json.encode('utf-8'), hashlib.sha256).hexdigest()
+                        tpsl_headers = {
+                            'Content-Type': 'application/json',
+                            'X-AUTH-APIKEY': api_key,
+                            'X-AUTH-SIGNATURE': tpsl_sig,
+                            'User-Agent': 'Mozilla/5.0'
+                        }
+                        tpsl_req = urllib.request.Request(tpsl_url, data=tpsl_json.encode('utf-8'), headers=tpsl_headers, method='POST')
+                        with urllib.request.urlopen(tpsl_req, context=ctx, timeout=5) as tpsl_resp:
+                            pass
+                    except Exception as e_tpsl:
+                        print(f"TPSL attach error: {e_tpsl}")
+                        
+                return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': body.get('pair', body.get('market', pair_name))}
         except urllib.error.HTTPError as e:
             try:
                 err_text = e.read().decode('utf-8')
