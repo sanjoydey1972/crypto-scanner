@@ -222,7 +222,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
         raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
         
-        # LOGIC 1 FIX: High-priced coins (BCH, AAVE, LTC, AVAX, BNB) use 0.01 fractional decimal precision (keeping margin strictly at ₹1000 INR)
+        # High-priced coins (BCH, AAVE, LTC, AVAX, BNB) use 0.01 fractional decimal precision
         if coin == 'BTC': 
             quantity = round(max(0.001, raw_qty), 3)
         elif coin in ['ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX', 'BNB']: 
@@ -240,7 +240,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     spot_url = "https://api.coindcx.com/exchange/v1/orders/create"
     ts = int(round(time.time() * 1000))
 
-    # LOGIC 2 FIX: Attach exchange-native TP & SL parameters directly to CoinDCX order book
     futures_order_payload = {
         "side": side.lower(),
         "pair": f"B-{futures_coin}_USDT",
@@ -259,13 +258,20 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     futures_order_payload_quantized = dict(futures_order_payload)
     futures_order_payload_quantized["total_quantity"] = float(int(round(quantity))) if cmp < 10.0 and coin not in ['BTC', 'ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX'] else quantity
 
-    futures_order_payload_lev10 = dict(futures_order_payload)
-    futures_order_payload_lev10["leverage"] = 10 if leverage == 7 else 7
+    # Clean futures payload without inline TP/SL (resolves CoinDCX 422 TP/SL validation errors)
+    futures_order_payload_clean = {
+        "side": side.lower(),
+        "pair": f"B-{futures_coin}_USDT",
+        "order_type": "market_order",
+        "total_quantity": quantity,
+        "leverage": leverage,
+        "notification": "no_notification"
+    }
 
     endpoint_variants = [
         (futures_url, {"timestamp": ts, "order": futures_order_payload}),
         (futures_url, {"timestamp": ts, "order": futures_order_payload_quantized}),
-        (futures_url, {"timestamp": ts, "order": futures_order_payload_lev10}),
+        (futures_url, {"timestamp": ts, "order": futures_order_payload_clean}),
         (spot_url, {
             "timestamp": ts,
             "side": side.lower(),
