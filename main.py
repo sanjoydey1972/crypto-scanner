@@ -184,30 +184,48 @@ def fetch_coindcx_wallet_balances():
     secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
     if not api_key or not secret_key: return {'total_inr': 2500.0, 'available_usdt': 25.0}
     
+    usdt_total, usdt_avail, inr_total = 0.0, 0.0, 0.0
+    ts = int(round(time.time() * 1000))
+    json_body = json.dumps({"timestamp": ts}, separators=(',', ':'))
+    signature = hmac.new(secret_key.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
+    headers = {'Content-Type': 'application/json', 'X-AUTH-APIKEY': api_key, 'X-AUTH-SIGNATURE': signature, 'User-Agent': 'Mozilla/5.0'}
+
+    # 1. Try Futures Wallet Balances Endpoint
     try:
-        ts = int(round(time.time() * 1000))
-        json_body = json.dumps({"timestamp": ts}, separators=(',', ':'))
-        signature = hmac.new(secret_key.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
-        headers = {'Content-Type': 'application/json', 'X-AUTH-APIKEY': api_key, 'X-AUTH-SIGNATURE': signature, 'User-Agent': 'Mozilla/5.0'}
-        url = "https://api.coindcx.com/exchange/v1/users/balances"
-        req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers, method='POST')
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+        fut_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/balances"
+        req = urllib.request.Request(fut_url, data=json_body.encode('utf-8'), headers=headers, method='POST')
+        with urllib.request.urlopen(req, context=ctx, timeout=4) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            if isinstance(data, list):
+                for b in data:
+                    curr = b.get('currency', '')
+                    if curr == 'USDT':
+                        usdt_avail = max(usdt_avail, float(b.get('balance', b.get('available_balance', 0))))
+                        usdt_total = max(usdt_total, usdt_avail + float(b.get('locked_balance', 0)))
+            elif isinstance(data, dict):
+                usdt_avail = max(usdt_avail, float(data.get('balance', data.get('available_balance', 0))))
+    except Exception: pass
+
+    # 2. Try Standard Balances Endpoint
+    try:
+        spot_url = "https://api.coindcx.com/exchange/v1/users/balances"
+        req = urllib.request.Request(spot_url, data=json_body.encode('utf-8'), headers=headers, method='POST')
+        with urllib.request.urlopen(req, context=ctx, timeout=4) as resp:
             balances = json.loads(resp.read().decode('utf-8'))
-            usdt_total, usdt_avail, inr_total = 0.0, 0.0, 0.0
             if isinstance(balances, list):
                 for b in balances:
                     currency = b.get('currency', '')
                     avail = float(b.get('balance', 0))
                     total = avail + float(b.get('locked_balance', 0))
                     if currency == 'USDT':
-                        usdt_avail = avail
-                        usdt_total = total
+                        usdt_avail = max(usdt_avail, avail)
+                        usdt_total = max(usdt_total, total)
                     elif currency == 'INR':
                         inr_total = total
-            total_inr = (usdt_total * 88.5) + inr_total
-            return {'total_inr': max(1000.0, total_inr), 'available_usdt': usdt_avail}
     except Exception: pass
-    return {'total_inr': 2500.0, 'available_usdt': 25.0}
+
+    total_inr = (usdt_total * 88.5) + inr_total
+    return {'total_inr': max(1000.0, total_inr), 'available_usdt': max(25.0, usdt_avail) if usdt_avail == 0 else usdt_avail}
 
 def fetch_coindcx_wallet_balance_inr():
     b = fetch_coindcx_wallet_balances()
