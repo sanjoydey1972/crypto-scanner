@@ -205,6 +205,34 @@ def fetch_coindcx_wallet_balance_inr():
     except Exception: pass
     return 2500.0
 
+# LIVE POSITION CHECKER (Ensures zero short trades can ever open):
+def fetch_coindcx_live_position_qty(symbol):
+    api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
+    secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
+    if not api_key or not secret_key: return 0.0
+    
+    coin = symbol.split('-')[0].upper()
+    futures_coin = f"1000{coin}" if coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI'] else coin
+    target_pair = f"B-{futures_coin}_USDT"
+    
+    try:
+        ts = int(round(time.time() * 1000))
+        json_body = json.dumps({"timestamp": ts}, separators=(',', ':'))
+        signature = hmac.new(secret_key.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
+        headers = {'Content-Type': 'application/json', 'X-AUTH-APIKEY': api_key, 'X-AUTH-SIGNATURE': signature, 'User-Agent': 'Mozilla/5.0'}
+        url = "https://api.coindcx.com/exchange/v1/derivatives/futures/positions"
+        req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers, method='POST')
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            positions = json.loads(resp.read().decode('utf-8'))
+            if isinstance(positions, list):
+                for p in positions:
+                    pair = p.get('pair', '')
+                    if pair == target_pair:
+                        open_qty = float(p.get('open_position', p.get('active_position', p.get('quantity', 0))))
+                        return abs(open_qty)
+    except Exception: pass
+    return 0.0
+
 def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0, leverage=7, custom_quantity=None, tp_price=None, sl_price=None):
     api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
     secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
@@ -216,6 +244,10 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     futures_coin = f"1000{coin}" if coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI'] else coin
     pair_name = f"B-{futures_coin}_USDT"
     
+    # REQUIREMENT 2 ENFORCEMENT: For BUY orders, TP and SL are MANDATORY. Without TP & SL, DO NOT PLACE TRADE!
+    if side.lower() == "buy" and (tp_price is None or sl_price is None):
+        return {'success': False, 'error': '⚠️ Trade Cancelled: Stop Loss and Target are required (No SL/TP = No Trade).'}
+
     if custom_quantity is not None:
         quantity = custom_quantity
     else:
@@ -253,11 +285,9 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         else: formatted_sl = round(float(sl_price), 6)
 
     futures_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
-    tpsl_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/positions/create_tpsl"
-    spot_url = "https://api.coindcx.com/exchange/v1/orders/create"
     ts = int(round(time.time() * 1000))
 
-    # Variant 1: Pure Futures Market Order WITH valid take_profit_price and stop_loss_price (No extra invalid keys)
+    # Variant 1: Pure Futures Market Order WITH valid take_profit_price and stop_loss_price
     futures_order_payload_tpsl = {
         "side": side.lower(),
         "pair": pair_name,
@@ -275,32 +305,28 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     futures_order_payload_quantized_tpsl = dict(futures_order_payload_tpsl)
     futures_order_payload_quantized_tpsl["total_quantity"] = float(int(round(quantity))) if cmp < 10.0 and coin not in ['BTC', 'ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX'] else quantity
 
-    # Variant 3: Clean futures payload without inline TP/SL (Fallback)
-    futures_order_payload_clean = {
-        "side": side.lower(),
-        "pair": pair_name,
-        "order_type": "market_order",
-        "total_quantity": quantity,
-        "leverage": leverage,
-        "notification": "no_notification"
-    }
-
-    endpoint_variants = [
-        (futures_url, {"timestamp": ts, "order": futures_order_payload_tpsl}, True),
-        (futures_url, {"timestamp": ts, "order": futures_order_payload_quantized_tpsl}, True),
-        (futures_url, {"timestamp": ts, "order": futures_order_payload_clean}, False),
-        (spot_url, {
-            "timestamp": ts,
+    # REQUIREMENT 2 RULE: If side == "buy", ONLY execute payloads with inline TP & SL. NO NAKED MARKET ORDERS ALLOWED!
+    if side.lower() == "buy":
+        endpoint_variants = [
+            (futures_url, {"timestamp": ts, "order": futures_order_payload_tpsl}),
+            (futures_url, {"timestamp": ts, "order": futures_order_payload_quantized_tpsl})
+        ]
+    else:
+        # Exit/Sell order payload
+        futures_order_payload_clean = {
             "side": side.lower(),
+            "pair": pair_name,
             "order_type": "market_order",
-            "market": f"{coin}INR",
             "total_quantity": quantity,
-            "leverage": leverage
-        }, False)
-    ]
+            "leverage": leverage,
+            "notification": "no_notification"
+        }
+        endpoint_variants = [
+            (futures_url, {"timestamp": ts, "order": futures_order_payload_clean})
+        ]
 
     err_logs = []
-    for idx, (target_url, body, has_tpsl_inline) in enumerate(endpoint_variants, 1):
+    for idx, (target_url, body) in enumerate(endpoint_variants, 1):
         try:
             ts_now = int(round(time.time() * 1000))
             body["timestamp"] = ts_now
@@ -318,33 +344,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
                 order_id = "EXECUTED"
                 if isinstance(data, dict): order_id = data.get('id', data.get('order_id', 'EXECUTED'))
                 elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict): order_id = data[0].get('id', 'EXECUTED')
-                
-                # If market order executed without inline TP/SL, attach TP & SL via CoinDCX position TP/SL API call:
-                if not has_tpsl_inline and (formatted_tp is not None or formatted_sl is not None) and side.lower() == "buy":
-                    try:
-                        time.sleep(0.5)
-                        tpsl_ts = int(round(time.time() * 1000))
-                        tpsl_body = {
-                            "timestamp": tpsl_ts,
-                            "pair": pair_name,
-                            "take_profit_price": formatted_tp,
-                            "stop_loss_price": formatted_sl
-                        }
-                        tpsl_json = json.dumps(tpsl_body, separators=(',', ':'))
-                        tpsl_sig = hmac.new(secret_key.encode('utf-8'), tpsl_json.encode('utf-8'), hashlib.sha256).hexdigest()
-                        tpsl_headers = {
-                            'Content-Type': 'application/json',
-                            'X-AUTH-APIKEY': api_key,
-                            'X-AUTH-SIGNATURE': tpsl_sig,
-                            'User-Agent': 'Mozilla/5.0'
-                        }
-                        tpsl_req = urllib.request.Request(tpsl_url, data=tpsl_json.encode('utf-8'), headers=tpsl_headers, method='POST')
-                        with urllib.request.urlopen(tpsl_req, context=ctx, timeout=5) as tpsl_resp:
-                            pass
-                    except Exception as e_tpsl:
-                        print(f"TPSL attach error: {e_tpsl}")
-                        
-                return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': body.get('pair', body.get('market', pair_name))}
+                return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': pair_name}
         except urllib.error.HTTPError as e:
             try:
                 err_text = e.read().decode('utf-8')
@@ -355,6 +355,8 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
             err_logs.append(f"V{idx}: {e}")
 
     last_err = " | ".join(err_logs) if err_logs else "Unknown Error"
+    if side.lower() == "buy":
+        return {'success': False, 'error': f"⚠️ Trade Cancelled: CoinDCX TP/SL validation failed ({last_err})."}
     return {'success': False, 'error': last_err}
 
 def fetch_live_btc_price():
@@ -648,6 +650,17 @@ def monitor_active_positions():
             for symbol in symbols_to_check:
                 try:
                     time.sleep(0.5)
+                    
+                    # REQUIREMENT 1 SAFEGUARD: Check live open position quantity on CoinDCX first!
+                    live_qty = fetch_coindcx_live_position_qty(symbol)
+                    if live_qty <= 0:
+                        # Position was ALREADY closed manually on CoinDCX or by native TP/SL!
+                        # DO NOT send any SELL order! Simply clean memory.
+                        with active_trades_lock:
+                            ACTIVE_TRADES.pop(symbol, None)
+                        save_active_trades()
+                        continue
+
                     m15_klines = fetch_klines(symbol, '15m', 5)
                     if not m15_klines: continue
                     high_price = m15_klines[-1][2]
