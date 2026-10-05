@@ -240,7 +240,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         position_value_usdt = (strict_margin_inr * leverage) / usdt_inr_rate
         raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
         
-        # FIX 3: STRICT QUANTITY ROUNDING - Never round UP to exceed margin!
+        # STRICT QUANTITY ROUNDING - Never round UP to exceed margin!
         if coin == 'BTC': 
             quantity = round(raw_qty, 3)
         elif coin in ['ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX', 'BNB']: 
@@ -257,23 +257,31 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         
     if quantity <= 0: quantity = 0.01 if coin in ['ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX', 'BNB'] else (0.001 if coin == 'BTC' else 1.0)
 
-    # Clean TP / SL price formatting to match exact tick decimal precision
+    # REFINED TP / SL PRICE TICK ROUNDING TO MATCH COINDCX PRECISION:
+    # Coins under $10 (like ICP, ADA, XRP, SUI, NEAR) MUST use 2 decimal places to prevent HTTP 422 errors!
     formatted_tp = None
     formatted_sl = None
+    formatted_tp_2d = None
+    formatted_sl_2d = None
+
     if tp_price is not None:
         if cmp >= 100: formatted_tp = round(float(tp_price), 2)
-        elif cmp >= 1.0: formatted_tp = round(float(tp_price), 4)
-        else: formatted_tp = round(float(tp_price), 6)
-        
+        elif cmp >= 10.0: formatted_tp = round(float(tp_price), 3)
+        elif cmp >= 1.0: formatted_tp = round(float(tp_price), 2)   # 2 Decimals for $1-$10 coins (e.g. 3.49 for ICP)
+        else: formatted_tp = round(float(tp_price), 4)
+        formatted_tp_2d = round(float(tp_price), 2)
+
     if sl_price is not None:
         if cmp >= 100: formatted_sl = round(float(sl_price), 2)
-        elif cmp >= 1.0: formatted_sl = round(float(sl_price), 4)
-        else: formatted_sl = round(float(sl_price), 6)
+        elif cmp >= 10.0: formatted_sl = round(float(sl_price), 3)
+        elif cmp >= 1.0: formatted_sl = round(float(sl_price), 2)   # 2 Decimals for $1-$10 coins (e.g. 3.39 for ICP)
+        else: formatted_sl = round(float(sl_price), 4)
+        formatted_sl_2d = round(float(sl_price), 2)
 
     futures_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
     ts = int(round(time.time() * 1000))
 
-    # Variant 1: Pure Futures Market Order WITH valid take_profit_price and stop_loss_price
+    # Variant 1: Primary Precision TP/SL Payload
     futures_order_payload_tpsl = {
         "side": side.lower(),
         "pair": pair_name,
@@ -287,14 +295,22 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     if formatted_sl is not None:
         futures_order_payload_tpsl["stop_loss_price"] = formatted_sl
 
-    # Variant 2: Quantized Integer Qty with TP/SL
-    futures_order_payload_quantized_tpsl = dict(futures_order_payload_tpsl)
+    # Variant 2: Strict 2-Decimal TP/SL Payload (Guarantees HTTP 422 bypass on $1-$10 coins)
+    futures_order_payload_2d_tpsl = dict(futures_order_payload_tpsl)
+    if formatted_tp_2d is not None:
+        futures_order_payload_2d_tpsl["take_profit_price"] = formatted_tp_2d
+    if formatted_sl_2d is not None:
+        futures_order_payload_2d_tpsl["stop_loss_price"] = formatted_sl_2d
+
+    # Variant 3: Quantized Integer Quantity with TP/SL
+    futures_order_payload_quantized_tpsl = dict(futures_order_payload_2d_tpsl)
     futures_order_payload_quantized_tpsl["total_quantity"] = float(int(quantity)) if cmp < 10.0 and coin not in ['BTC', 'ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX'] else quantity
 
     # REQUIREMENT 2 RULE: If side == "buy", ONLY execute payloads with inline TP & SL. NO NAKED MARKET ORDERS ALLOWED!
     if side.lower() == "buy":
         endpoint_variants = [
             (futures_url, {"timestamp": ts, "order": futures_order_payload_tpsl}),
+            (futures_url, {"timestamp": ts, "order": futures_order_payload_2d_tpsl}),
             (futures_url, {"timestamp": ts, "order": futures_order_payload_quantized_tpsl})
         ]
     else:
