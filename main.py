@@ -600,7 +600,8 @@ def run_scan():
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
         try:
             last_sent = state.get(symbol, 0)
-            if time.time() - last_sent > 1800:
+            # ACCELERATED COOLDOWN: 600 seconds (10 minutes) per-coin cooldown instead of 30 minutes!
+            if time.time() - last_sent > 600:
                 clean_symbol = symbol.replace("-", "")
                 entry_min, entry_max = round(cmp * 0.998, 4), round(cmp * 1.001, 4)
                 
@@ -769,7 +770,8 @@ def start_background_loop():
                     finally: scan_lock.release()
             except Exception as e:
                 print(f"Scan loop exception: {e}")
-            time.sleep(300)
+            # ACCELERATED SCAN INTERVAL: Scan every 120 seconds (2 minutes) instead of 300 seconds!
+            time.sleep(120)
 
     def run_hourly_report_loop():
         time.sleep(10)
@@ -808,7 +810,7 @@ def start_background_loop():
     t5 = threading.Thread(target=run_telegram_command_listener, daemon=True)
     t5.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT MARGIN ₹1000 & 7X LEVERAGE SYSTEM DEPLOYED!</b>\n\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +5% ROE (+0.714% price move)\n• Stop Loss set to -14% ROE (-2.0% price move)\n• Position monitor frozen when paused via /stop\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
+    send_telegram_message("⚡ <b>RENDER BOT MARGIN ₹1000 & 7X LEVERAGE ACCELERATED SYSTEM DEPLOYED!</b>\n\n• Scan Interval: 2 Minutes (Fast Execution)\n• Per-Coin Cooldown: 10 Minutes\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +5% ROE (+0.714% price move)\n• Stop Loss set to -14% ROE (-2.0% price move)\n• Position monitor frozen when paused via /stop\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
 
 start_background_loop()
 
