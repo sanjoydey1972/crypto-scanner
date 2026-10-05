@@ -96,7 +96,7 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
 
     # Provider 3: Bybit Public Market API
     try:
-        bybit_interval = "15" if interval_str == "15m" else ("D" if interval_str == "1d" else "15")
+        bybit_interval = "15" if interval_str == "15m" else ("60" if interval_str == "1h" else ("D" if interval_str == "1d" else "15"))
         url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={clean_sym}&interval={bybit_interval}&limit={limit}"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
@@ -125,6 +125,15 @@ def calculate_rsi(prices, period=14):
     if avg_loss == 0: return 100.0
     rs = avg_gain / avg_loss
     return 100.0 - (100.0 / (1.0 + rs))
+
+def calculate_ema(prices, period=50):
+    if len(prices) < period:
+        return prices[-1] if prices else 0.0
+    k = 2.0 / (period + 1)
+    ema = sum(prices[:period]) / period
+    for price in prices[period:]:
+        ema = (price * k) + (ema * (1 - k))
+    return ema
 
 def calculate_volume_spike(klines, period=20):
     volumes = [float(k[5]) for k in klines]
@@ -178,33 +187,6 @@ def send_telegram_message(text):
         print(f"Telegram error: {e}")
         return False
 
-# CAPITAL-PROPORTIONAL MARGIN SCALING ENGINE:
-def fetch_coindcx_wallet_balance_inr():
-    api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
-    secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
-    if not api_key or not secret_key: return 2500.0
-    
-    try:
-        ts = int(round(time.time() * 1000))
-        json_body = json.dumps({"timestamp": ts}, separators=(',', ':'))
-        signature = hmac.new(secret_key.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
-        headers = {'Content-Type': 'application/json', 'X-AUTH-APIKEY': api_key, 'X-AUTH-SIGNATURE': signature, 'User-Agent': 'Mozilla/5.0'}
-        url = "https://api.coindcx.com/exchange/v1/users/balances"
-        req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers, method='POST')
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-            balances = json.loads(resp.read().decode('utf-8'))
-            usdt_bal, inr_bal = 0.0, 0.0
-            if isinstance(balances, list):
-                for b in balances:
-                    currency = b.get('currency', '')
-                    balance_val = float(b.get('balance', 0)) + float(b.get('locked_balance', 0))
-                    if currency == 'USDT': usdt_bal = balance_val
-                    elif currency == 'INR': inr_bal = balance_val
-            total_inr = (usdt_bal * 88.5) + inr_bal
-            if total_inr >= 1000.0: return total_inr
-    except Exception: pass
-    return 2500.0
-
 # LIVE POSITION CHECKER (Ensures zero short trades can ever open):
 def fetch_coindcx_live_position_qty(symbol):
     api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
@@ -251,23 +233,27 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     if custom_quantity is not None:
         quantity = custom_quantity
     else:
+        # HARDCODED ₹1,000 INR FIXED MARGIN LOGIC:
+        # Position Value = (1000 INR * 7 Leverage) / 88.5 Rate = ~79.10 USDT
         usdt_inr_rate = 88.5
-        position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
+        strict_margin_inr = 1000.0  # ALWAYS FIXED ₹1,000 INR
+        position_value_usdt = (strict_margin_inr * leverage) / usdt_inr_rate
         raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
         
-        # High-priced coins (BCH, AAVE, LTC, AVAX, BNB) use 0.01 fractional decimal precision
+        # FIX 3: STRICT QUANTITY ROUNDING - Never round UP to exceed margin!
         if coin == 'BTC': 
-            quantity = round(max(0.001, raw_qty), 3)
+            quantity = round(raw_qty, 3)
         elif coin in ['ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX', 'BNB']: 
-            quantity = round(max(0.01, raw_qty), 2)
+            quantity = round(raw_qty, 2)
         elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']: 
             # 1000-prefix meme coins on CoinDCX trade in 1,000 unit contracts!
             contract_qty = raw_qty / 1000.0
-            quantity = float(int(max(1.0, round(contract_qty))))
+            quantity = float(int(contract_qty)) if contract_qty >= 1.0 else 1.0
         elif cmp >= 10.0:
-            quantity = round(max(0.1, raw_qty), 1)
+            quantity = round(raw_qty, 1)
         else: 
-            quantity = float(int(max(1.0, round(raw_qty))))
+            # Use floor int(raw_qty) so low-priced coins never round UP and exceed ₹1,000 margin
+            quantity = float(int(raw_qty)) if raw_qty >= 1.0 else 1.0
         
     if quantity <= 0: quantity = 0.01 if coin in ['ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX', 'BNB'] else (0.001 if coin == 'BTC' else 1.0)
 
@@ -303,7 +289,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
 
     # Variant 2: Quantized Integer Qty with TP/SL
     futures_order_payload_quantized_tpsl = dict(futures_order_payload_tpsl)
-    futures_order_payload_quantized_tpsl["total_quantity"] = float(int(round(quantity))) if cmp < 10.0 and coin not in ['BTC', 'ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX'] else quantity
+    futures_order_payload_quantized_tpsl["total_quantity"] = float(int(quantity)) if cmp < 10.0 and coin not in ['BTC', 'ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX'] else quantity
 
     # REQUIREMENT 2 RULE: If side == "buy", ONLY execute payloads with inline TP & SL. NO NAKED MARKET ORDERS ALLOWED!
     if side.lower() == "buy":
@@ -418,19 +404,28 @@ def scan_now_endpoint():
             try:
                 time.sleep(0.05)
                 m15_klines = fetch_klines(symbol, '15m', 100)
+                h1_klines = fetch_klines(symbol, '1h', 60)
                 if not m15_klines or len(m15_klines) < 20: 
                     report_lines.append(f"{symbol:12s} | Error: Could not fetch candle data")
                     continue
                 cmp = m15_klines[-1][4]
                 daily_klines = fetch_klines(symbol, '1d', 2)
                 if not daily_klines or len(daily_klines) < 2: 
-                    daily_klines = m15_klines # Fallback
+                    daily_klines = m15_klines
                 cpr = calculate_cpr(daily_klines[0][2], daily_klines[0][3], daily_klines[0][4])
                 st_dir, st_val = calculate_supertrend(m15_klines)
                 close_prices = [k[4] for k in m15_klines]
                 rsi_val = calculate_rsi(close_prices)
                 vol_spike = calculate_volume_spike(m15_klines)
                 
+                # Multi-Timeframe 1H Macro Trend Check
+                h1_macro_bullish = True
+                if h1_klines and len(h1_klines) >= 20:
+                    h1_st_dir, _ = calculate_supertrend(h1_klines)
+                    h1_closes = [k[4] for k in h1_klines]
+                    h1_ema50 = calculate_ema(h1_closes, 50)
+                    h1_macro_bullish = (h1_st_dir == 1) and (cmp >= h1_ema50)
+
                 score = 50
                 if cmp > cpr['tc']: score += 15
                 if cmp > cpr['r1']: score += 10
@@ -446,14 +441,16 @@ def scan_now_endpoint():
                 t1 = (vol_spike >= 1.30 and score >= 70)
                 t2 = (vol_spike >= 1.15 and score >= 68)
                 
-                if is_above_cpr_tc and is_st_green and (t1 or t2):
+                if is_above_cpr_tc and is_st_green and h1_macro_bullish and (t1 or t2):
                     status = "🔥 TRIGGERED AUTO-TRADE"
-                elif is_above_cpr_tc and is_st_green:
+                elif is_above_cpr_tc and is_st_green and h1_macro_bullish:
                     status = f"🟢 Bullish (Vol {vol_spike:.2f}x / Score {score})"
+                elif not h1_macro_bullish:
+                    status = "🛑 1H Macro Downtrend Filtered"
                 else:
                     status = "⚪ Consolidating"
                 
-                report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | CPR TC: {cpr['tc']:<10.4f} | ST: {'GREEN' if is_st_green else 'RED':5s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
+                report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | CPR TC: {cpr['tc']:<10.4f} | ST 15M: {'GREEN' if is_st_green else 'RED':5s} | 1H Macro: {'BULL' if h1_macro_bullish else 'BEAR':4s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
             except Exception as e:
                 report_lines.append(f"{symbol:12s} | Error: {e}")
         
@@ -530,6 +527,8 @@ def run_scan():
             time.sleep(0.1)
             daily_klines = fetch_klines(symbol, '1d', 2)
             m15_klines = fetch_klines(symbol, '15m', 100)
+            h1_klines = fetch_klines(symbol, '1h', 60) # 1-Hour candles for macro trend protection
+            
             if not m15_klines or len(m15_klines) < 20: continue
             if not daily_klines or len(daily_klines) < 2: daily_klines = m15_klines
             
@@ -540,6 +539,16 @@ def run_scan():
             rsi_val = calculate_rsi(close_prices)
             vol_spike = calculate_volume_spike(m15_klines)
             
+            # MULTI-TIMEFRAME DOWNTREND PROTECTION FILTER:
+            # Check 1-Hour Macro Supertrend and 1-Hour EMA 50
+            h1_macro_bullish = True
+            if h1_klines and len(h1_klines) >= 20:
+                h1_st_dir, _ = calculate_supertrend(h1_klines)
+                h1_closes = [k[4] for k in h1_klines]
+                h1_ema50 = calculate_ema(h1_closes, 50)
+                # MUST have GREEN 1H Supertrend AND CMP >= 1H EMA 50
+                h1_macro_bullish = (h1_st_dir == 1) and (cmp >= h1_ema50)
+
             # REFINED SCORING ENGINE:
             score = 50
             if cmp > cpr['tc']: score += 15       # Reward breaking CPR TC
@@ -557,22 +566,19 @@ def run_scan():
             is_supertrend_green = st_dir == 1
             is_not_choppy = True if vol_spike >= 1.15 else not (48 <= rsi_val <= 52)
             
-            # OPTIMIZED DUAL-TRIGGER ENGINE:
-            # Trigger 1: High Vol Spike >= 1.30x AND Score >= 70
-            # Trigger 2: CPR TC + Supertrend Confluence (Vol Spike >= 1.15x AND Score >= 68)
+            # OPTIMIZED DUAL-TRIGGER ENGINE WITH MULTI-TIMEFRAME DOWNTREND FILTER:
             trigger_1 = (vol_spike >= 1.30 and score >= 70)
             trigger_2 = (vol_spike >= 1.15 and score >= 68)
             
-            if is_above_cpr_tc and is_supertrend_green and (trigger_1 or trigger_2) and is_not_choppy:
+            # FIX 2: ZERO TRADES IF 1H MACRO TREND IS BEARISH/DOWNTREND!
+            if is_above_cpr_tc and is_supertrend_green and h1_macro_bullish and (trigger_1 or trigger_2) and is_not_choppy:
                 candidates.append({'symbol': symbol, 'score': score, 'rating': rating, 'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike})
         except Exception: pass
 
     candidates.sort(key=lambda x: x['score'], reverse=True)
 
-    # CAPITAL-PROPORTIONAL MARGIN SCALING CALCULATION:
-    wallet_balance_inr = fetch_coindcx_wallet_balance_inr()
-    capital_scale_factor = max(1.0, wallet_balance_inr / 2500.0)
-    coin_margin = 1000.0 * capital_scale_factor
+    # FIX 1: HARDCODED ₹1,000 INR FIXED MARGIN PER TRADE (DELETED DYNAMIC CAPITAL SCALER MULTIPLIER)
+    coin_margin = 1000.0  # STRICT FIXED ₹1,000 INR (~$11.30 USDT) PER TRADE
 
     for cand in candidates:
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
