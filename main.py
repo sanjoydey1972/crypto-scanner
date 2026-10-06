@@ -42,6 +42,7 @@ def save_active_trades():
 TOKEN = "8788523087:AAGgfn0-JpnnIlqdxNDj-2an-pGp0WORnqA"
 CHAT_ID = "8938527650"
 
+# DEFAULT FALLBACK WATCHLIST
 WATCHLIST = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AVAX-USDT', 'DOGE-USDT', 
     'XRP-USDT', 'ADA-USDT', 'LINK-USDT', 'NEAR-USDT', 'BCH-USDT', 
@@ -54,6 +55,44 @@ WATCHLIST = [
 ]
 
 ctx = ssl._create_unverified_context()
+
+# DYNAMIC WATCHLIST SCANNER WITH $5,000,000 (5M USDT) VOLUME SAFETY FLOOR:
+CACHED_DYNAMIC_WATCHLIST = []
+LAST_WATCHLIST_FETCH_TIME = 0.0
+
+def fetch_dynamic_watchlist(min_volume_usdt=5000000.0):
+    global CACHED_DYNAMIC_WATCHLIST, LAST_WATCHLIST_FETCH_TIME
+    now = time.time()
+    # Cache dynamic list for 15 minutes (900s) to keep scanner loops ultra-fast
+    if CACHED_DYNAMIC_WATCHLIST and (now - LAST_WATCHLIST_FETCH_TIME < 900):
+        return CACHED_DYNAMIC_WATCHLIST
+
+    dynamic_list = []
+    try:
+        url = "https://data-api.binance.vision/api/v3/ticker/24hr"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            if isinstance(data, list):
+                valid_tickers = []
+                for item in data:
+                    sym = item.get('symbol', '')
+                    quote_vol = float(item.get('quoteVolume', 0))
+                    if sym.endswith('USDT') and quote_vol >= min_volume_usdt:
+                        coin = sym[:-4].upper()
+                        # Exclude stablecoins and leveraged tokens
+                        if coin not in ['USDC', 'FDUSD', 'TUSD', 'BUSD', 'EUR', 'GBP', 'DAI', 'USDP', 'AEUR'] and not coin.endswith('UP') and not coin.endswith('DOWN'):
+                            valid_tickers.append((f"{coin}-USDT", quote_vol))
+                valid_tickers.sort(key=lambda x: x[1], reverse=True)
+                dynamic_list = [x[0] for x in valid_tickers]
+    except Exception: pass
+
+    if not dynamic_list:
+        dynamic_list = list(WATCHLIST)
+
+    CACHED_DYNAMIC_WATCHLIST = dynamic_list
+    LAST_WATCHLIST_FETCH_TIME = now
+    return CACHED_DYNAMIC_WATCHLIST
 
 def fetch_klines(symbol, interval_str="15m", limit=100):
     coin = symbol.split('-')[0].upper()
@@ -381,7 +420,8 @@ def send_hourly_market_report():
         btc_inrm_price = fetch_coindcx_btc_inrm_price()
         bull_coins, bear_coins, neutral_coins = [], [], []
 
-        for symbol in WATCHLIST:
+        scan_pool = fetch_dynamic_watchlist()
+        for symbol in scan_pool[:40]:
             clean_sym = symbol.replace("-", "_")
             try:
                 time.sleep(0.05)
@@ -403,7 +443,7 @@ def send_hourly_market_report():
             f"📊 <b>AUTOMATED HOURLY MARKET CONDITION REPORT</b>\n\n"
             f"⏰ <b>Time:</b> {now_str}\n"
             f"✅ <b>Render Cloud Status:</b> 100% ONLINE (24/7 Active)\n\n"
-            f"🔍 <b>Market Overview (40 CoinDCX Futures Symbols):</b>\n"
+            f"🔍 <b>Market Overview ({len(scan_pool)} Liquid Futures Pairs >$5M Vol):</b>\n"
             f"• <b>BTC Current Price:</b> <code>${btc_inrm_price:,.1f}</code>\n"
             f"🟢 <b>In Bull Run:</b> <code>{len(bull_coins)} coins</code>\n"
             f"🔴 <b>In Bear Run:</b> <code>{len(bear_coins)} coins</code>\n"
@@ -420,7 +460,8 @@ def send_hourly_market_report():
 def scan_now_endpoint():
     try:
         report_lines = []
-        for symbol in WATCHLIST:
+        scan_pool = fetch_dynamic_watchlist()
+        for symbol in scan_pool:
             try:
                 time.sleep(0.05)
                 m15_klines = fetch_klines(symbol, '15m', 100)
@@ -475,7 +516,7 @@ def scan_now_endpoint():
                 report_lines.append(f"{symbol:12s} | Error: {e}")
         
         now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-        html = f"<h2>⚡ LIVE 40-COIN MARKET SCANNER AUDIT REPORT (NO GEOBLOCK)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
+        html = f"<h2>⚡ LIVE {len(scan_pool)}-COIN DYNAMIC MARKET SCANNER AUDIT REPORT (VOL > $5M)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
         return html, 200
     except Exception as e:
         return f"<h3>⚠️ Scan Error:</h3><p>{e}</p>", 500
@@ -537,16 +578,18 @@ def catch_all(path):
             finally:
                 scan_lock.release()
         threading.Thread(target=async_scan, daemon=True).start()
-        return "⚡ OK - Live 40-Coin Market Scan Triggered! Check /scan-now for live audit table.", 200
+        return "⚡ OK - Dynamic Market Scan Triggered! Check /scan-now for live audit table.", 200
     return "⚡ OK - Market Scanner Currently Active", 200
 
 def run_scan():
     state = load_state()
     candidates = []
 
-    for symbol in WATCHLIST:
+    scan_pool = fetch_dynamic_watchlist()
+
+    for symbol in scan_pool:
         try:
-            time.sleep(0.1)
+            time.sleep(0.08)
             daily_klines = fetch_klines(symbol, '1d', 2)
             m15_klines = fetch_klines(symbol, '15m', 100)
             h1_klines = fetch_klines(symbol, '1h', 60) # 1-Hour candles for macro trend protection
@@ -852,7 +895,7 @@ def start_background_loop():
     t5 = threading.Thread(target=run_telegram_command_listener, daemon=True)
     t5.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT OPTION B (1:1 RATIO + TRAILING BREAKEVEN + SAFEGUARD) DEPLOYED!</b>\n\n• Scan Interval: 2 Minutes (Fast Execution)\n• Per-Coin Cooldown: 10 Minutes\n• Double-Entry Guard: STRICT ACTIVE (Zero Re-Entries)\n• Manual Trade Close Guard: ACTIVE (Clean Memory Wipe on Verified 0.0 Qty)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +7% ROE (+1.0% price move)\n• Stop Loss set to -7% ROE (-1.0% price move)\n• Trailing Breakeven: ACTIVE (Moves SL to entry at +4% ROE)\n• Position monitor frozen when paused via /stop\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
+    send_telegram_message("⚡ <b>RENDER BOT DYNAMIC ALL-COINDCX SCANNER (> $5M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$5M 24h Volume)\n• Scan Interval: 2 Minutes (Fast Execution)\n• Per-Coin Cooldown: 10 Minutes\n• Double-Entry Guard: STRICT ACTIVE (Zero Re-Entries)\n• Manual Trade Close Guard: ACTIVE (Clean Memory Wipe on Verified 0.0 Qty)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +7% ROE (+1.0% price move)\n• Stop Loss set to -7% ROE (-1.0% price move)\n• Trailing Breakeven: ACTIVE (Moves SL to entry at +4% ROE)\n• Position monitor frozen when paused via /stop\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
 
 start_background_loop()
 
