@@ -493,8 +493,8 @@ def test_trade_endpoint():
     try:
         sol_klines = fetch_klines("SOL-USDT", "15m", 5)
         live_cmp = sol_klines[-1][4] if sol_klines else 118.80
-        live_tp = round(live_cmp * 1.00714, 4)
-        live_sl = round(live_cmp * 0.98, 4)
+        live_tp = round(live_cmp * 1.01, 4)
+        live_sl = round(live_cmp * 0.99, 4)
         res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=live_cmp, margin_inr=1000.0, leverage=7, custom_quantity=0.1, tp_price=live_tp, sl_price=live_sl)
         if res.get('success'):
             with active_trades_lock:
@@ -504,6 +504,8 @@ def test_trade_endpoint():
                     'remaining_qty': 0.1,
                     'tp1': live_tp,
                     'sl': live_sl,
+                    'be_trigger': round(live_cmp * 1.0057, 4),
+                    'is_be_active': False,
                     'leverage': 7,
                     'entry_time': time.time()
                 }
@@ -599,16 +601,23 @@ def run_scan():
     for cand in candidates:
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
         try:
+            # DOUBLE-ENTRY SAFEGUARD: Skip trade if coin is already in ACTIVE_TRADES or has a live open position on CoinDCX!
+            with active_trades_lock:
+                is_active = symbol in ACTIVE_TRADES
+            if is_active or fetch_coindcx_live_position_qty(symbol) > 0:
+                continue
+
             last_sent = state.get(symbol, 0)
             # ACCELERATED COOLDOWN: 600 seconds (10 minutes) per-coin cooldown instead of 30 minutes!
             if time.time() - last_sent > 600:
                 clean_symbol = symbol.replace("-", "")
                 entry_min, entry_max = round(cmp * 0.998, 4), round(cmp * 1.001, 4)
                 
-                # REVISED SL & TARGET LOGIC (ROE -14% SL, ROE +5% TP):
-                # 7x Leverage: ROE -14% = -2.0% price move; ROE +5% = +0.714% price move
-                sl = round(cmp * 0.98, 4)
-                tp1 = round(cmp * 1.00714, 4)
+                # REVISED SL & TARGET LOGIC (OPTION B: ROE -7% SL, ROE +7% TP, Trailing BE at +4%):
+                # 7x Leverage: ROE -7.0% = -1.0% price move; ROE +7.0% = +1.0% price move
+                sl = round(cmp * 0.99, 4)
+                tp1 = round(cmp * 1.01, 4)
+                be_trigger = round(cmp * 1.0057, 4)  # +4.0% ROE (+0.57% price move)
                 lev_num = 7  # Fixed 7x Leverage for all coins
                 
                 # EXECUTE TRADE ONLY IF AUTO-TRADING IS ACTIVE:
@@ -632,6 +641,8 @@ def run_scan():
                             'remaining_qty': trade_res.get('quantity'),
                             'tp1': tp1,
                             'sl': sl,
+                            'be_trigger': be_trigger,
+                            'is_be_active': False,
                             'leverage': lev_num,
                             'entry_time': time.time()
                         }
@@ -650,8 +661,9 @@ def run_scan():
                     f"• <b>Margin:</b> <code>₹{coin_margin:.0f} INR (Per Trade)</code>\n"
                     f"• <b>Live CMP:</b> <code>${cmp}</code>\n\n"
                     f"🔹 <b>Entry Range:</b> <code>{entry_min} - {entry_max}</code>\n"
-                    f"🔹 <b>Stop Loss (ROE -14%):</b> <code>{sl}</code>\n"
-                    f"🎯 <b>Target (ROE +5%):</b> <code>{tp1}</code>\n"
+                    f"🔹 <b>Stop Loss (ROE -7%):</b> <code>{sl}</code>\n"
+                    f"🎯 <b>Target (ROE +7%):</b> <code>{tp1}</code>\n"
+                    f"🛡️ <b>Trailing Breakeven:</b> <code>Trigger at +4% ROE (${be_trigger})</code>\n"
                     f"{exec_hdr}"
                 )
                 ok = send_telegram_message(msg)
@@ -696,7 +708,22 @@ def monitor_active_positions():
                     
                     clean_coin = symbol.split('-')[0].upper()
                     
-                    # TARGET REACHED (ROE +5%): High Wick or CMP hits TP1
+                    # TRAILING BREAKEVEN TRIGGER (+4% ROE / +0.57% Price Move):
+                    be_trigger_price = trade.get('be_trigger', trade['entry_price'] * 1.0057)
+                    if (high_price >= be_trigger_price or cmp >= be_trigger_price) and not trade.get('is_be_active', False):
+                        with active_trades_lock:
+                            trade['sl'] = trade['entry_price']  # Move SL to Entry Price (0% Loss)
+                            trade['is_be_active'] = True
+                        save_active_trades()
+                        
+                        send_telegram_message(
+                            f"🛡️ <b>TRAILING BREAKEVEN ACTIVATED (+4% ROE REACHED)!</b>\n\n"
+                            f"<b>Pair:</b> B-{clean_coin}_USDT\n"
+                            f"• <b>New Stop Loss:</b> <code>${trade['entry_price']}</code> (Entry Price)\n"
+                            f"• <b>Status:</b> Guaranteed Risk-Free Trade (0% Loss Possible)"
+                        )
+
+                    # TARGET REACHED (ROE +7%): High Wick or CMP hits TP1
                     if high_price >= trade['tp1'] or cmp >= trade['tp1']:
                         res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=trade['total_qty'])
                         if res.get('success'):
@@ -705,7 +732,7 @@ def monitor_active_positions():
                             save_active_trades()
                             
                             send_telegram_message(
-                                f"🎯 <b>TARGET REACHED (ROE +5%)!</b>\n\n"
+                                f"🎯 <b>TARGET REACHED (ROE +7%)!</b>\n\n"
                                 f"<b>Pair:</b> B-{clean_coin}_USDT\n"
                                 f"🔥 <b>100% Target Hit at CMP:</b> <code>{cmp}</code> (Entry: <code>{trade['entry_price']}</code>)\n"
                                 f"💰 <b>Trade Successfully Closed with Profit!</b>"
@@ -713,18 +740,19 @@ def monitor_active_positions():
                         else:
                             print(f"TP Close failed for {symbol}: {res.get('error')}")
 
-                    # STOP LOSS HIT (ROE -14%): Low Wick or CMP hits SL
+                    # STOP LOSS HIT (ROE -7% or Breakeven): Low Wick or CMP hits SL
                     elif low_price <= trade['sl'] or cmp <= trade['sl']:
                         res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=trade['total_qty'])
                         if res.get('success'):
+                            sl_type = "BREAKEVEN (0% LOSS)" if trade.get('is_be_active', False) else "STOP LOSS (ROE -7%)"
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
                             save_active_trades()
                             
                             send_telegram_message(
-                                f"🛑 <b>STOP LOSS EXECUTED (ROE -14%)</b>\n\n"
+                                f"🛑 <b>POSITION CLOSED: {sl_type}</b>\n\n"
                                 f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                                f"Position closed at Stop Loss: <code>{cmp}</code> (Entry: <code>{trade['entry_price']}</code>)"
+                                f"Position closed at SL: <code>{cmp}</code> (Entry: <code>{trade['entry_price']}</code>)"
                             )
                         else:
                             print(f"SL Close failed for {symbol}: {res.get('error')}")
@@ -797,7 +825,7 @@ def start_background_loop():
 
     t1 = threading.Thread(target=run_loop, daemon=True)
     t1.start()
-    
+
     t2 = threading.Thread(target=monitor_active_positions, daemon=True)
     t2.start()
 
@@ -810,7 +838,7 @@ def start_background_loop():
     t5 = threading.Thread(target=run_telegram_command_listener, daemon=True)
     t5.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT MARGIN ₹1000 & 7X LEVERAGE ACCELERATED SYSTEM DEPLOYED!</b>\n\n• Scan Interval: 2 Minutes (Fast Execution)\n• Per-Coin Cooldown: 10 Minutes\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +5% ROE (+0.714% price move)\n• Stop Loss set to -14% ROE (-2.0% price move)\n• Position monitor frozen when paused via /stop\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
+    send_telegram_message("⚡ <b>RENDER BOT OPTION B (1:1 RATIO + TRAILING BREAKEVEN) DEPLOYED!</b>\n\n• Scan Interval: 2 Minutes (Fast Execution)\n• Per-Coin Cooldown: 10 Minutes\n• Double-Entry Guard: ACTIVE (Zero Re-Entries)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +7% ROE (+1.0% price move)\n• Stop Loss set to -7% ROE (-1.0% price move)\n• Trailing Breakeven: ACTIVE (Moves SL to entry at +4% ROE)\n• Position monitor frozen when paused via /stop\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
 
 start_background_loop()
 
