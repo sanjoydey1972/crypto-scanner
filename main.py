@@ -825,6 +825,29 @@ def monitor_active_positions():
             for symbol in symbols_to_check:
                 try:
                     time.sleep(0.3)
+                    clean_coin = symbol.split('-')[0].upper()
+                    
+                    # STEP A: Check if live position on CoinDCX is ALREADY 0 (e.g. manually closed on CoinDCX App or closed by CoinDCX exchange TP/SL)
+                    live_qty = fetch_coindcx_live_position_qty(symbol)
+                    if live_qty is not None and live_qty <= 0:
+                        # Position on exchange is ALREADY 0! Do NOT send any sell order (Prevents accidental SHORT trades)!
+                        with active_trades_lock:
+                            ACTIVE_TRADES.pop(symbol, None)
+                        save_active_trades()
+                        
+                        # Enforce 30-minute cooldown timestamp in state
+                        st = load_state()
+                        st[symbol] = time.time()
+                        save_state(st)
+                        
+                        send_telegram_message(
+                            f"🛡️ <b>POSITION CLOSED EXTERNALLY / MANUALLY!</b>\n\n"
+                            f"<b>Pair:</b> B-{clean_coin}_USDT\n"
+                            f"• <b>Status:</b> Detected closed on CoinDCX App / Exchange\n"
+                            f"• <b>Protection:</b> 30-Min Cooldown Activated (No Re-entry / No Short Trade)"
+                        )
+                        continue
+
                     # Use 1-minute real-time candles for position monitoring (NOT 15m historical high/low!)
                     m1_klines = fetch_klines(symbol, '1m', 3)
                     if not m1_klines: continue
@@ -835,7 +858,6 @@ def monitor_active_positions():
                         if symbol not in ACTIVE_TRADES: continue
                         trade = ACTIVE_TRADES[symbol]
                     
-                    clean_coin = symbol.split('-')[0].upper()
                     entry_p = trade['entry_price']
                     entry_time = trade.get('entry_time', time.time())
                     
@@ -889,7 +911,22 @@ def monitor_active_positions():
                     effective_low = min(cmp, live_low)
                     
                     if effective_low <= trade['sl']:
-                        res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=trade['total_qty'])
+                        # Re-verify live position quantity RIGHT BEFORE placing sell order!
+                        live_qty_now = fetch_coindcx_live_position_qty(symbol)
+                        if live_qty_now is not None and live_qty_now <= 0:
+                            # Position already closed externally! Pop from memory & apply 30m cooldown
+                            with active_trades_lock:
+                                ACTIVE_TRADES.pop(symbol, None)
+                            save_active_trades()
+                            st = load_state()
+                            st[symbol] = time.time()
+                            save_state(st)
+                            continue
+                        
+                        # CAP SELL QUANTITY TO LIVE POSITION SIZE (Guarantees order CANNOT overshoot into a SHORT position!)
+                        sell_qty = min(live_qty_now, trade['total_qty']) if (live_qty_now is not None and live_qty_now > 0) else trade['total_qty']
+                        
+                        res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=sell_qty)
                         if res.get('success'):
                             # Calculate REALIZED PNL based on ACTUAL exit CMP!
                             realized_pnl_pct = ((cmp - entry_p) / entry_p) * 7 * 100
@@ -904,10 +941,16 @@ def monitor_active_positions():
                                 ACTIVE_TRADES.pop(symbol, None)
                             save_active_trades()
                             
+                            # MANDATORY 30-MINUTE COOLDOWN ON ALL EXIT TRADES (Prevents 5-Second Re-Entries!)
+                            st = load_state()
+                            st[symbol] = time.time()
+                            save_state(st)
+                            
                             send_telegram_message(
                                 f"🏁 <b>POSITION CLOSED: {sl_type}</b>\n\n"
                                 f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                                f"Closed at: <code>${cmp}</code> (Entry: <code>${entry_p}</code>)"
+                                f"Closed at: <code>${cmp}</code> (Entry: <code>${entry_p}</code>)\n"
+                                f"⏱️ <i>30-Min Cooldown Locked (No 5-Sec Re-Entries)</i>"
                             )
                         else:
                             print(f"SL Close failed for {symbol}: {res.get('error')}")
