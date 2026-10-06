@@ -56,18 +56,68 @@ WATCHLIST = [
 
 ctx = ssl._create_unverified_context()
 
-# DYNAMIC WATCHLIST SCANNER WITH $5,000,000 (5M USDT) VOLUME SAFETY FLOOR:
-CACHED_DYNAMIC_WATCHLIST = []
-LAST_WATCHLIST_FETCH_TIME = 0.0
+# DYNAMIC INACTIVE COIN BLACKLIST & COINDCX ACTIVE PAIRS SYNC
+INACTIVE_COINS = set()
+CACHED_COINDCX_ACTIVE_PAIRS = set()
+LAST_COINDCX_ACTIVE_FETCH = 0.0
+
+def fetch_coindcx_active_pairs():
+    global CACHED_COINDCX_ACTIVE_PAIRS, LAST_COINDCX_ACTIVE_FETCH
+    now = time.time()
+    if CACHED_COINDCX_ACTIVE_PAIRS and (now - LAST_COINDCX_ACTIVE_FETCH < 1800):
+        return CACHED_COINDCX_ACTIVE_PAIRS
+    
+    active_set = set()
+    try:
+        url = "https://api.coindcx.com/exchange/v1/derivatives/futures/data/active_instruments"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, str): active_set.add(item.upper())
+                    elif isinstance(item, dict):
+                        p = item.get('pair', item.get('symbol', item.get('instrument', ''))).upper()
+                        if p: active_set.add(p)
+            elif isinstance(data, dict):
+                instrs = data.get('instruments', data.get('data', data.get('active_instruments', [])))
+                if isinstance(instrs, list):
+                    for item in instrs:
+                        if isinstance(item, str): active_set.add(item.upper())
+                        elif isinstance(item, dict):
+                            p = item.get('pair', item.get('symbol', ''))
+                            if p: active_set.add(p.upper())
+    except Exception: pass
+
+    if not active_set:
+        try:
+            url = "https://public.coindcx.com/market_data/trade_info"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict):
+                            p = str(item.get('pair', '')).upper()
+                            if p: active_set.add(p)
+        except Exception: pass
+
+    if active_set:
+        CACHED_COINDCX_ACTIVE_PAIRS = active_set
+        LAST_COINDCX_ACTIVE_FETCH = now
+
+    return CACHED_COINDCX_ACTIVE_PAIRS
 
 def fetch_dynamic_watchlist(min_volume_usdt=5000000.0):
     global CACHED_DYNAMIC_WATCHLIST, LAST_WATCHLIST_FETCH_TIME
     now = time.time()
     # Cache dynamic list for 15 minutes (900s) to keep scanner loops ultra-fast
     if CACHED_DYNAMIC_WATCHLIST and (now - LAST_WATCHLIST_FETCH_TIME < 900):
-        return CACHED_DYNAMIC_WATCHLIST
+        return [s for s in CACHED_DYNAMIC_WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS]
 
     dynamic_list = []
+    coindcx_active = fetch_coindcx_active_pairs()
+
     try:
         url = "https://data-api.binance.vision/api/v3/ticker/24hr"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -80,15 +130,24 @@ def fetch_dynamic_watchlist(min_volume_usdt=5000000.0):
                     quote_vol = float(item.get('quoteVolume', 0))
                     if sym.endswith('USDT') and quote_vol >= min_volume_usdt:
                         coin = sym[:-4].upper()
+                        if coin in INACTIVE_COINS:
+                            continue
                         # Exclude stablecoins and leveraged tokens
                         if coin not in ['USDC', 'FDUSD', 'TUSD', 'BUSD', 'EUR', 'GBP', 'DAI', 'USDP', 'AEUR'] and not coin.endswith('UP') and not coin.endswith('DOWN'):
+                            if coindcx_active:
+                                futures_coin = f"1000{coin}" if coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI'] else coin
+                                pair_1 = f"B-{futures_coin}_USDT"
+                                pair_2 = f"B-{coin}_USDT"
+                                is_active = any(p in coindcx_active for p in [pair_1, pair_2]) or any(coin in p for p in coindcx_active)
+                                if not is_active:
+                                    continue
                             valid_tickers.append((f"{coin}-USDT", quote_vol))
                 valid_tickers.sort(key=lambda x: x[1], reverse=True)
                 dynamic_list = [x[0] for x in valid_tickers]
     except Exception: pass
 
     if not dynamic_list:
-        dynamic_list = list(WATCHLIST)
+        dynamic_list = [s for s in WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS]
 
     CACHED_DYNAMIC_WATCHLIST = dynamic_list
     LAST_WATCHLIST_FETCH_TIME = now
@@ -251,18 +310,25 @@ def fetch_coindcx_live_position_qty(symbol):
                 pos_list = data.get('positions', data.get('data', data.get('result', [])))
                 
             if isinstance(pos_list, list):
+                possible_qty_keys = [
+                    'active_units', 'open_position_qty', 'position_qty', 'active_position',
+                    'quantity', 'size', 'current_qty', 'net_quantity', 'open_position',
+                    'active_pos', 'units', 'position', 'open_units'
+                ]
                 for p in pos_list:
                     if not isinstance(p, dict): continue
                     p_pair = str(p.get('pair', '')).upper()
                     p_clean = p_pair.replace("B-", "").replace("1000", "").replace("_", "").replace("-", "").replace("USDT", "")
                     if p_clean == target_clean:
-                        raw_qty = p.get('open_position', p.get('active_position', p.get('position_qty', p.get('open_position_qty', p.get('quantity', p.get('size', p.get('current_qty', p.get('net_quantity', p.get('active_units', 0)))))))))
-                        try:
-                            qty = abs(float(raw_qty))
-                            if qty > 0:
-                                return qty
-                        except Exception: pass
-                # HTTP 200 OK received and parsed, but target coin was NOT in active positions list:
+                        for k in possible_qty_keys:
+                            val = p.get(k)
+                            if val is not None:
+                                try:
+                                    qty = abs(float(val))
+                                    if qty > 0:
+                                        return qty
+                                except Exception: pass
+                # HTTP 200 OK received and parsed, target coin was NOT in active positions list:
                 return 0.0
     except Exception:
         # API Error or Timeout occurred: Return None so caller knows API failed!
@@ -411,6 +477,9 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
             err_logs.append(f"V{idx}: {e}")
 
     last_err = " | ".join(err_logs) if err_logs else "Unknown Error"
+    if "Instrument is not active" in last_err or ("422" in last_err and "not active" in last_err):
+        INACTIVE_COINS.add(coin)
+        print(f"🚫 Auto-Blacklisted inactive CoinDCX pair: {coin} (Added to INACTIVE_COINS set)")
     if side.lower() == "buy":
         return {'success': False, 'error': f"⚠️ Trade Cancelled: CoinDCX TP/SL validation failed ({last_err})."}
     return {'success': False, 'error': last_err}
@@ -509,25 +578,25 @@ def scan_now_endpoint():
                 score = max(0, min(100, score))
                 
                 is_above_cpr_tc = cmp > cpr['tc']
-                is_supertrend_green = st_dir == 1
+                is_st_green = st_dir == 1
                 t1 = (vol_spike >= 1.30 and score >= 70)
                 t2 = (vol_spike >= 1.15 and score >= 68)
                 
-                if is_above_cpr_tc and is_supertrend_green and h1_macro_bullish and (t1 or t2):
+                if is_above_cpr_tc and is_st_green and h1_macro_bullish and (t1 or t2):
                     status = "🔥 TRIGGERED AUTO-TRADE"
-                elif is_above_cpr_tc and is_supertrend_green and h1_macro_bullish:
+                elif is_above_cpr_tc and is_st_green and h1_macro_bullish:
                     status = f"🟢 Bullish (Vol {vol_spike:.2f}x / Score {score})"
                 elif not h1_macro_bullish:
                     status = "🛑 1H Macro Downtrend Filtered"
                 else:
                     status = "⚪ Consolidating"
                 
-                report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | CPR TC: {cpr['tc']:<10.4f} | ST 15M: {'GREEN' if is_supertrend_green else 'RED':5s} | 1H Macro: {'BULL' if h1_macro_bullish else 'BEAR':4s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
+                report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | CPR TC: {cpr['tc']:<10.4f} | ST 15M: {'GREEN' if is_st_green else 'RED':5s} | 1H Macro: {'BULL' if h1_macro_bullish else 'BEAR':4s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
             except Exception as e:
                 report_lines.append(f"{symbol:12s} | Error: {e}")
         
         now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-        html = f"<h2>⚡ LIVE HIGH-CONFLUENCE {len(scan_pool)}-COIN DYNAMIC MARKET SCANNER (VOL > $5M)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
+        html = f"<h2>⚡ LIVE {len(scan_pool)}-COIN DYNAMIC MARKET SCANNER AUDIT REPORT (VOL > $5M)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
         return html, 200
     except Exception as e:
         return f"<h3>⚠️ Scan Error:</h3><p>{e}</p>", 500
@@ -549,8 +618,8 @@ def test_trade_endpoint():
     try:
         sol_klines = fetch_klines("SOL-USDT", "15m", 5)
         live_cmp = sol_klines[-1][4] if sol_klines else 118.80
-        live_tp = round(live_cmp * 1.032, 4)
-        live_sl = round(live_cmp * 0.984, 4)
+        live_tp = round(live_cmp * 1.01, 4)
+        live_sl = round(live_cmp * 0.99, 4)
         res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=live_cmp, margin_inr=1000.0, leverage=7, custom_quantity=0.1, tp_price=live_tp, sl_price=live_sl)
         if res.get('success'):
             with active_trades_lock:
@@ -561,7 +630,6 @@ def test_trade_endpoint():
                     'tp1': live_tp,
                     'sl': live_sl,
                     'be_trigger': round(live_cmp * 1.0057, 4),
-                    'highest_peak': live_cmp,
                     'is_be_active': False,
                     'leverage': 7,
                     'entry_time': time.time()
@@ -653,14 +721,15 @@ def run_scan():
 
     candidates.sort(key=lambda x: x['score'], reverse=True)
 
-    # HARDCODED ₹1,000 INR FIXED MARGIN PER TRADE
+    # FIX 1: HARDCODED ₹1,000 INR FIXED MARGIN PER TRADE (DELETED DYNAMIC CAPITAL SCALER MULTIPLIER)
     coin_margin = 1000.0  # STRICT FIXED ₹1,000 INR (~$11.30 USDT) PER TRADE
 
     for cand in candidates:
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
         try:
+            clean_coin = symbol.split('-')[0].upper().replace("1000", "")
             with active_trades_lock:
-                is_in_memory = symbol in ACTIVE_TRADES
+                is_in_memory = any(clean_coin == s.split('-')[0].upper().replace("1000", "") for s in ACTIVE_TRADES.keys())
                 active_count = len(ACTIVE_TRADES)
 
             # MAX PORTFOLIO ACTIVE TRADES CAP: Max 3 active trades allowed (Max ₹3,000 INR total allocated capital)
@@ -710,7 +779,6 @@ def run_scan():
                         'tp1': tp1,
                         'sl': sl,
                         'be_trigger': be_trigger,
-                        'highest_peak': cmp,
                         'is_be_active': False,
                         'leverage': lev_num,
                         'entry_time': time.time()
@@ -720,6 +788,8 @@ def run_scan():
                 save_state(state)
             else:
                 exec_hdr = f"\n\n⚠️ <b>COINDCX EXECUTION NOTICE:</b>\n<code>{trade_res.get('error')}</code>"
+                state[symbol] = time.time()
+                save_state(state)
 
             msg = (
                 f"🟢 <b>NEW BULLISH BREAKOUT SIGNAL</b>\n\n"
@@ -752,12 +822,12 @@ def monitor_active_positions():
             
             for symbol in symbols_to_check:
                 try:
-                    time.sleep(0.5)
-                    m15_klines = fetch_klines(symbol, '15m', 5)
-                    if not m15_klines: continue
-                    high_price = m15_klines[-1][2]
-                    low_price = m15_klines[-1][3]
-                    cmp = m15_klines[-1][4]
+                    time.sleep(0.3)
+                    # Use 1-minute real-time candles for position monitoring (NOT 15m historical high/low!)
+                    m1_klines = fetch_klines(symbol, '1m', 3)
+                    if not m1_klines: continue
+                    cmp = m1_klines[-1][4]
+                    candle_open_time = m1_klines[-1][0] / 1000.0
                     
                     with active_trades_lock:
                         if symbol not in ACTIVE_TRADES: continue
@@ -765,9 +835,14 @@ def monitor_active_positions():
                     
                     clean_coin = symbol.split('-')[0].upper()
                     entry_p = trade['entry_price']
+                    entry_time = trade.get('entry_time', time.time())
                     
-                    # Track highest peak price reached during the trade
-                    highest_peak = max(trade.get('highest_peak', entry_p), high_price, cmp)
+                    # Track highest peak price reached STRICTLY AFTER ENTRY using live CMP/1m high
+                    # Do not use past 15m candle high!
+                    live_high = m1_klines[-1][2]
+                    current_peak = live_high if candle_open_time >= entry_time else cmp
+                    
+                    highest_peak = max(trade.get('highest_peak', entry_p), current_peak, cmp)
                     trade['highest_peak'] = highest_peak
                     
                     # STAGE 1: BREAKEVEN TRIGGER (+4% ROE / +0.57% Price Move)
@@ -808,17 +883,20 @@ def monitor_active_positions():
                             )
 
                     # STOP LOSS OR TRAILING PROFIT LOCK HIT:
-                    if low_price <= trade['sl'] or cmp <= trade['sl']:
+                    live_low = m1_klines[-1][3] if candle_open_time >= entry_time else cmp
+                    effective_low = min(cmp, live_low)
+                    
+                    if effective_low <= trade['sl']:
                         res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=trade['total_qty'])
                         if res.get('success'):
-                            sl_val = trade['sl']
-                            if sl_val > entry_p:
-                                pnl_pct = ((sl_val - entry_p) / entry_p) * 7 * 100
-                                sl_type = f"PROFIT LOCK WIN (+{pnl_pct:.1f}% ROE) 💰"
-                            elif trade.get('is_be_active', False):
+                            # Calculate REALIZED PNL based on ACTUAL exit CMP!
+                            realized_pnl_pct = ((cmp - entry_p) / entry_p) * 7 * 100
+                            if cmp >= entry_p * 1.001:
+                                sl_type = f"PROFIT LOCK WIN (+{realized_pnl_pct:.1f}% ROE) 💰"
+                            elif abs(cmp - entry_p) / entry_p <= 0.002:
                                 sl_type = "BREAKEVEN (0% LOSS)"
                             else:
-                                sl_type = "STOP LOSS (ROE -11.2%)"
+                                sl_type = f"STOP LOSS HIT ({realized_pnl_pct:.1f}% ROE)"
 
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
@@ -835,7 +913,7 @@ def monitor_active_positions():
                     print(f"Error monitoring {symbol}: {e}")
         except Exception as e:
             print(f"Position monitor exception: {e}")
-        time.sleep(5)
+        time.sleep(3)
 
 # MOBILE TELEGRAM ON/OFF COMMAND LISTENER (/stop & /start)
 def run_telegram_command_listener():
