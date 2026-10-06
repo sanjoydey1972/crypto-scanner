@@ -187,11 +187,11 @@ def send_telegram_message(text):
         print(f"Telegram error: {e}")
         return False
 
-# LIVE POSITION CHECKER (Ensures zero short trades can ever open):
+# ENHANCED LIVE POSITION CHECKER (Returns float qty on success, 0.0 on verified closed, None on API glitch):
 def fetch_coindcx_live_position_qty(symbol):
     api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
     secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
-    if not api_key or not secret_key: return 0.0
+    if not api_key or not secret_key: return None
     
     coin = symbol.split('-')[0].upper()
     futures_coin = f"1000{coin}" if coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI'] else coin
@@ -209,11 +209,15 @@ def fetch_coindcx_live_position_qty(symbol):
             if isinstance(positions, list):
                 for p in positions:
                     pair = p.get('pair', '')
-                    if pair == target_pair:
-                        open_qty = float(p.get('open_position', p.get('active_position', p.get('quantity', 0))))
+                    if pair == target_pair or pair == f"{futures_coin}USDT" or pair == f"B-{coin}_USDT":
+                        open_qty = float(p.get('open_position', p.get('active_position', p.get('quantity', p.get('size', p.get('current_qty', 0))))))
                         return abs(open_qty)
-    except Exception: pass
-    return 0.0
+                # HTTP 200 OK response received, but pair was NOT in open positions list:
+                return 0.0
+    except Exception:
+        # API Error or Timeout occurred: Return None so caller knows API failed!
+        return None
+    return None
 
 def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0, leverage=7, custom_quantity=None, tp_price=None, sl_price=None):
     api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
@@ -601,10 +605,16 @@ def run_scan():
     for cand in candidates:
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
         try:
-            # DOUBLE-ENTRY SAFEGUARD: Skip trade if coin is already in ACTIVE_TRADES or has a live open position on CoinDCX!
+            # DOUBLE-ENTRY SAFEGUARD: Skip trade if coin is in ACTIVE_TRADES memory OR active on CoinDCX!
             with active_trades_lock:
-                is_active = symbol in ACTIVE_TRADES
-            if is_active or fetch_coindcx_live_position_qty(symbol) > 0:
+                is_in_memory = symbol in ACTIVE_TRADES
+            
+            live_qty = fetch_coindcx_live_position_qty(symbol)
+            # Skip re-entry if:
+            # 1) Symbol is already in memory
+            # 2) Live qty > 0 on CoinDCX
+            # 3) Live qty is None (API timeout/glitch - do not duplicate)
+            if is_in_memory or (live_qty is not None and live_qty > 0) or (live_qty is None and is_in_memory):
                 continue
 
             last_sent = state.get(symbol, 0)
@@ -686,14 +696,18 @@ def monitor_active_positions():
                 try:
                     time.sleep(0.5)
                     
-                    # REQUIREMENT 1 SAFEGUARD: Check live open position quantity on CoinDCX first!
+                    # SAFEGUARD: Check live open position quantity on CoinDCX!
                     live_qty = fetch_coindcx_live_position_qty(symbol)
-                    if live_qty <= 0:
-                        # Position was ALREADY closed manually on CoinDCX or by native TP/SL!
-                        # DO NOT send any SELL order! Simply clean memory.
+                    
+                    # ONLY wipe memory if API returned verified 0.0 (meaning user manually closed it on CoinDCX App or native TP/SL executed):
+                    if live_qty == 0.0:
                         with active_trades_lock:
                             ACTIVE_TRADES.pop(symbol, None)
                         save_active_trades()
+                        continue
+
+                    # If API returned None (network glitch/timeout), DO NOT wipe memory! Skip loop iteration.
+                    if live_qty is None:
                         continue
 
                     m15_klines = fetch_klines(symbol, '15m', 5)
@@ -838,7 +852,7 @@ def start_background_loop():
     t5 = threading.Thread(target=run_telegram_command_listener, daemon=True)
     t5.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT OPTION B (1:1 RATIO + TRAILING BREAKEVEN) DEPLOYED!</b>\n\n• Scan Interval: 2 Minutes (Fast Execution)\n• Per-Coin Cooldown: 10 Minutes\n• Double-Entry Guard: ACTIVE (Zero Re-Entries)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +7% ROE (+1.0% price move)\n• Stop Loss set to -7% ROE (-1.0% price move)\n• Trailing Breakeven: ACTIVE (Moves SL to entry at +4% ROE)\n• Position monitor frozen when paused via /stop\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
+    send_telegram_message("⚡ <b>RENDER BOT OPTION B (1:1 RATIO + TRAILING BREAKEVEN + SAFEGUARD) DEPLOYED!</b>\n\n• Scan Interval: 2 Minutes (Fast Execution)\n• Per-Coin Cooldown: 10 Minutes\n• Double-Entry Guard: STRICT ACTIVE (Zero Re-Entries)\n• Manual Trade Close Guard: ACTIVE (Clean Memory Wipe on Verified 0.0 Qty)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +7% ROE (+1.0% price move)\n• Stop Loss set to -7% ROE (-1.0% price move)\n• Trailing Breakeven: ACTIVE (Moves SL to entry at +4% ROE)\n• Position monitor frozen when paused via /stop\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
 
 start_background_loop()
 
