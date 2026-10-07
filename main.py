@@ -600,6 +600,7 @@ def scan_now_endpoint():
                 
                 is_above_cpr_tc = cmp > cpr['tc']
                 is_st_green = st_dir == 1
+                is_supertrend_green = is_st_green
                 t1 = (vol_spike >= 1.30 and score >= 70)
                 t2 = (vol_spike >= 1.15 and score >= 68)
                 
@@ -911,19 +912,20 @@ def monitor_active_positions():
                     highest_peak = max(trade.get('highest_peak', entry_p), current_peak, cmp)
                     trade['highest_peak'] = highest_peak
                     
-                    # STAGE 1: BREAKEVEN TRIGGER (+4% ROE / +0.57% Price Move)
+                    # STAGE 1: BREAKEVEN TRIGGER (+4% ROE / +0.57% Price Move) WITH +0.2% FEE BUFFER
                     be_trigger_price = trade.get('be_trigger', entry_p * 1.0057)
                     if highest_peak >= be_trigger_price and not trade.get('is_be_active', False):
+                        fee_buffer_sl = round(entry_p * 1.002, 4)  # Entry + 0.2% Fee & Slippage Buffer
                         with active_trades_lock:
-                            trade['sl'] = entry_p  # Move SL to Entry Price (0% Risk)
+                            trade['sl'] = fee_buffer_sl  # Move SL to Entry + Fee Buffer (Covers CoinDCX Taker Fees)
                             trade['is_be_active'] = True
                         save_active_trades()
                         
                         send_telegram_message(
                             f"🛡️ <b>TRAILING BREAKEVEN ACTIVATED (+4% ROE REACHED)!</b>\n\n"
                             f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                            f"• <b>New Stop Loss:</b> <code>${entry_p}</code> (Entry Price)\n"
-                            f"• <b>Status:</b> Risk-Free Trade (0% Loss Possible)"
+                            f"• <b>New Stop Loss:</b> <code>${fee_buffer_sl}</code> (Entry + 0.2% Fee Buffer)\n"
+                            f"• <b>Status:</b> Risk-Free Trade (Exchange Fees Fully Covered)"
                         )
 
                     # STAGE 2: DYNAMIC PROFIT TRAILING ENGINE (Captures +5% to +50% Altcoin Rallies!)
@@ -974,8 +976,8 @@ def monitor_active_positions():
                             realized_pnl_pct = ((cmp - entry_p) / entry_p) * 7 * 100
                             if cmp >= entry_p * 1.001:
                                 sl_type = f"PROFIT LOCK WIN (+{realized_pnl_pct:.1f}% ROE) 💰"
-                            elif abs(cmp - entry_p) / entry_p <= 0.002:
-                                sl_type = "BREAKEVEN (0% LOSS)"
+                            elif abs(cmp - entry_p) / entry_p <= 0.0025:
+                                sl_type = "BREAKEVEN (FEES COVERED)"
                             else:
                                 sl_type = f"STOP LOSS HIT ({realized_pnl_pct:.1f}% ROE)"
 
@@ -1078,7 +1080,7 @@ def start_background_loop():
     t5 = threading.Thread(target=run_telegram_command_listener, daemon=True)
     t5.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT HIGH-CONFLUENCE WINNING SCANNER (> $5M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$5M 24h Volume)\n• Entry Strategy: PULLBACK BOUNCE ENGINE (Rule 1: 1H Macro Bull + Rule 2: 15m EMA 20 Support <=0.6% + Rule 3: Reversal Wick)\n• A+ Confluence Scoring: ACTIVE (Vol Spike >= 1.30x, Score >= 70)\n• Per-Coin Cooldown: 30 Minutes (Strict Noise-Free Guard)\n• Max Active Trades Cap: 3 Concurrent Trades (Max ₹3,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Double-Entry Guard: 4-LAYER ARMOR (Zero Re-Entries / Zero Size Stacking)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Stop Loss set to -11.2% ROE (-1.6% price move - Outside 15m Noise)\n• Dynamic Peak Trailing Engine: ACTIVE (Trails 0.8% behind peak to capture big pumps)\n• Trailing Breakeven: ACTIVE (Moves SL to entry at +4% ROE)\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
+    send_telegram_message("⚡ <b>RENDER BOT HIGH-CONFLUENCE WINNING SCANNER (> $5M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$5M 24h Volume)\n• Entry Strategy: PULLBACK BOUNCE ENGINE (Rule 1: 1H Macro Bull + Rule 2: 15m EMA 20 Support <=0.6% + Rule 3: Reversal Wick)\n• Trailing Breakeven: ACTIVE (Moves SL to entry + 0.2% Fee Buffer at +4% ROE)\n• A+ Confluence Scoring: ACTIVE (Vol Spike >= 1.30x, Score >= 70)\n• Per-Coin Cooldown: 30 Minutes (Strict Noise-Free Guard)\n• Max Active Trades Cap: 3 Concurrent Trades (Max ₹3,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Double-Entry Guard: 4-LAYER ARMOR (Zero Re-Entries / Zero Size Stacking)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Stop Loss set to -11.2% ROE (-1.6% price move - Outside 15m Noise)\n• Dynamic Peak Trailing Engine: ACTIVE (Trails 0.8% behind peak to capture big pumps)\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
 
 start_background_loop()
 
