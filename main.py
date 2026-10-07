@@ -574,9 +574,9 @@ def scan_now_endpoint():
                     h1_macro_bullish = (h1_st_dir == 1) and (cmp >= h1_ema50)
 
                 # RULE 2: Proximity to 15m EMA 20 Support
-                # abs(CMP - EMA20_15m) / EMA20_15m <= 0.006 (Price within 0.6% of 15m EMA 20 line)
+                # abs(CMP - EMA20_15m) / EMA20_15m <= 0.012 (Price within 1.2% of 15m EMA 20 line)
                 dist_to_ema20 = abs(cmp - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
-                is_near_ema20 = (dist_to_ema20 <= 0.006)
+                is_near_ema20 = (dist_to_ema20 <= 0.012)
 
                 # RULE 3: Bullish Reversal Confirmation (Green Bounce Wick)
                 # Current 1m/5m candle shows a green bullish rejection wick off the EMA line
@@ -606,9 +606,9 @@ def scan_now_endpoint():
                 
                 if is_above_cpr_tc and is_st_green and h1_macro_bullish and is_near_ema20 and is_bounce_wick and (t1 or t2):
                     status = "🔥 TRIGGERED AUTO-TRADE (Pullback Bounce)"
-                elif is_above_cpr_tc and is_supertrend_green and h1_macro_bullish and not is_near_ema20:
+                elif is_above_cpr_tc and is_st_green and h1_macro_bullish and not is_near_ema20:
                     status = f"⏳ Waiting for Pullback to 15m EMA 20 (Dist {dist_to_ema20*100:.2f}%)"
-                elif is_above_cpr_tc and is_supertrend_green and h1_macro_bullish:
+                elif is_above_cpr_tc and is_st_green and h1_macro_bullish:
                     status = f"🟢 Bullish (Vol {vol_spike:.2f}x / Score {score})"
                 elif not h1_macro_bullish:
                     status = "🛑 1H Macro Downtrend Filtered"
@@ -722,9 +722,9 @@ def run_scan():
                 h1_macro_bullish = (h1_st_dir == 1) and (cmp >= h1_ema50)
 
             # RULE 2: Proximity to 15m EMA 20 Support
-            # abs(CMP - EMA20_15m) / EMA20_15m <= 0.006 (Price within 0.6% of 15m EMA 20 line)
+            # abs(CMP - EMA20_15m) / EMA20_15m <= 0.012 (Price within 1.2% of 15m EMA 20 line)
             dist_to_ema20 = abs(cmp - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
-            is_near_ema20 = (dist_to_ema20 <= 0.006)
+            is_near_ema20 = (dist_to_ema20 <= 0.012)
 
             # RULE 3: Bullish Reversal Confirmation (Green Bounce Wick)
             # Current 1m/5m candle shows a green bullish rejection wick off the EMA line
@@ -964,7 +964,7 @@ def monitor_active_positions():
                             save_active_trades()
                             st = load_state()
                             st[symbol] = time.time()
-                            save_state(st)
+                            save_state(state)
                             continue
                         
                         # CAP SELL QUANTITY TO LIVE POSITION SIZE (Guarantees order CANNOT overshoot into a SHORT position!)
@@ -1080,7 +1080,7 @@ def start_background_loop():
     t5 = threading.Thread(target=run_telegram_command_listener, daemon=True)
     t5.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT HIGH-CONFLUENCE WINNING SCANNER (> $5M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$5M 24h Volume)\n• Entry Strategy: PULLBACK BOUNCE ENGINE (Rule 1: 1H Macro Bull + Rule 2: 15m EMA 20 Support <=0.6% + Rule 3: Reversal Wick)\n• Trailing Breakeven: ACTIVE (Moves SL to entry + 0.2% Fee Buffer at +4% ROE)\n• A+ Confluence Scoring: ACTIVE (Vol Spike >= 1.30x, Score >= 70)\n• Per-Coin Cooldown: 30 Minutes (Strict Noise-Free Guard)\n• Max Active Trades Cap: 3 Concurrent Trades (Max ₹3,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Double-Entry Guard: 4-LAYER ARMOR (Zero Re-Entries / Zero Size Stacking)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Stop Loss set to -11.2% ROE (-1.6% price move - Outside 15m Noise)\n• Dynamic Peak Trailing Engine: ACTIVE (Trails 0.8% behind peak to capture big pumps)\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
+    send_telegram_message("⚡ <b>RENDER BOT HIGH-CONFLUENCE WINNING SCANNER (> $5M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$5M 24h Volume)\n• Entry Strategy: PULLBACK BOUNCE ENGINE (Rule 1: 1H Macro Bull + Rule 2: 15m EMA 20 Support <=1.2% + Rule 3: Reversal Wick)\n• Trailing Breakeven: ACTIVE (Moves SL to entry + 0.2% Fee Buffer at +4% ROE)\n• A+ Confluence Scoring: ACTIVE (Vol Spike >= 1.30x, Score >= 70)\n• Per-Coin Cooldown: 30 Minutes (Strict Noise-Free Guard)\n• Max Active Trades Cap: 3 Concurrent Trades (Max ₹3,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Double-Entry Guard: 4-LAYER ARMOR (Zero Re-Entries / Zero Size Stacking)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Stop Loss set to -11.2% ROE (-1.6% price move - Outside 15m Noise)\n• Dynamic Peak Trailing Engine: ACTIVE (Trails 0.8% behind peak to capture big pumps)\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
 
 start_background_loop()
 
