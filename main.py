@@ -56,6 +56,23 @@ WATCHLIST = [
 
 ctx = ssl._create_unverified_context()
 
+COINDCX_PAIR_ALIASES = {
+    'RAY': 'RAYSOL',
+    'PEPE': '1000PEPE',
+    'SHIB': '1000SHIB',
+    'BONK': '1000BONK',
+    'FLOKI': '1000FLOKI',
+    'CHEEMS': '1000CHEEMS',
+    'CAT': '1000CAT',
+    'SATS': '1000SATS',
+    'RATS': '1000RATS',
+    'MOG': '1000MOG',
+    'XEC': '1000XEC',
+    'LUNC': '1000LUNC',
+    'BABYDOGE': '1000BABYDOGE',
+    'WHY': '1000WHY',
+}
+
 # DYNAMIC INACTIVE COIN BLACKLIST & COINDCX ACTIVE PAIRS SYNC
 CACHED_DYNAMIC_WATCHLIST = []
 LAST_WATCHLIST_FETCH_TIME = 0.0
@@ -137,7 +154,7 @@ def fetch_dynamic_watchlist(min_volume_usdt=5000000.0):
                         # Exclude stablecoins and leveraged tokens
                         if coin not in ['USDC', 'FDUSD', 'TUSD', 'BUSD', 'EUR', 'GBP', 'DAI', 'USDP', 'AEUR'] and not coin.endswith('UP') and not coin.endswith('DOWN'):
                             if coindcx_active:
-                                futures_coin = f"1000{coin}" if coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI'] else coin
+                                futures_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
                                 pair_1 = f"B-{futures_coin}_USDT"
                                 pair_2 = f"B-{coin}_USDT"
                                 is_active = any(p in coindcx_active for p in [pair_1, pair_2]) or any(coin in p for p in coindcx_active)
@@ -321,7 +338,7 @@ def fetch_coindcx_live_position_qty(symbol):
                     if not isinstance(p, dict): continue
                     p_pair = str(p.get('pair', '')).upper()
                     p_clean = p_pair.replace("B-", "").replace("1000", "").replace("_", "").replace("-", "").replace("USDT", "")
-                    if p_clean == target_clean:
+                    if p_clean == target_clean or (target_clean == "RAY" and "RAYSOL" in p_pair):
                         for k in possible_qty_keys:
                             val = p.get(k)
                             if val is not None:
@@ -345,7 +362,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         return {'success': False, 'error': 'CoinDCX API credentials missing.'}
         
     coin = symbol.split('-')[0].upper()
-    futures_coin = f"1000{coin}" if coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI'] else coin
+    futures_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
     pair_name = f"B-{futures_coin}_USDT"
     
     # REQUIREMENT 2 ENFORCEMENT: For BUY orders, TP and SL are MANDATORY. Without TP & SL, DO NOT PLACE TRADE!
@@ -964,7 +981,7 @@ def monitor_active_positions():
                             save_active_trades()
                             st = load_state()
                             st[symbol] = time.time()
-                            save_state(state)
+                            save_state(st)
                             continue
                         
                         # CAP SELL QUANTITY TO LIVE POSITION SIZE (Guarantees order CANNOT overshoot into a SHORT position!)
