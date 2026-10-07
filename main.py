@@ -561,13 +561,32 @@ def scan_now_endpoint():
                 rsi_val = calculate_rsi(close_prices)
                 vol_spike = calculate_volume_spike(m15_klines)
                 
-                # Multi-Timeframe 1H Macro Trend Check
+                # 15m EMA 20 for Pullback / Support Dip Check
+                ema20_15m = calculate_ema(close_prices, 20)
+                
+                # RULE 1: Confirmed Trend Filter (1H Macro Uptrend)
+                # 1H Supertrend == GREEN AND CMP >= 1H EMA 50
                 h1_macro_bullish = True
                 if h1_klines and len(h1_klines) >= 20:
                     h1_st_dir, _ = calculate_supertrend(h1_klines)
                     h1_closes = [k[4] for k in h1_klines]
                     h1_ema50 = calculate_ema(h1_closes, 50)
                     h1_macro_bullish = (h1_st_dir == 1) and (cmp >= h1_ema50)
+
+                # RULE 2: Proximity to 15m EMA 20 Support
+                # abs(CMP - EMA20_15m) / EMA20_15m <= 0.006 (Price within 0.6% of 15m EMA 20 line)
+                dist_to_ema20 = abs(cmp - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
+                is_near_ema20 = (dist_to_ema20 <= 0.006)
+
+                # RULE 3: Bullish Reversal Confirmation (Green Bounce Wick)
+                # Current 1m/5m candle shows a green bullish rejection wick off the EMA line
+                m1_klines = fetch_klines(symbol, '1m', 3)
+                is_bounce_wick = False
+                if m1_klines and len(m1_klines) > 0:
+                    last_1m = m1_klines[-1]
+                    is_bounce_wick = (last_1m[4] >= last_1m[1]) or ((min(last_1m[1], last_1m[4]) - last_1m[3]) > 0)
+                else:
+                    is_bounce_wick = (m15_klines[-1][4] >= m15_klines[-1][1])
 
                 score = 50
                 if cmp > cpr['tc']: score += 15
@@ -584,16 +603,18 @@ def scan_now_endpoint():
                 t1 = (vol_spike >= 1.30 and score >= 70)
                 t2 = (vol_spike >= 1.15 and score >= 68)
                 
-                if is_above_cpr_tc and is_st_green and h1_macro_bullish and (t1 or t2):
-                    status = "🔥 TRIGGERED AUTO-TRADE"
-                elif is_above_cpr_tc and is_st_green and h1_macro_bullish:
+                if is_above_cpr_tc and is_st_green and h1_macro_bullish and is_near_ema20 and is_bounce_wick and (t1 or t2):
+                    status = "🔥 TRIGGERED AUTO-TRADE (Pullback Bounce)"
+                elif is_above_cpr_tc and is_supertrend_green and h1_macro_bullish and not is_near_ema20:
+                    status = f"⏳ Waiting for Pullback to 15m EMA 20 (Dist {dist_to_ema20*100:.2f}%)"
+                elif is_above_cpr_tc and is_supertrend_green and h1_macro_bullish:
                     status = f"🟢 Bullish (Vol {vol_spike:.2f}x / Score {score})"
                 elif not h1_macro_bullish:
                     status = "🛑 1H Macro Downtrend Filtered"
                 else:
                     status = "⚪ Consolidating"
                 
-                report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | CPR TC: {cpr['tc']:<10.4f} | ST 15M: {'GREEN' if is_st_green else 'RED':5s} | 1H Macro: {'BULL' if h1_macro_bullish else 'BEAR':4s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
+                report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | EMA20: {ema20_15m:<10.4f} | ST 15M: {'GREEN' if is_st_green else 'RED':5s} | 1H Macro: {'BULL' if h1_macro_bullish else 'BEAR':4s} | Near EMA20: {'YES' if is_near_ema20 else 'NO':3s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
             except Exception as e:
                 report_lines.append(f"{symbol:12s} | Error: {e}")
         
@@ -686,8 +707,11 @@ def run_scan():
             rsi_val = calculate_rsi(close_prices)
             vol_spike = calculate_volume_spike(m15_klines)
             
-            # MULTI-TIMEFRAME MACRO DOWNTREND PROTECTION FILTER:
-            # Check 1-Hour Macro Supertrend and 1-Hour EMA 50
+            # Calculate 15m EMA 20 for Pullback / Support Dip Check
+            ema20_15m = calculate_ema(close_prices, 20)
+            
+            # RULE 1: Confirmed Trend Filter (1H Macro Uptrend)
+            # 1H Supertrend == GREEN AND CMP >= 1H EMA 50
             h1_macro_bullish = True
             if h1_klines and len(h1_klines) >= 20:
                 h1_st_dir, _ = calculate_supertrend(h1_klines)
@@ -695,6 +719,24 @@ def run_scan():
                 h1_ema50 = calculate_ema(h1_closes, 50)
                 # MUST have GREEN 1H Supertrend AND CMP >= 1H EMA 50
                 h1_macro_bullish = (h1_st_dir == 1) and (cmp >= h1_ema50)
+
+            # RULE 2: Proximity to 15m EMA 20 Support
+            # abs(CMP - EMA20_15m) / EMA20_15m <= 0.006 (Price within 0.6% of 15m EMA 20 line)
+            dist_to_ema20 = abs(cmp - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
+            is_near_ema20 = (dist_to_ema20 <= 0.006)
+
+            # RULE 3: Bullish Reversal Confirmation (Green Bounce Wick)
+            # Current 1m/5m candle shows a green bullish rejection wick off the EMA line
+            m1_klines = fetch_klines(symbol, '1m', 3)
+            is_bounce_wick = False
+            if m1_klines and len(m1_klines) > 0:
+                last_1m = m1_klines[-1]
+                is_green_1m = (last_1m[4] >= last_1m[1])
+                has_rejection_wick = (min(last_1m[1], last_1m[4]) - last_1m[3]) > 0
+                is_bounce_wick = is_green_1m or has_rejection_wick
+            else:
+                last_15m = m15_klines[-1]
+                is_bounce_wick = (last_15m[4] >= last_15m[1])
 
             # HIGH-CONFLUENCE A+ SCORING ENGINE:
             score = 50
@@ -708,22 +750,22 @@ def run_scan():
             elif vol_spike >= 1.15: score += 5
             score = max(0, min(100, score))
             
-            rating = "A+ (Strong Breakout) 👑" if score >= 85 else ("A (Solid Breakout) 🥇" if score >= 68 else "B (Moderate)")
+            rating = "A+ (Strong Pullback Bounce) 👑" if score >= 85 else ("A (Solid Pullback Bounce) 🥇" if score >= 68 else "B (Moderate)")
             is_above_cpr_tc = cmp > cpr['tc']
             is_supertrend_green = st_dir == 1
             is_not_choppy = True if vol_spike >= 1.15 else not (48 <= rsi_val <= 52)
             
-            # HIGH-CONFLUENCE A+ DUAL-TRIGGER ENGINE (Filters 90% of false breakouts):
+            # HIGH-CONFLUENCE PULLBACK BOUNCE ENGINE (Applies Rules 1, 2, and 3):
             trigger_1 = (vol_spike >= 1.30 and score >= 70)
             trigger_2 = (vol_spike >= 1.15 and score >= 68)
             
-            if is_above_cpr_tc and is_supertrend_green and h1_macro_bullish and (trigger_1 or trigger_2) and is_not_choppy:
-                candidates.append({'symbol': symbol, 'score': score, 'rating': rating, 'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike})
+            if is_above_cpr_tc and is_supertrend_green and h1_macro_bullish and is_near_ema20 and is_bounce_wick and (trigger_1 or trigger_2) and is_not_choppy:
+                candidates.append({'symbol': symbol, 'score': score, 'rating': rating, 'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike, 'ema20': ema20_15m})
         except Exception: pass
 
     candidates.sort(key=lambda x: x['score'], reverse=True)
 
-    # FIX 1: HARDCODED ₹1,000 INR FIXED MARGIN PER TRADE (DELETED DYNAMIC CAPITAL SCALER MULTIPLIER)
+    # HARDCODED ₹1,000 INR FIXED MARGIN PER TRADE
     coin_margin = 1000.0  # STRICT FIXED ₹1,000 INR (~$11.30 USDT) PER TRADE
 
     for cand in candidates:
@@ -794,7 +836,7 @@ def run_scan():
                 save_state(state)
 
             msg = (
-                f"🟢 <b>NEW BULLISH BREAKOUT SIGNAL</b>\n\n"
+                f"🟢 <b>NEW BULLISH PULLBACK BOUNCE SIGNAL</b>\n\n"
                 f"<b>Pair:</b> B-{clean_symbol[:-4]}_USDT (Futures)\n"
                 f"<b>Direction:</b> BUY / LONG\n\n"
                 f"🔥 <b>Confluence Score:</b> <code>{score} / 100</code>\n"
@@ -1036,7 +1078,7 @@ def start_background_loop():
     t5 = threading.Thread(target=run_telegram_command_listener, daemon=True)
     t5.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT HIGH-CONFLUENCE WINNING SCANNER (> $5M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$5M 24h Volume)\n• 1H Macro Trend Filter: ACTIVE (Only Trades in Confirmed 1H Bullish Trends)\n• A+ Confluence Scoring: ACTIVE (Vol Spike >= 1.30x, Score >= 70)\n• Per-Coin Cooldown: 30 Minutes (Strict Noise-Free Guard)\n• Max Active Trades Cap: 3 Concurrent Trades (Max ₹3,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Double-Entry Guard: 4-LAYER ARMOR (Zero Re-Entries / Zero Size Stacking)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Stop Loss set to -11.2% ROE (-1.6% price move - Outside 15m Noise)\n• Dynamic Peak Trailing Engine: ACTIVE (Trails 0.8% behind peak to capture big pumps)\n• Trailing Breakeven: ACTIVE (Moves SL to entry at +4% ROE)\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
+    send_telegram_message("⚡ <b>RENDER BOT HIGH-CONFLUENCE WINNING SCANNER (> $5M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$5M 24h Volume)\n• Entry Strategy: PULLBACK BOUNCE ENGINE (Rule 1: 1H Macro Bull + Rule 2: 15m EMA 20 Support <=0.6% + Rule 3: Reversal Wick)\n• A+ Confluence Scoring: ACTIVE (Vol Spike >= 1.30x, Score >= 70)\n• Per-Coin Cooldown: 30 Minutes (Strict Noise-Free Guard)\n• Max Active Trades Cap: 3 Concurrent Trades (Max ₹3,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Double-Entry Guard: 4-LAYER ARMOR (Zero Re-Entries / Zero Size Stacking)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Stop Loss set to -11.2% ROE (-1.6% price move - Outside 15m Noise)\n• Dynamic Peak Trailing Engine: ACTIVE (Trails 0.8% behind peak to capture big pumps)\n• Trailing Breakeven: ACTIVE (Moves SL to entry at +4% ROE)\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
 
 start_background_loop()
 
