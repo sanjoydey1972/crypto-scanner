@@ -127,7 +127,7 @@ def fetch_coindcx_active_pairs():
 
     return CACHED_COINDCX_ACTIVE_PAIRS
 
-def fetch_dynamic_watchlist(min_volume_usdt=5000000.0):
+def fetch_dynamic_watchlist(min_volume_usdt=3000000.0):
     global CACHED_DYNAMIC_WATCHLIST, LAST_WATCHLIST_FETCH_TIME
     now = time.time()
     # Cache dynamic list for 15 minutes (900s) to keep scanner loops ultra-fast
@@ -338,7 +338,7 @@ def fetch_coindcx_live_position_qty(symbol):
                     if not isinstance(p, dict): continue
                     p_pair = str(p.get('pair', '')).upper()
                     p_clean = p_pair.replace("B-", "").replace("1000", "").replace("_", "").replace("-", "").replace("USDT", "")
-                    if p_clean == target_clean or (target_clean == "RAY" and "RAYSOL" in p_pair):
+                    if p_clean == target_clean:
                         for k in possible_qty_keys:
                             val = p.get(k)
                             if val is not None:
@@ -542,7 +542,7 @@ def send_hourly_market_report():
             f"📊 <b>AUTOMATED HOURLY MARKET CONDITION REPORT</b>\n\n"
             f"⏰ <b>Time:</b> {now_str}\n"
             f"✅ <b>Render Cloud Status:</b> 100% ONLINE (24/7 Active)\n\n"
-            f"🔍 <b>Market Overview ({len(scan_pool)} Liquid Futures Pairs >$5M Vol):</b>\n"
+            f"🔍 <b>Market Overview ({len(scan_pool)} Liquid Futures Pairs >$3M Vol):</b>\n"
             f"• <b>BTC Current Price:</b> <code>${btc_inrm_price:,.1f}</code>\n"
             f"🟢 <b>In Bull Run:</b> <code>{len(bull_coins)} coins</code>\n"
             f"🔴 <b>In Bear Run:</b> <code>{len(bear_coins)} coins</code>\n"
@@ -637,7 +637,7 @@ def scan_now_endpoint():
                 report_lines.append(f"{symbol:12s} | Error: {e}")
         
         now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-        html = f"<h2>⚡ LIVE {len(scan_pool)}-COIN DYNAMIC MARKET SCANNER AUDIT REPORT (VOL > $5M)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
+        html = f"<h2>⚡ LIVE {len(scan_pool)}-COIN DYNAMIC MARKET SCANNER AUDIT REPORT (VOL > $3M)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
         return html, 200
     except Exception as e:
         return f"<h3>⚠️ Scan Error:</h3><p>{e}</p>", 500
@@ -794,13 +794,13 @@ def run_scan():
                 is_in_memory = any(clean_coin == s.split('-')[0].upper().replace("1000", "") for s in ACTIVE_TRADES.keys())
                 active_count = len(ACTIVE_TRADES)
 
-            # MAX PORTFOLIO ACTIVE TRADES CAP: Max 3 active trades allowed (Max ₹3,000 INR total allocated capital)
-            if active_count >= 3:
+            # MAX PORTFOLIO ACTIVE TRADES CAP: Max 4 active trades allowed (Max ₹4,000 INR total allocated capital)
+            if active_count >= 4:
                 break
 
-            # STRICT 30-MINUTE (1800s) PER-COIN COOLDOWN:
+            # STRICT 15-MINUTE (900s) PER-COIN COOLDOWN:
             last_sent = state.get(symbol, 0)
-            if is_in_memory or (time.time() - last_sent < 1800):
+            if is_in_memory or (time.time() - last_sent < 900):
                 continue
             
             # LIVE EXCHANGE & MANUAL TRADE PROTECTION:
@@ -895,7 +895,7 @@ def monitor_active_positions():
                             ACTIVE_TRADES.pop(symbol, None)
                         save_active_trades()
                         
-                        # Enforce 30-minute cooldown timestamp in state
+                        # Enforce 15-minute cooldown timestamp in state
                         st = load_state()
                         st[symbol] = time.time()
                         save_state(st)
@@ -904,7 +904,7 @@ def monitor_active_positions():
                             f"🛡️ <b>POSITION CLOSED EXTERNALLY / MANUALLY!</b>\n\n"
                             f"<b>Pair:</b> B-{clean_coin}_USDT\n"
                             f"• <b>Status:</b> Detected closed on CoinDCX App / Exchange\n"
-                            f"• <b>Protection:</b> 30-Min Cooldown Activated (No Re-entry / No Short Trade)"
+                            f"• <b>Protection:</b> 15-Min Cooldown Activated (No Re-entry / No Short Trade)"
                         )
                         continue
 
@@ -975,7 +975,7 @@ def monitor_active_positions():
                         # Re-verify live position quantity RIGHT BEFORE placing sell order!
                         live_qty_now = fetch_coindcx_live_position_qty(symbol)
                         if live_qty_now is not None and live_qty_now <= 0:
-                            # Position already closed externally! Pop from memory & apply 30m cooldown
+                            # Position already closed externally! Pop from memory & apply 15m cooldown
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
                             save_active_trades()
@@ -1002,7 +1002,7 @@ def monitor_active_positions():
                                 ACTIVE_TRADES.pop(symbol, None)
                             save_active_trades()
                             
-                            # MANDATORY 30-MINUTE COOLDOWN ON ALL EXIT TRADES (Prevents 5-Second Re-Entries!)
+                            # MANDATORY 15-MINUTE COOLDOWN ON ALL EXIT TRADES (Prevents 5-Second Re-Entries!)
                             st = load_state()
                             st[symbol] = time.time()
                             save_state(st)
@@ -1011,7 +1011,7 @@ def monitor_active_positions():
                                 f"🏁 <b>POSITION CLOSED: {sl_type}</b>\n\n"
                                 f"<b>Pair:</b> B-{clean_coin}_USDT\n"
                                 f"Closed at: <code>${cmp}</code> (Entry: <code>${entry_p}</code>)\n"
-                                f"⏱️ <i>30-Min Cooldown Locked (No 5-Sec Re-Entries)</i>"
+                                f"⏱️ <i>15-Min Cooldown Locked (No 5-Sec Re-Entries)</i>"
                             )
                         else:
                             print(f"SL Close failed for {symbol}: {res.get('error')}")
@@ -1057,8 +1057,8 @@ def start_background_loop():
                     finally: scan_lock.release()
             except Exception as e:
                 print(f"Scan loop exception: {e}")
-            # ACCELERATED SCAN INTERVAL: Scan every 120 seconds (2 minutes) instead of 300 seconds!
-            time.sleep(120)
+            # ACCELERATED SCAN INTERVAL: Scan every 60 seconds (1 minute) for maximum signal sensitivity!
+            time.sleep(60)
 
     def run_hourly_report_loop():
         time.sleep(10)
@@ -1097,7 +1097,7 @@ def start_background_loop():
     t5 = threading.Thread(target=run_telegram_command_listener, daemon=True)
     t5.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT HIGH-CONFLUENCE WINNING SCANNER (> $5M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$5M 24h Volume)\n• Entry Strategy: PULLBACK BOUNCE ENGINE (Rule 1: 1H Macro Bull + Rule 2: 15m EMA 20 Support <=1.2% + Rule 3: Reversal Wick)\n• Trailing Breakeven: ACTIVE (Moves SL to entry + 0.2% Fee Buffer at +4% ROE)\n• A+ Confluence Scoring: ACTIVE (Vol Spike >= 1.30x, Score >= 70)\n• Per-Coin Cooldown: 30 Minutes (Strict Noise-Free Guard)\n• Max Active Trades Cap: 3 Concurrent Trades (Max ₹3,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Double-Entry Guard: 4-LAYER ARMOR (Zero Re-Entries / Zero Size Stacking)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Stop Loss set to -11.2% ROE (-1.6% price move - Outside 15m Noise)\n• Dynamic Peak Trailing Engine: ACTIVE (Trails 0.8% behind peak to capture big pumps)\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
+    send_telegram_message("⚡ <b>RENDER BOT HIGH-CONFLUENCE WINNING SCANNER (> $3M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$3M 24h Volume)\n• Scan Frequency: Every 60 Seconds (Ultra-Fast Signal Capture)\n• Entry Strategy: PULLBACK BOUNCE ENGINE (Rule 1: 1H Macro Bull + Rule 2: 15m EMA 20 Support <=1.2% + Rule 3: Reversal Wick)\n• Trailing Breakeven: ACTIVE (Moves SL to entry + 0.2% Fee Buffer at +4% ROE)\n• A+ Confluence Scoring: ACTIVE (Vol Spike >= 1.30x, Score >= 70)\n• Per-Coin Cooldown: 15 Minutes (Accelerated Re-entry Guard)\n• Max Active Trades Cap: 4 Concurrent Trades (Max ₹4,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Double-Entry Guard: 4-LAYER ARMOR (Zero Re-Entries / Zero Size Stacking)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Stop Loss set to -11.2% ROE (-1.6% price move - Outside 15m Noise)\n• Dynamic Peak Trailing Engine: ACTIVE (Trails 0.8% behind peak to capture big pumps)\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
 
 start_background_loop()
 
