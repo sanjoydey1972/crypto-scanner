@@ -582,79 +582,57 @@ def scan_now_endpoint():
                 # 15m EMA 20 & CPR Support Zone
                 ema20_15m = calculate_ema(close_prices, 20)
                 
-                # STEP 1 — IDENTIFY 1H TREND (Higher Highs & Higher Lows + EMA 20/50 Bullish)
-                h1_macro_bullish = False
+                # RULE 1: Confirmed Trend Filter (1H Macro Uptrend)
+                h1_macro_bullish = True
                 if h1_klines and len(h1_klines) >= 20:
-                    h1_closes = [k[4] for k in h1_klines]
-                    h1_lows = [k[3] for k in h1_klines]
-                    h1_ema20 = calculate_ema(h1_closes, 20)
-                    h1_ema50 = calculate_ema(h1_closes, 50)
                     h1_st_dir, _ = calculate_supertrend(h1_klines)
-                    
-                    recent_h1_low = min(h1_lows[-10:-1])
-                    prev_h1_low = min(h1_lows[-25:-10])
-                    is_higher_lows = (recent_h1_low >= prev_h1_low * 0.995)
-                    
-                    h1_macro_bullish = (h1_st_dir == 1) and (cmp >= h1_ema50) and (h1_ema20 >= h1_ema50 * 0.998) and is_higher_lows
+                    h1_closes = [k[4] for k in h1_klines]
+                    h1_ema50 = calculate_ema(h1_closes, 50)
+                    h1_macro_bullish = (h1_st_dir == 1) and (cmp >= h1_ema50)
 
-                # STEP 2 — WAIT FOR PULLBACK ON 15M (Toward EMA 20 / EMA 50 Support Zone)
+                # RULE 2: RED CIRCLE Support Touch & Anti-Peak Distance Guard
                 last_15m_low = m15_klines[-1][3]
-                ema50_15m = calculate_ema(close_prices, 50)
+                dist_low_to_support = abs(last_15m_low - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
+                did_touch_support = (dist_low_to_support <= 0.005) or (last_15m_low <= ema20_15m * 1.004)
 
-                dist_low_to_ema20 = abs(last_15m_low - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
-                dist_low_to_ema50 = abs(last_15m_low - ema50_15m) / ema50_15m if ema50_15m > 0 else 1.0
-                is_pullback_zone = (dist_low_to_ema20 <= 0.008) or (dist_low_to_ema50 <= 0.008) or (last_15m_low <= ema20_15m * 1.004)
+                # STRICT ANTI-PEAK GUARD: CMP MUST be within 0.6% of support line (Never buy at top of green candle!)
+                dist_cmp_to_support = (cmp - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
+                is_at_support_level = (-0.010 <= dist_cmp_to_support <= 0.006)
 
-                # STRICT ANTI-PEAK GUARD: Price must be in pullback zone, NOT chasing an overextended green move!
-                dist_cmp_to_ema20 = (cmp - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
-                is_not_chasing = (-0.012 <= dist_cmp_to_ema20 <= 0.008)
-
-                # STEP 3 — CONFIRM ENTRY ON 5M (Liquidity Sweep + Reclaim / Bullish Confirmation Candle)
-                m5_klines = fetch_klines(symbol, '5m', 20)
-                is_5m_liquidity_sweep_reclaim = False
-
-                if m5_klines and len(m5_klines) >= 6:
-                    m5_recent_lows = [k[3] for k in m5_klines[-10:-2]]
-                    m5_swing_low = min(m5_recent_lows)
-                    
-                    m5_last = m5_klines[-1]
-                    m5_prev = m5_klines[-2]
-                    
-                    did_sweep_low = any(k[3] < m5_swing_low for k in m5_klines[-4:])
-                    did_reclaim = (m5_last[4] > m5_swing_low) or (m5_prev[4] > m5_swing_low)
-                    
-                    is_5m_bullish_green = (m5_last[4] > m5_last[1])  # 5M candle closed GREEN
-                    is_5m_engulfing = (m5_last[4] >= m5_prev[2]) or ((m5_last[4] - m5_last[1]) > (m5_prev[1] - m5_prev[4]))
-                    
-                    is_5m_liquidity_sweep_reclaim = (did_sweep_low and did_reclaim and is_5m_bullish_green) or (is_5m_bullish_green and is_5m_engulfing)
+                # RULE 3: 1-Minute Reversal Wick Catch (Bounce off lowest wick point)
+                m1_klines = fetch_klines(symbol, '1m', 3)
+                is_bounce_wick = False
+                if m1_klines and len(m1_klines) > 0:
+                    last_1m = m1_klines[-1]
+                    m1_low = last_1m[3]
+                    m1_cmp = last_1m[4]
+                    # Price bounced at least +0.12% off the 1m low point
+                    is_bounce_wick = (m1_cmp >= m1_low * 1.0012)
                 else:
-                    m1_klines = fetch_klines(symbol, '1m', 3)
-                    if m1_klines:
-                        m1_last = m1_klines[-1]
-                        is_5m_liquidity_sweep_reclaim = (m1_last[4] >= m1_last[3] * 1.002) and (m1_last[4] >= m1_last[1])
+                    is_bounce_wick = (m15_klines[-1][4] >= m15_klines[-1][1])
 
                 score = 50
-                if is_pullback_zone and is_not_chasing: score += 20
-                if is_5m_liquidity_sweep_reclaim: score += 20
-                if cmp > cpr['bc']: score += 10
-                if 45 <= rsi_val <= 70: score += 10
+                if did_touch_support and is_at_support_level: score += 20  # Reward RED CIRCLE support touch
+                if cmp > cpr['bc']: score += 15
+                if 48 <= rsi_val <= 75: score += 15
+                elif rsi_val > 75: score -= 10
                 if vol_spike >= 1.15: score += 10
                 score = max(0, min(100, score))
                 
                 is_st_green = st_dir == 1
                 
-                if h1_macro_bullish and is_pullback_zone and is_not_chasing and is_5m_liquidity_sweep_reclaim and (score >= 70):
-                    status = "🔥 TRIGGERED AUTO-TRADE (5M Liquidity Sweep & Reclaim)"
-                elif h1_macro_bullish and is_st_green and not is_not_chasing and dist_cmp_to_ema20 > 0.008:
-                    status = f"⏳ Waiting for Pullback to 15m EMA 20 (Dist {dist_cmp_to_ema20*100:.2f}%)"
+                if h1_macro_bullish and is_st_green and did_touch_support and is_at_support_level and is_bounce_wick:
+                    status = "🔥 TRIGGERED AUTO-TRADE (Red Circle Bottom Wick)"
+                elif h1_macro_bullish and is_st_green and not is_at_support_level and dist_cmp_to_support > 0.006:
+                    status = f"⏳ Waiting for Pullback to 15m EMA 20 (Dist {dist_cmp_to_support*100:.2f}%)"
                 elif h1_macro_bullish and is_st_green:
-                    status = f"🟢 Bullish (In Pullback Zone: {'YES' if is_pullback_zone else 'NO'})"
+                    status = f"🟢 Bullish (Near Support: {'YES' if is_at_support_level else 'NO'})"
                 elif not h1_macro_bullish:
                     status = "🛑 1H Macro Downtrend Filtered"
                 else:
                     status = "⚪ Consolidating"
                 
-                report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | EMA20: {ema20_15m:<10.4f} | ST 15M: {'GREEN' if is_st_green else 'RED':5s} | 1H Macro: {'BULL' if h1_macro_bullish else 'BEAR':4s} | Sweep Level: {'YES' if (is_pullback_zone and is_5m_liquidity_sweep_reclaim) else 'NO ':3s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
+                report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | EMA20: {ema20_15m:<10.4f} | ST 15M: {'GREEN' if is_st_green else 'RED':5s} | 1H Macro: {'BULL' if h1_macro_bullish else 'BEAR':4s} | Red Circle Level: {'YES' if (did_touch_support and is_at_support_level) else 'NO ':3s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
             except Exception as e:
                 report_lines.append(f"{symbol:12s} | Error: {e}")
         
@@ -807,15 +785,15 @@ def run_scan():
             score = 50
             if is_pullback_zone and is_not_chasing: score += 20
             if is_5m_liquidity_sweep_reclaim: score += 20
-            if cmp > cpr['bc']: score += 10
+            if cmp >= cpr['bc'] * 0.997: score += 10
             if 45 <= rsi_val <= 70: score += 10
             if vol_spike >= 1.15: score += 10
             score = max(0, min(100, score))
             
             rating = "A+ (Liquidity Sweep & Reclaim) 👑" if score >= 80 else ("A (Solid Pullback Bounce) 🥇" if score >= 65 else "B (Moderate)")
 
-            # STRICT MULTI-TIMEFRAME ENTRY FILTER (1H Bullish + 15M Pullback + 5M Sweep Reclaim + Score >= 70)
-            if h1_macro_bullish and is_pullback_zone and is_not_chasing and is_5m_liquidity_sweep_reclaim and (score >= 70):
+            # STRICT MULTI-TIMEFRAME ENTRY FILTER (1H Bullish + 15M Pullback + 5M Sweep Reclaim + Score >= 80 A+ GRADE ONLY)
+            if h1_macro_bullish and is_pullback_zone and is_not_chasing and is_5m_liquidity_sweep_reclaim and (score >= 80):
                 candidates.append({'symbol': symbol, 'score': score, 'rating': rating, 'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike, 'ema20': ema20_15m, 'm15_low': last_15m_low, 'sweep_low': sweep_low_price})
         except Exception: pass
 
