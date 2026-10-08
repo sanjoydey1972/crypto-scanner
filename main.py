@@ -995,4 +995,103 @@ def monitor_active_positions():
                             # MANDATORY 15-MINUTE COOLDOWN ON ALL EXIT TRADES (Prevents 5-Second Re-Entries!)
                             st = load_state()
                             st[symbol] = time.time()
-                            save
+                            save_state(st)
+                            
+                            send_telegram_message(
+                                f"🏁 <b>POSITION CLOSED: {sl_type}</b>\n\n"
+                                f"<b>Pair:</b> B-{clean_coin}_USDT\n"
+                                f"Closed at: <code>${cmp}</code> (Entry: <code>${entry_p}</code>)\n"
+                                f"⏱️ <i>15-Min Cooldown Locked (No 5-Sec Re-Entries)</i>"
+                            )
+                        else:
+                            print(f"SL Close failed for {symbol}: {res.get('error')}")
+                except Exception as e:
+                    print(f"Error monitoring {symbol}: {e}")
+        except Exception as e:
+            print(f"Position monitor exception: {e}")
+        time.sleep(3)
+
+# MOBILE TELEGRAM ON/OFF COMMAND LISTENER (/stop & /start)
+def run_telegram_command_listener():
+    global AUTO_TRADING_ENABLED
+    last_update_id = 0
+    time.sleep(10)
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=5"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                if data.get('ok') and isinstance(data.get('result'), list):
+                    for item in data['result']:
+                        last_update_id = item.get('update_id', last_update_id)
+                        message = item.get('message', {})
+                        text = message.get('text', '').strip().lower()
+                        
+                        if text in ['/stop', '/pause', 'stop', 'pause']:
+                            AUTO_TRADING_ENABLED = False
+                            send_telegram_message("🛑 <b>AUTO-TRADING PAUSED VIA MOBILE COMMAND!</b>\n\n• Signals will still be reported.\n• Auto-order execution on CoinDCX is OFF.")
+                        elif text in ['/start', '/resume', 'start', 'resume']:
+                            AUTO_TRADING_ENABLED = True
+                            send_telegram_message("🟢 <b>AUTO-TRADING ACTIVATED VIA MOBILE COMMAND!</b>\n\n• Auto-order execution on CoinDCX is ON.")
+        except Exception: pass
+        time.sleep(3)
+
+def start_background_loop():
+    def run_loop():
+        time.sleep(5)
+        while True:
+            try:
+                if scan_lock.acquire(blocking=False):
+                    try: run_scan()
+                    finally: scan_lock.release()
+            except Exception as e:
+                print(f"Scan loop exception: {e}")
+            # ACCELERATED SCAN INTERVAL: Scan every 60 seconds (1 minute) for maximum signal sensitivity!
+            time.sleep(60)
+
+    def run_hourly_report_loop():
+        time.sleep(10)
+        send_hourly_market_report()
+        while True:
+            try:
+                time.sleep(3600)
+                send_hourly_market_report()
+            except Exception as e:
+                print(f"Hourly loop exception: {e}")
+
+    def run_keep_alive_loop():
+        time.sleep(15)
+        url = "https://crypto-scanner-ok3t.onrender.com/"
+        while True:
+            try:
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+                    pass
+            except Exception as e:
+                print(f"Keep-alive error: {e}")
+            time.sleep(240)
+
+    t1 = threading.Thread(target=run_loop, daemon=True)
+    t1.start()
+
+    t2 = threading.Thread(target=monitor_active_positions, daemon=True)
+    t2.start()
+
+    t3 = threading.Thread(target=run_hourly_report_loop, daemon=True)
+    t3.start()
+
+    t4 = threading.Thread(target=run_keep_alive_loop, daemon=True)
+    t4.start()
+
+    t5 = threading.Thread(target=run_telegram_command_listener, daemon=True)
+    t5.start()
+
+    send_telegram_message("⚡ <b>RENDER BOT RED-CIRCLE WINNING SCANNER (> $3M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$3M 24h Volume)\n• Scan Frequency: Every 60 Seconds (Ultra-Fast Signal Capture)\n• Entry Strategy: RED CIRCLE BOTTOM WICK ENGINE (Rule 1: 1H Macro Bull + Rule 2: Support Touch <=0.4% + Rule 3: 1m Wick Reversal + Anti-Peak Distance Guard <=0.6%)\n• Trailing Breakeven: ACTIVE (Triggers at +7% ROE / +1.0% Price Move with +0.3% Net Profit Lock)\n• Dynamic Peak Trailing Engine: ACTIVE (Trails 1.2% behind peak to capture +15% to +40% ROE Rallies)\n• Per-Coin Cooldown: 15 Minutes (Accelerated Re-entry Guard)\n• Max Active Trades Cap: 4 Concurrent Trades (Max ₹4,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Stop Loss: SAFELY POSITIONED BELOW SUPPORT WICK LOW (-1.5%)\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
+
+start_background_loop()
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    print(f"Starting server on port {port}...")
+    app.run(host="0.0.0.0", port=port)
