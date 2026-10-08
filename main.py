@@ -578,11 +578,10 @@ def scan_now_endpoint():
                 rsi_val = calculate_rsi(close_prices)
                 vol_spike = calculate_volume_spike(m15_klines)
                 
-                # 15m EMA 20 for Pullback / Support Dip Check
+                # 15m EMA 20 & CPR Support Zone
                 ema20_15m = calculate_ema(close_prices, 20)
                 
                 # RULE 1: Confirmed Trend Filter (1H Macro Uptrend)
-                # 1H Supertrend == GREEN AND CMP >= 1H EMA 50
                 h1_macro_bullish = True
                 if h1_klines and len(h1_klines) >= 20:
                     h1_st_dir, _ = calculate_supertrend(h1_klines)
@@ -590,49 +589,49 @@ def scan_now_endpoint():
                     h1_ema50 = calculate_ema(h1_closes, 50)
                     h1_macro_bullish = (h1_st_dir == 1) and (cmp >= h1_ema50)
 
-                # RULE 2: Proximity to 15m EMA 20 Support
-                # abs(CMP - EMA20_15m) / EMA20_15m <= 0.012 (Price within 1.2% of 15m EMA 20 line)
-                dist_to_ema20 = abs(cmp - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
-                is_near_ema20 = (dist_to_ema20 <= 0.012)
+                # RULE 2: RED CIRCLE Support Touch & Anti-Peak Distance Guard
+                last_15m_low = m15_klines[-1][3]
+                dist_low_to_support = abs(last_15m_low - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
+                did_touch_support = (dist_low_to_support <= 0.005) or (last_15m_low <= ema20_15m * 1.004)
 
-                # RULE 3: Bullish Reversal Confirmation (Green Bounce Wick)
-                # Current 1m/5m candle shows a green bullish rejection wick off the EMA line
+                # STRICT ANTI-PEAK GUARD: CMP MUST be within 0.6% of support line (Never buy at top of green candle!)
+                dist_cmp_to_support = (cmp - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
+                is_at_support_level = (-0.010 <= dist_cmp_to_support <= 0.006)
+
+                # RULE 3: 1-Minute Reversal Wick Catch (Bounce off lowest wick point)
                 m1_klines = fetch_klines(symbol, '1m', 3)
                 is_bounce_wick = False
                 if m1_klines and len(m1_klines) > 0:
                     last_1m = m1_klines[-1]
-                    is_bounce_wick = (last_1m[4] >= last_1m[1]) or ((min(last_1m[1], last_1m[4]) - last_1m[3]) > 0)
+                    m1_low = last_1m[3]
+                    m1_cmp = last_1m[4]
+                    # Price bounced at least +0.12% off the 1m low point
+                    is_bounce_wick = (m1_cmp >= m1_low * 1.0012)
                 else:
                     is_bounce_wick = (m15_klines[-1][4] >= m15_klines[-1][1])
 
                 score = 50
-                if cmp > cpr['tc']: score += 15
-                if cmp > cpr['r1']: score += 10
-                if 48 <= rsi_val <= 75: score += 20
+                if did_touch_support and is_at_support_level: score += 20  # Reward RED CIRCLE support touch
+                if cmp > cpr['bc']: score += 15
+                if 48 <= rsi_val <= 75: score += 15
                 elif rsi_val > 75: score -= 10
-                if vol_spike >= 2.0: score += 20
-                elif vol_spike >= 1.30: score += 10
-                elif vol_spike >= 1.15: score += 5
+                if vol_spike >= 1.15: score += 10
                 score = max(0, min(100, score))
                 
-                is_above_cpr_tc = cmp > cpr['tc']
                 is_st_green = st_dir == 1
-                is_supertrend_green = is_st_green
-                t1 = (vol_spike >= 1.30 and score >= 70)
-                t2 = (vol_spike >= 1.15 and score >= 68)
                 
-                if is_above_cpr_tc and is_st_green and h1_macro_bullish and is_near_ema20 and is_bounce_wick and (t1 or t2):
-                    status = "🔥 TRIGGERED AUTO-TRADE (Pullback Bounce)"
-                elif is_above_cpr_tc and is_st_green and h1_macro_bullish and not is_near_ema20:
-                    status = f"⏳ Waiting for Pullback to 15m EMA 20 (Dist {dist_to_ema20*100:.2f}%)"
-                elif is_above_cpr_tc and is_st_green and h1_macro_bullish:
-                    status = f"🟢 Bullish (Vol {vol_spike:.2f}x / Score {score})"
+                if h1_macro_bullish and is_st_green and did_touch_support and is_at_support_level and is_bounce_wick:
+                    status = "🔥 TRIGGERED AUTO-TRADE (Red Circle Bottom Wick)"
+                elif h1_macro_bullish and is_st_green and not is_at_support_level and dist_cmp_to_support > 0.006:
+                    status = f"⏳ Waiting for Pullback to 15m EMA 20 (Dist {dist_cmp_to_support*100:.2f}%)"
+                elif h1_macro_bullish and is_st_green:
+                    status = f"🟢 Bullish (Near Support: {'YES' if is_at_support_level else 'NO'})"
                 elif not h1_macro_bullish:
                     status = "🛑 1H Macro Downtrend Filtered"
                 else:
                     status = "⚪ Consolidating"
                 
-                report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | EMA20: {ema20_15m:<10.4f} | ST 15M: {'GREEN' if is_st_green else 'RED':5s} | 1H Macro: {'BULL' if h1_macro_bullish else 'BEAR':4s} | Near EMA20: {'YES' if is_near_ema20 else 'NO':3s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
+                report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | EMA20: {ema20_15m:<10.4f} | ST 15M: {'GREEN' if is_st_green else 'RED':5s} | 1H Macro: {'BULL' if h1_macro_bullish else 'BEAR':4s} | Red Circle Level: {'YES' if (did_touch_support and is_at_support_level) else 'NO ':3s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
             except Exception as e:
                 report_lines.append(f"{symbol:12s} | Error: {e}")
         
@@ -725,60 +724,51 @@ def run_scan():
             rsi_val = calculate_rsi(close_prices)
             vol_spike = calculate_volume_spike(m15_klines)
             
-            # Calculate 15m EMA 20 for Pullback / Support Dip Check
+            # 15m EMA 20 & CPR Support Zone
             ema20_15m = calculate_ema(close_prices, 20)
             
             # RULE 1: Confirmed Trend Filter (1H Macro Uptrend)
-            # 1H Supertrend == GREEN AND CMP >= 1H EMA 50
             h1_macro_bullish = True
             if h1_klines and len(h1_klines) >= 20:
                 h1_st_dir, _ = calculate_supertrend(h1_klines)
                 h1_closes = [k[4] for k in h1_klines]
                 h1_ema50 = calculate_ema(h1_closes, 50)
-                # MUST have GREEN 1H Supertrend AND CMP >= 1H EMA 50
                 h1_macro_bullish = (h1_st_dir == 1) and (cmp >= h1_ema50)
 
-            # RULE 2: Proximity to 15m EMA 20 Support
-            # abs(CMP - EMA20_15m) / EMA20_15m <= 0.012 (Price within 1.2% of 15m EMA 20 line)
-            dist_to_ema20 = abs(cmp - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
-            is_near_ema20 = (dist_to_ema20 <= 0.012)
+            # RULE 2: RED CIRCLE Support Touch & Anti-Peak Distance Guard
+            last_15m_low = m15_klines[-1][3]
+            dist_low_to_support = abs(last_15m_low - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
+            did_touch_support = (dist_low_to_support <= 0.005) or (last_15m_low <= ema20_15m * 1.004)
 
-            # RULE 3: Bullish Reversal Confirmation (Green Bounce Wick)
-            # Current 1m/5m candle shows a green bullish rejection wick off the EMA line
+            # STRICT ANTI-PEAK GUARD: CMP MUST be within 0.6% of support line (Never buy at top of green candle!)
+            dist_cmp_to_support = (cmp - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
+            is_at_support_level = (-0.010 <= dist_cmp_to_support <= 0.006)
+
+            # RULE 3: 1-Minute Reversal Wick Catch (Bounce off lowest wick point)
             m1_klines = fetch_klines(symbol, '1m', 3)
             is_bounce_wick = False
             if m1_klines and len(m1_klines) > 0:
                 last_1m = m1_klines[-1]
-                is_green_1m = (last_1m[4] >= last_1m[1])
-                has_rejection_wick = (min(last_1m[1], last_1m[4]) - last_1m[3]) > 0
-                is_bounce_wick = is_green_1m or has_rejection_wick
+                m1_low = last_1m[3]
+                m1_cmp = last_1m[4]
+                # Price bounced at least +0.12% off the 1m low point
+                is_bounce_wick = (m1_cmp >= m1_low * 1.0012)
             else:
-                last_15m = m15_klines[-1]
-                is_bounce_wick = (last_15m[4] >= last_15m[1])
+                is_bounce_wick = (m15_klines[-1][4] >= m15_klines[-1][1])
 
-            # HIGH-CONFLUENCE A+ SCORING ENGINE:
             score = 50
-            if cmp > cpr['tc']: score += 15       # Reward breaking CPR TC
-            if cmp > cpr['r1']: score += 10       # Reward crossing R1
-            if 48 <= rsi_val <= 75: score += 20   # Healthy bullish RSI range
-            elif rsi_val > 75: score -= 10        # Overbought penalty
-            
-            if vol_spike >= 2.0: score += 20
-            elif vol_spike >= 1.30: score += 10
-            elif vol_spike >= 1.15: score += 5
+            if did_touch_support and is_at_support_level: score += 20  # Reward RED CIRCLE support touch
+            if cmp > cpr['bc']: score += 15
+            if 48 <= rsi_val <= 75: score += 15
+            elif rsi_val > 75: score -= 10
+            if vol_spike >= 1.15: score += 10
             score = max(0, min(100, score))
             
-            rating = "A+ (Strong Pullback Bounce) 👑" if score >= 85 else ("A (Solid Pullback Bounce) 🥇" if score >= 68 else "B (Moderate)")
-            is_above_cpr_tc = cmp > cpr['tc']
+            rating = "A+ (Red Circle Bottom Wick) 👑" if score >= 80 else ("A (Solid Support Bounce) 🥇" if score >= 65 else "B (Moderate)")
             is_supertrend_green = st_dir == 1
-            is_not_choppy = True if vol_spike >= 1.15 else not (48 <= rsi_val <= 52)
             
-            # HIGH-CONFLUENCE PULLBACK BOUNCE ENGINE (Applies Rules 1, 2, and 3):
-            trigger_1 = (vol_spike >= 1.30 and score >= 70)
-            trigger_2 = (vol_spike >= 1.15 and score >= 68)
-            
-            if is_above_cpr_tc and is_supertrend_green and h1_macro_bullish and is_near_ema20 and is_bounce_wick and (trigger_1 or trigger_2) and is_not_choppy:
-                candidates.append({'symbol': symbol, 'score': score, 'rating': rating, 'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike, 'ema20': ema20_15m})
+            if h1_macro_bullish and is_supertrend_green and did_touch_support and is_at_support_level and is_bounce_wick:
+                candidates.append({'symbol': symbol, 'score': score, 'rating': rating, 'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike, 'ema20': ema20_15m, 'm15_low': last_15m_low})
         except Exception: pass
 
     candidates.sort(key=lambda x: x['score'], reverse=True)
@@ -812,11 +802,11 @@ def run_scan():
             clean_symbol = symbol.replace("-", "")
             entry_min, entry_max = round(cmp * 0.998, 4), round(cmp * 1.001, 4)
             
-            # PROVEN HIGH-CONFLUENCE PARAMETERS (NOISE-FREE SL -1.6% / -11.2% ROE, TARGET +3.2% / +22.4% ROE):
-            # 7x Leverage: ROE -11.2% = -1.6% price move (outside 15m noise); ROE +22.4% = +3.2% price move (1:2 R:R Ratio)
-            sl = round(cmp * 0.984, 4)            # Noise-Free Stop Loss (-1.6% Price Move)
-            tp1 = round(cmp * 1.032, 4)           # Target 1 (+3.2% Price Move / 1:2 R:R Ratio)
-            be_trigger = round(cmp * 1.0057, 4)   # Trailing Breakeven Trigger (+4.0% ROE / +0.57% Price Move)
+            # OPTIMAL NOISE-FREE SL SAFELY POSITIONED BELOW SUPPORT WICK LOW:
+            support_low = min(cand.get('ema20', cmp), cand.get('m15_low', cmp))
+            sl = round(min(cmp * 0.985, support_low * 0.995), 4)  # Safely below lowest wick (-1.5%)
+            tp1 = round(cmp * 1.032, 4)                           # Target 1 (+3.2% Price Move / 1:2 R:R Ratio)
+            be_trigger = round(cmp * 1.010, 4)                    # Trailing Breakeven Trigger (+7.0% ROE / +1.0% Price Move)
             lev_num = 7  # Fixed 7x Leverage for all coins
             
             # EXECUTE TRADE ONLY IF AUTO-TRADING IS ACTIVE (STRICT BUY / LONG ONLY - ZERO SHORT TRADES ALLOWED!):
@@ -866,7 +856,7 @@ def run_scan():
                 f"🔹 <b>Entry Range:</b> <code>{entry_min} - {entry_max}</code>\n"
                 f"🔹 <b>Stop Loss (ROE -11.2% / -1.6% Move):</b> <code>${sl}</code>\n"
                 f"🎯 <b>Target (ROE +22.4% / +3.2% Move):</b> <code>${tp1}</code>\n"
-                f"🛡️ <b>Trailing Breakeven:</b> <code>Trigger at +4% ROE (${be_trigger})</code>\n"
+                f"🛡️ <b>Trailing Breakeven:</b> <code>Trigger at +7% ROE (${be_trigger})</code>\n"
                 f"{exec_hdr}"
             )
             send_telegram_message(msg)
@@ -929,26 +919,26 @@ def monitor_active_positions():
                     highest_peak = max(trade.get('highest_peak', entry_p), current_peak, cmp)
                     trade['highest_peak'] = highest_peak
                     
-                    # STAGE 1: BREAKEVEN TRIGGER (+4% ROE / +0.57% Price Move) WITH +0.2% FEE BUFFER
-                    be_trigger_price = trade.get('be_trigger', entry_p * 1.0057)
+                    # STAGE 1: BREAKEVEN TRIGGER (+7% ROE / +1.0% Price Move) WITH +0.3% PROFIT LOCK
+                    be_trigger_price = trade.get('be_trigger', entry_p * 1.010)
                     if highest_peak >= be_trigger_price and not trade.get('is_be_active', False):
-                        fee_buffer_sl = round(entry_p * 1.002, 4)  # Entry + 0.2% Fee & Slippage Buffer
+                        fee_buffer_sl = round(entry_p * 1.003, 4)  # Entry + 0.3% Profit Lock (Covers Exchange Fees + Net Gain)
                         with active_trades_lock:
-                            trade['sl'] = fee_buffer_sl  # Move SL to Entry + Fee Buffer (Covers CoinDCX Taker Fees)
+                            trade['sl'] = fee_buffer_sl  # Move SL to Entry + Profit Lock Buffer
                             trade['is_be_active'] = True
                         save_active_trades()
                         
                         send_telegram_message(
-                            f"🛡️ <b>TRAILING BREAKEVEN ACTIVATED (+4% ROE REACHED)!</b>\n\n"
+                            f"🛡️ <b>TRAILING BREAKEVEN ACTIVATED (+7% ROE REACHED)!</b>\n\n"
                             f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                            f"• <b>New Stop Loss:</b> <code>${fee_buffer_sl}</code> (Entry + 0.2% Fee Buffer)\n"
-                            f"• <b>Status:</b> Risk-Free Trade (Exchange Fees Fully Covered)"
+                            f"• <b>New Stop Loss:</b> <code>${fee_buffer_sl}</code> (Entry + 0.3% Net Profit Lock)\n"
+                            f"• <b>Status:</b> Risk-Free Trade (Fees Covered + Net Gain Locked)"
                         )
 
-                    # STAGE 2: DYNAMIC PROFIT TRAILING ENGINE (Captures +5% to +50% Altcoin Rallies!)
-                    # When price crosses +1.0% (+7% ROE), trail SL 0.8% below highest peak price
-                    if highest_peak >= entry_p * 1.01:
-                        trailing_sl = round(highest_peak * 0.992, 4)  # Trail 0.8% behind highest peak
+                    # STAGE 2: DYNAMIC PROFIT TRAILING ENGINE (Captures +15% to +50% Altcoin Rallies!)
+                    # When price crosses +1.5% (+10.5% ROE), trail SL 1.2% below highest peak price
+                    if highest_peak >= entry_p * 1.015:
+                        trailing_sl = round(highest_peak * 0.988, 4)  # Trail 1.2% behind highest peak
                         current_sl = trade.get('sl', entry_p)
                         
                         # Only move SL upwards (never downwards!)
@@ -975,7 +965,7 @@ def monitor_active_positions():
                         # Re-verify live position quantity RIGHT BEFORE placing sell order!
                         live_qty_now = fetch_coindcx_live_position_qty(symbol)
                         if live_qty_now is not None and live_qty_now <= 0:
-                            # Position already closed externally! Pop from memory & apply 15m cooldown
+                            # Position already closed externally! Pop from memory & apply 30m cooldown
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
                             save_active_trades()
@@ -1005,103 +995,4 @@ def monitor_active_positions():
                             # MANDATORY 15-MINUTE COOLDOWN ON ALL EXIT TRADES (Prevents 5-Second Re-Entries!)
                             st = load_state()
                             st[symbol] = time.time()
-                            save_state(st)
-                            
-                            send_telegram_message(
-                                f"🏁 <b>POSITION CLOSED: {sl_type}</b>\n\n"
-                                f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                                f"Closed at: <code>${cmp}</code> (Entry: <code>${entry_p}</code>)\n"
-                                f"⏱️ <i>15-Min Cooldown Locked (No 5-Sec Re-Entries)</i>"
-                            )
-                        else:
-                            print(f"SL Close failed for {symbol}: {res.get('error')}")
-                except Exception as e:
-                    print(f"Error monitoring {symbol}: {e}")
-        except Exception as e:
-            print(f"Position monitor exception: {e}")
-        time.sleep(3)
-
-# MOBILE TELEGRAM ON/OFF COMMAND LISTENER (/stop & /start)
-def run_telegram_command_listener():
-    global AUTO_TRADING_ENABLED
-    last_update_id = 0
-    time.sleep(10)
-    while True:
-        try:
-            url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=5"
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
-                if data.get('ok') and isinstance(data.get('result'), list):
-                    for item in data['result']:
-                        last_update_id = item.get('update_id', last_update_id)
-                        message = item.get('message', {})
-                        text = message.get('text', '').strip().lower()
-                        
-                        if text in ['/stop', '/pause', 'stop', 'pause']:
-                            AUTO_TRADING_ENABLED = False
-                            send_telegram_message("🛑 <b>AUTO-TRADING PAUSED VIA MOBILE COMMAND!</b>\n\n• Signals will still be reported.\n• Auto-order execution on CoinDCX is OFF.")
-                        elif text in ['/start', '/resume', 'start', 'resume']:
-                            AUTO_TRADING_ENABLED = True
-                            send_telegram_message("🟢 <b>AUTO-TRADING ACTIVATED VIA MOBILE COMMAND!</b>\n\n• Auto-order execution on CoinDCX is ON.")
-        except Exception: pass
-        time.sleep(3)
-
-def start_background_loop():
-    def run_loop():
-        time.sleep(5)
-        while True:
-            try:
-                if scan_lock.acquire(blocking=False):
-                    try: run_scan()
-                    finally: scan_lock.release()
-            except Exception as e:
-                print(f"Scan loop exception: {e}")
-            # ACCELERATED SCAN INTERVAL: Scan every 60 seconds (1 minute) for maximum signal sensitivity!
-            time.sleep(60)
-
-    def run_hourly_report_loop():
-        time.sleep(10)
-        send_hourly_market_report()
-        while True:
-            try:
-                time.sleep(3600)
-                send_hourly_market_report()
-            except Exception as e:
-                print(f"Hourly loop exception: {e}")
-
-    def run_keep_alive_loop():
-        time.sleep(15)
-        url = "https://crypto-scanner-ok3t.onrender.com/"
-        while True:
-            try:
-                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
-                    pass
-            except Exception as e:
-                print(f"Keep-alive error: {e}")
-            time.sleep(240)
-
-    t1 = threading.Thread(target=run_loop, daemon=True)
-    t1.start()
-
-    t2 = threading.Thread(target=monitor_active_positions, daemon=True)
-    t2.start()
-
-    t3 = threading.Thread(target=run_hourly_report_loop, daemon=True)
-    t3.start()
-
-    t4 = threading.Thread(target=run_keep_alive_loop, daemon=True)
-    t4.start()
-
-    t5 = threading.Thread(target=run_telegram_command_listener, daemon=True)
-    t5.start()
-
-    send_telegram_message("⚡ <b>RENDER BOT HIGH-CONFLUENCE WINNING SCANNER (> $3M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$3M 24h Volume)\n• Scan Frequency: Every 60 Seconds (Ultra-Fast Signal Capture)\n• Entry Strategy: PULLBACK BOUNCE ENGINE (Rule 1: 1H Macro Bull + Rule 2: 15m EMA 20 Support <=1.2% + Rule 3: Reversal Wick)\n• Trailing Breakeven: ACTIVE (Moves SL to entry + 0.2% Fee Buffer at +4% ROE)\n• A+ Confluence Scoring: ACTIVE (Vol Spike >= 1.30x, Score >= 70)\n• Per-Coin Cooldown: 15 Minutes (Accelerated Re-entry Guard)\n• Max Active Trades Cap: 4 Concurrent Trades (Max ₹4,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Double-Entry Guard: 4-LAYER ARMOR (Zero Re-Entries / Zero Size Stacking)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Stop Loss set to -11.2% ROE (-1.6% price move - Outside 15m Noise)\n• Dynamic Peak Trailing Engine: ACTIVE (Trails 0.8% behind peak to capture big pumps)\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
-
-start_background_loop()
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    print(f"Starting server on port {port}...")
-    app.run(host="0.0.0.0", port=port)
+                            save
