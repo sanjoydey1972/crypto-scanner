@@ -927,7 +927,7 @@ def monitor_active_positions():
             
             for symbol in symbols_to_check:
                 try:
-                    time.sleep(0.3)
+                    time.sleep(0.1)  # Accelerated 0.1s check per active position
                     clean_coin = symbol.split('-')[0].upper()
                     
                     # STEP A: Check if live position on CoinDCX is ALREADY 0 (e.g. manually closed on CoinDCX App or closed by CoinDCX exchange TP/SL)
@@ -1062,7 +1062,7 @@ def monitor_active_positions():
                     print(f"Error monitoring {symbol}: {e}")
         except Exception as e:
             print(f"Position monitor exception: {e}")
-        time.sleep(3)
+        time.sleep(1)  # Accelerated 1-second position monitoring loop for fast trailing SL execution
 
 # MOBILE TELEGRAM ON/OFF COMMAND LISTENER (/stop & /start)
 def run_telegram_command_listener():
