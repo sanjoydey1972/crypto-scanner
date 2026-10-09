@@ -127,7 +127,7 @@ def fetch_coindcx_active_pairs():
 
     return CACHED_COINDCX_ACTIVE_PAIRS
 
-def fetch_dynamic_watchlist(min_volume_usdt=3000000.0):
+def fetch_dynamic_watchlist(min_volume_usdt=10000000.0):
     global CACHED_DYNAMIC_WATCHLIST, LAST_WATCHLIST_FETCH_TIME
     now = time.time()
     # Cache dynamic list for 15 minutes (900s) to keep scanner loops ultra-fast
@@ -157,7 +157,7 @@ def fetch_dynamic_watchlist(min_volume_usdt=3000000.0):
                                 futures_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
                                 pair_1 = f"B-{futures_coin}_USDT"
                                 pair_2 = f"B-{coin}_USDT"
-                                is_active = any(p in coindcx_active for p in [pair_1, pair_2]) or any(coin in p for p in coindcx_active)
+                                is_active = (pair_1 in coindcx_active) or (pair_2 in coindcx_active)
                                 if not is_active:
                                     continue
                             valid_tickers.append((f"{coin}-USDT", quote_vol))
@@ -383,14 +383,16 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         # STRICT QUANTITY ROUNDING - Never round UP to exceed margin!
         if coin == 'BTC': 
             quantity = round(raw_qty, 3)
-        elif coin in ['ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX', 'BNB']: 
-            quantity = round(raw_qty, 2)
         elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']: 
             # 1000-prefix meme coins on CoinDCX trade in 1,000 unit contracts!
             contract_qty = raw_qty / 1000.0
             quantity = float(int(contract_qty)) if contract_qty >= 1.0 else 1.0
-        elif cmp >= 10.0:
-            quantity = round(raw_qty, 1)
+        elif cmp >= 1000.0:  # High price coins like PAXG ($4,148), MUB ($1,039)
+            quantity = round(raw_qty, 4)
+        elif cmp >= 100.0:   # Coins like TAO ($260), QNT ($227), AAVE ($163), SOL ($107)
+            quantity = round(raw_qty, 3)
+        elif cmp >= 10.0:    # Coins like LINK ($12), ETC ($8)
+            quantity = round(raw_qty, 2)
         else: 
             # Use floor int(raw_qty) so low-priced coins never round UP and exceed ₹1,000 margin
             quantity = float(int(raw_qty)) if raw_qty >= 1.0 else 1.0
@@ -446,12 +448,23 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     futures_order_payload_quantized_tpsl = dict(futures_order_payload_2d_tpsl)
     futures_order_payload_quantized_tpsl["total_quantity"] = float(int(quantity)) if cmp < 10.0 and coin not in ['BTC', 'ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX'] else quantity
 
+    # Variant 4 & 5: Scaled Margin Payloads (Bypasses HTTP 400 Insufficient funds if available wallet margin < ₹1,000 INR)
+    qty_75 = round(quantity * 0.75, 3) if coin in ['BTC', 'ETH', 'SOL'] else (float(int(quantity * 0.75)) if quantity * 0.75 >= 1.0 else round(quantity * 0.75, 2))
+    futures_order_payload_75_tpsl = dict(futures_order_payload_2d_tpsl)
+    futures_order_payload_75_tpsl["total_quantity"] = qty_75 if qty_75 > 0 else quantity
+
+    qty_50 = round(quantity * 0.50, 3) if coin in ['BTC', 'ETH', 'SOL'] else (float(int(quantity * 0.50)) if quantity * 0.50 >= 1.0 else round(quantity * 0.50, 2))
+    futures_order_payload_50_tpsl = dict(futures_order_payload_2d_tpsl)
+    futures_order_payload_50_tpsl["total_quantity"] = qty_50 if qty_50 > 0 else quantity
+
     # REQUIREMENT 2 RULE: If side == "buy", ONLY execute payloads with inline TP & SL. NO NAKED MARKET ORDERS ALLOWED!
     if side.lower() == "buy":
         endpoint_variants = [
             (futures_url, {"timestamp": ts, "order": futures_order_payload_tpsl}),
             (futures_url, {"timestamp": ts, "order": futures_order_payload_2d_tpsl}),
-            (futures_url, {"timestamp": ts, "order": futures_order_payload_quantized_tpsl})
+            (futures_url, {"timestamp": ts, "order": futures_order_payload_quantized_tpsl}),
+            (futures_url, {"timestamp": ts, "order": futures_order_payload_75_tpsl}),
+            (futures_url, {"timestamp": ts, "order": futures_order_payload_50_tpsl})
         ]
     else:
         # Exit/Sell order payload
@@ -543,7 +556,7 @@ def send_hourly_market_report():
             f"📊 <b>AUTOMATED HOURLY MARKET CONDITION REPORT</b>\n\n"
             f"⏰ <b>Time:</b> {now_str}\n"
             f"✅ <b>Render Cloud Status:</b> 100% ONLINE (24/7 Active)\n\n"
-            f"🔍 <b>Market Overview ({len(scan_pool)} Liquid Futures Pairs >$3M Vol):</b>\n"
+            f"🔍 <b>Market Overview ({len(scan_pool)} Liquid Futures Pairs >$10M Vol):</b>\n"
             f"• <b>BTC Current Price:</b> <code>${btc_inrm_price:,.1f}</code>\n"
             f"🟢 <b>In Bull Run:</b> <code>{len(bull_coins)} coins</code>\n"
             f"🔴 <b>In Bear Run:</b> <code>{len(bear_coins)} coins</code>\n"
@@ -581,6 +594,7 @@ def scan_now_endpoint():
                 
                 # 15m EMA 20 & CPR Support Zone
                 ema20_15m = calculate_ema(close_prices, 20)
+                vol_24h_quote = float(daily_klines[-1][5]) * cmp if len(daily_klines[-1]) > 5 else float(m15_klines[-1][5]) * cmp
                 
                 # RULE 1: Confirmed Trend Filter (1H Macro Uptrend)
                 h1_macro_bullish = True
@@ -606,23 +620,25 @@ def scan_now_endpoint():
                     last_1m = m1_klines[-1]
                     m1_low = last_1m[3]
                     m1_cmp = last_1m[4]
-                    # Price bounced at least +0.12% off the 1m low point
                     is_bounce_wick = (m1_cmp >= m1_low * 1.0012)
                 else:
                     is_bounce_wick = (m15_klines[-1][4] >= m15_klines[-1][1])
 
-                score = 50
-                if did_touch_support and is_at_support_level: score += 20  # Reward RED CIRCLE support touch
+                score = 40
+                if did_touch_support and is_at_support_level: score += 20
                 if cmp > cpr['bc']: score += 15
-                if 48 <= rsi_val <= 75: score += 15
-                elif rsi_val > 75: score -= 10
-                if vol_spike >= 1.15: score += 10
+                if 48 <= rsi_val <= 68: score += 15
+                if vol_spike >= 1.20: score += 20
                 score = max(0, min(100, score))
                 
                 is_st_green = st_dir == 1
                 
-                if h1_macro_bullish and is_st_green and did_touch_support and is_at_support_level and is_bounce_wick:
-                    status = "🔥 TRIGGERED AUTO-TRADE (Red Circle Bottom Wick)"
+                if vol_24h_quote < 10000000:
+                    status = "🛑 Low 24h Volume Filtered (<$10M)"
+                elif vol_spike < 1.20:
+                    status = f"🛑 Low Volume Bounce Filtered (Vol: {vol_spike:.2f}x < 1.20x)"
+                elif h1_macro_bullish and is_st_green and did_touch_support and is_at_support_level and is_bounce_wick and score >= 80:
+                    status = "🔥 TRIGGERED AUTO-TRADE (A+ Setup Confirmed)"
                 elif h1_macro_bullish and is_st_green and not is_at_support_level and dist_cmp_to_support > 0.006:
                     status = f"⏳ Waiting for Pullback to 15m EMA 20 (Dist {dist_cmp_to_support*100:.2f}%)"
                 elif h1_macro_bullish and is_st_green:
@@ -637,7 +653,7 @@ def scan_now_endpoint():
                 report_lines.append(f"{symbol:12s} | Error: {e}")
         
         now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-        html = f"<h2>⚡ LIVE {len(scan_pool)}-COIN DYNAMIC MARKET SCANNER AUDIT REPORT (VOL > $3M)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
+        html = f"<h2>⚡ LIVE {len(scan_pool)}-COIN DYNAMIC MARKET SCANNER AUDIT REPORT (VOL > $10M)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
         return html, 200
     except Exception as e:
         return f"<h3>⚠️ Scan Error:</h3><p>{e}</p>", 500
