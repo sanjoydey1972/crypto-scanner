@@ -42,6 +42,87 @@ def save_active_trades():
 TOKEN = "8788523087:AAGgfn0-JpnnIlqdxNDj-2an-pGp0WORnqA"
 CHAT_ID = "8938527650"
 
+TRADE_HISTORY_FILE = "trade_history.json"
+trade_history_lock = threading.Lock()
+
+def load_trade_history():
+    if os.path.exists(TRADE_HISTORY_FILE):
+        try:
+            with open(TRADE_HISTORY_FILE, 'r') as f: return json.load(f)
+        except Exception: pass
+    return {}
+
+def save_trade_history(history):
+    try:
+        with open(TRADE_HISTORY_FILE, 'w') as f: json.dump(history, f, indent=2)
+    except Exception: pass
+
+def log_trade_event(symbol, event_type, details):
+    with trade_history_lock:
+        history = load_trade_history()
+        today_str = datetime.now().strftime("%d-%m-%Y")
+        if today_str not in history:
+            history[today_str] = []
+        
+        entry = {
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "symbol": symbol,
+            "type": event_type,
+            "details": details
+        }
+        history[today_str].append(entry)
+        save_trade_history(history)
+
+def generate_daily_summary(target_date_str=None):
+    if not target_date_str:
+        target_date_str = datetime.now().strftime("%d-%m-%Y")
+    
+    history = load_trade_history()
+    day_logs = history.get(target_date_str, [])
+    
+    total_signals = len(day_logs)
+    executed_events = [e for e in day_logs if e.get("type") == "EXECUTED"]
+    cancelled_events = [e for e in day_logs if e.get("type") == "CANCELLED"]
+    closed_events = [e for e in day_logs if e.get("type") == "CLOSED"]
+    
+    win_events = [e for e in closed_events if e.get("details", {}).get("realized_pnl_pct", 0) > 0]
+    win_rate = (len(win_events) / len(closed_events) * 100) if closed_events else (100.0 if executed_events else 0.0)
+    total_roe = sum(e.get("details", {}).get("realized_pnl_pct", 0) for e in closed_events)
+    
+    lines = [
+        f"📅 <b>DAILY AUTOMATED TRADING REPORT ({target_date_str})</b>",
+        f"",
+        f"📊 <b>Performance Overview:</b>",
+        f"• <b>Total Signals:</b> <code>{total_signals}</code>",
+        f"• <b>Executed Trades:</b> <code>{len(executed_events)}</code>",
+        f"• <b>Closed Trades:</b> <code>{len(closed_events)}</code>",
+        f"• <b>Win Rate:</b> <code>{win_rate:.1f}%</code> 🏆",
+        f"• <b>Total Realized Gain:</b> <code>+{total_roe:.1f}% ROE</code> 💰",
+        f"",
+        f"📝 <b>Today's Executed Trades:</b>"
+    ]
+    
+    if executed_events:
+        for idx, e in enumerate(executed_events, 1):
+            sym = e.get("symbol", "UNKNOWN")
+            t = e.get("time", "")
+            dt = e.get("details", {})
+            lines.append(f"{idx}. <b>{sym}</b> @ {t} | Entry: <code>${dt.get('cmp')}</code> | Qty: <code>{dt.get('quantity')}</code> | ID: <code>{dt.get('order_id')}</code>")
+    else:
+        lines.append("<i>No trades executed today yet.</i>")
+        
+    if closed_events:
+        lines.append("")
+        lines.append("🏁 <b>Today's Closed Trades:</b>")
+        for idx, e in enumerate(closed_events, 1):
+            sym = e.get("symbol", "UNKNOWN")
+            t = e.get("time", "")
+            dt = e.get("details", {})
+            pnl = dt.get('realized_pnl_pct', 0)
+            lines.append(f"{idx}. <b>{sym}</b> @ {t} | Closed: <code>${dt.get('cmp')}</code> | PnL: <code>+{pnl:.1f}% ROE</code> 💰")
+
+    return "\n".join(lines)
+
 # DEFAULT FALLBACK WATCHLIST
 WATCHLIST = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AVAX-USDT', 'DOGE-USDT', 
@@ -669,6 +750,66 @@ def scan_now_endpoint():
     except Exception as e:
         return f"<h3>⚠️ Scan Error:</h3><p>{e}</p>", 500
 
+@app.route('/today')
+@app.route('/daily')
+def today_report_endpoint():
+    try:
+        summary_text = generate_daily_summary()
+        today_str = datetime.now().strftime("%d-%m-%Y")
+        history = load_trade_history()
+        day_logs = history.get(today_str, [])
+        
+        rows = []
+        for idx, log in enumerate(day_logs, 1):
+            t = log.get("time", "")
+            sym = log.get("symbol", "")
+            typ = log.get("type", "")
+            dt = log.get("details", {})
+            if typ == "EXECUTED":
+                status = f"<span style='color:#4ade80;'>🟢 EXECUTED (Order ID: {dt.get('order_id')})</span>"
+                price_info = f"Entry: ${dt.get('cmp')} | Qty: {dt.get('quantity')}"
+            elif typ == "CLOSED":
+                status = f"<span style='color:#38bdf8;'>🏁 {dt.get('sl_type')}</span>"
+                price_info = f"Exit: ${dt.get('cmp')} (Entry: ${dt.get('entry_p')})"
+            else:
+                status = f"<span style='color:#f87171;'>⚠️ CANCELLED ({dt.get('error', 'Rejection')})</span>"
+                price_info = f"CMP: ${dt.get('cmp')}"
+                
+            rows.append(f"<tr><td>{idx}</td><td>{t}</td><td><b>{sym}</b></td><td>{status}</td><td>{price_info}</td></tr>")
+            
+        rows_html = "\n".join(rows) if rows else "<tr><td colspan='5'>No signals or trades logged today yet.</td></tr>"
+        
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Today Trading Report - {today_str}</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; padding: 20px; }}
+        h2 {{ color: #38bdf8; }}
+        table {{ width: 100%; border-collapse: collapse; margin-top: 15px; background: #1e293b; }}
+        th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #334155; }}
+        th {{ background: #0284c7; color: white; }}
+        pre {{ background: #1e293b; padding: 15px; border-radius: 8px; font-size: 15px; border: 1px solid #334155; line-height: 1.5; }}
+    </style>
+</head>
+<body>
+    <h2>📅 Daily Automated Trading Audit Report ({today_str})</h2>
+    <pre>{summary_text}</pre>
+    <h3>📝 Itemized Event History Today</h3>
+    <table>
+        <thead>
+            <tr><th>#</th><th>Time</th><th>Pair</th><th>Status / Action</th><th>Price Details</th></tr>
+        </thead>
+        <tbody>
+            {rows_html}
+        </tbody>
+    </table>
+</body>
+</html>"""
+        return html, 200
+    except Exception as e:
+        return f"<h3>⚠️ Report Error:</h3><p>{e}</p>", 500
+
 @app.route('/close-sol')
 def close_sol_endpoint():
     try:
@@ -882,6 +1023,7 @@ def run_scan():
                     f"• <b>Quantity:</b> <code>{trade_res.get('quantity')} {clean_symbol[:-4]}</code>\n"
                     f"• <b>Margin Allocated:</b> <code>₹{coin_margin:.0f} INR</code>"
                 )
+                log_trade_event(symbol, "EXECUTED", {"cmp": cmp, "quantity": trade_res.get('quantity'), "order_id": trade_res.get('order_id'), "margin": coin_margin})
                 
                 with active_trades_lock:
                     ACTIVE_TRADES[symbol] = {
@@ -900,6 +1042,7 @@ def run_scan():
                 save_state(state)
             else:
                 exec_hdr = f"\n\n⚠️ <b>COINDCX EXECUTION NOTICE:</b>\n<code>{trade_res.get('error')}</code>"
+                log_trade_event(symbol, "CANCELLED", {"cmp": cmp, "error": trade_res.get('error')})
                 state[symbol] = time.time()
                 save_state(state)
 
@@ -1051,6 +1194,7 @@ def monitor_active_positions():
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
                             save_active_trades()
+                            log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": realized_pnl_pct, "sl_type": sl_type})
                             
                             # RULE 5: MANDATORY 30-MINUTE COOLDOWN ON ALL EXIT TRADES (Prevents Repeated Fee Drain)
                             st = load_state()
@@ -1071,7 +1215,7 @@ def monitor_active_positions():
             print(f"Position monitor exception: {e}")
         time.sleep(1)  # Accelerated 1-second position monitoring loop for fast trailing SL execution
 
-# MOBILE TELEGRAM ON/OFF COMMAND LISTENER (/stop & /start)
+# MOBILE TELEGRAM ON/OFF COMMAND LISTENER (/stop, /start & /today)
 def run_telegram_command_listener():
     global AUTO_TRADING_ENABLED
     last_update_id = 0
@@ -1094,6 +1238,9 @@ def run_telegram_command_listener():
                         elif text in ['/start', '/resume', 'start', 'resume']:
                             AUTO_TRADING_ENABLED = True
                             send_telegram_message("🟢 <b>AUTO-TRADING ACTIVATED VIA MOBILE COMMAND!</b>\n\n• Auto-order execution on CoinDCX is ON.")
+                        elif text in ['/today', '/daily', '/report', 'today', 'daily', 'report', '/history']:
+                            summary_msg = generate_daily_summary()
+                            send_telegram_message(summary_msg)
         except Exception: pass
         time.sleep(3)
 
@@ -1132,6 +1279,21 @@ def start_background_loop():
                 print(f"Keep-alive error: {e}")
             time.sleep(240)
 
+    def run_daily_midnight_report_loop():
+        time.sleep(20)
+        last_reported_day = ""
+        while True:
+            try:
+                now_dt = datetime.now()
+                today_str = now_dt.strftime("%d-%m-%Y")
+                if now_dt.hour == 23 and now_dt.minute >= 58 and last_reported_day != today_str:
+                    daily_msg = generate_daily_summary(today_str)
+                    send_telegram_message(daily_msg)
+                    last_reported_day = today_str
+            except Exception as e:
+                print(f"Daily report loop exception: {e}")
+            time.sleep(45)
+
     t1 = threading.Thread(target=run_loop, daemon=True)
     t1.start()
 
@@ -1147,7 +1309,10 @@ def start_background_loop():
     t5 = threading.Thread(target=run_telegram_command_listener, daemon=True)
     t5.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT RED-CIRCLE WINNING SCANNER (> $10M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$10M 24h Volume)\n• Scan Frequency: Every 60 Seconds (Ultra-Fast Signal Capture)\n• Entry Strategy: 5-GOLDEN-RULES ENGINE (1H Bull + 15M Pullback + Closed 5M Green + vol_spike >= 1.20x)\n• Micro-Profit Lock: ACTIVE (Triggers at +3.5% ROE / +0.5% Price Move with +0.2% Net Profit Lock)\n• Dynamic Peak Trailing Engine: ACTIVE (Trails 1.2% behind peak to capture +15% to +40% ROE Rallies)\n• Per-Coin Cooldown: 30 Minutes (Anti-Fee Drain Guard)\n• Max Active Trades Cap: 4 Concurrent Trades (Max ₹4,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Stop Loss: SAFELY POSITIONED BELOW SWEEP LOW (-1.5%)\n• Mobile Telegram ON/OFF commands ready (/stop to pause, /start to resume)")
+    t6 = threading.Thread(target=run_daily_midnight_report_loop, daemon=True)
+    t6.start()
+
+    send_telegram_message("⚡ <b>RENDER BOT RED-CIRCLE WINNING SCANNER (> $10M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$10M 24h Volume)\n• Scan Frequency: Every 60 Seconds (Ultra-Fast Signal Capture)\n• Entry Strategy: 5-GOLDEN-RULES ENGINE (1H Bull + 15M Pullback + Closed 5M Green + vol_spike >= 1.20x)\n• Micro-Profit Lock: ACTIVE (Triggers at +3.5% ROE / +0.5% Price Move with +0.2% Net Profit Lock)\n• Dynamic Peak Trailing Engine: ACTIVE (Trails 1.2% behind peak to capture +15% to +40% ROE Rallies)\n• Per-Coin Cooldown: 30 Minutes (Anti-Fee Drain Guard)\n• Max Active Trades Cap: 4 Concurrent Trades (Max ₹4,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Stop Loss: SAFELY POSITIONED BELOW SWEEP LOW (-1.5%)\n• Mobile Telegram commands ready (/stop, /start, /today)")
 
 start_background_loop()
 
