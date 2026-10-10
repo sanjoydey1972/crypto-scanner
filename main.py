@@ -380,24 +380,34 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         position_value_usdt = (strict_margin_inr * leverage) / usdt_inr_rate
         raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
         
-        # STRICT QUANTITY ROUNDING - Never round UP to exceed margin!
-        if coin == 'BTC': 
-            quantity = round(raw_qty, 3)
+        # STRICT QUANTITY ROUNDING - Match exact CoinDCX contract lot step sizes!
+        if coin in ['BTC', 'ETH', 'ZEC', 'PAXG']:
+            # CoinDCX step size: 0.001 (3 decimal places)
+            quantity = round(raw_qty - 0.00049, 3) if raw_qty > 0.001 else 0.001
+        elif coin in ['BNB', 'SOL', 'TAO']:
+            # CoinDCX step size: 0.01 (2 decimal places)
+            quantity = round(raw_qty - 0.0049, 2) if raw_qty > 0.01 else 0.01
+        elif coin in ['AAVE', 'QNT', 'LTC', 'BCH']:
+            # CoinDCX step size: 0.1 (1 decimal place)
+            quantity = round(raw_qty - 0.049, 1) if raw_qty > 0.1 else 0.1
+        elif coin in ['AVAX', 'LINK', 'UNI', 'INJ', 'NEAR', 'APT', 'FET', 'RUNE', 'TIA', 'ICP']:
+            # CoinDCX step size: 1.0 (integer contracts)
+            quantity = float(int(raw_qty)) if raw_qty >= 1.0 else 1.0
         elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']: 
             # 1000-prefix meme coins on CoinDCX trade in 1,000 unit contracts!
             contract_qty = raw_qty / 1000.0
             quantity = float(int(contract_qty)) if contract_qty >= 1.0 else 1.0
-        elif cmp >= 1000.0:  # High price coins like PAXG ($4,148), MUB ($1,039)
-            quantity = round(raw_qty, 4)
-        elif cmp >= 100.0:   # Coins like TAO ($260), QNT ($227), AAVE ($163), SOL ($107)
-            quantity = round(raw_qty, 3)
-        elif cmp >= 10.0:    # Coins like LINK ($12), ETC ($8)
-            quantity = round(raw_qty, 2)
+        elif cmp >= 1000.0:  
+            quantity = round(raw_qty - 0.00049, 3) if raw_qty > 0.001 else 0.001
+        elif cmp >= 100.0:   
+            quantity = round(raw_qty - 0.049, 1) if raw_qty > 0.1 else 0.1
+        elif cmp >= 10.0:    
+            quantity = float(int(raw_qty)) if raw_qty >= 1.0 else 1.0
         else: 
-            # Use floor int(raw_qty) so low-priced coins never round UP and exceed ₹1,000 margin
+            # Low-priced coins trade in integer units
             quantity = float(int(raw_qty)) if raw_qty >= 1.0 else 1.0
         
-    if quantity <= 0: quantity = 0.01 if coin in ['ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX', 'BNB'] else (0.001 if coin == 'BTC' else 1.0)
+    if quantity <= 0: quantity = 0.1 if coin in ['AAVE', 'QNT', 'LTC', 'BCH'] else (0.01 if coin in ['BNB', 'SOL', 'TAO'] else (0.001 if coin in ['BTC', 'ETH', 'ZEC', 'PAXG'] else 1.0))
 
     # REFINED TP / SL PRICE TICK ROUNDING TO MATCH COINDCX PRECISION:
     # Coins under $10 (like ICP, ADA, XRP, SUI, NEAR) MUST use 2 decimal places to prevent HTTP 422 errors!
@@ -445,8 +455,9 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         futures_order_payload_2d_tpsl["stop_loss_price"] = formatted_sl_2d
 
     # Variant 3: Quantized Integer Quantity with TP/SL
+    quantized_qty = float(int(quantity)) if (cmp < 100.0 or coin in ['AVAX', 'LINK', 'UNI', 'INJ', 'NEAR', 'APT', 'FET', 'RUNE', 'TIA', 'ICP']) else (round(quantity, 1) if coin in ['AAVE', 'QNT', 'LTC', 'BCH'] else quantity)
     futures_order_payload_quantized_tpsl = dict(futures_order_payload_2d_tpsl)
-    futures_order_payload_quantized_tpsl["total_quantity"] = float(int(quantity)) if cmp < 10.0 and coin not in ['BTC', 'ETH', 'SOL', 'BCH', 'AAVE', 'LTC', 'AVAX'] else quantity
+    futures_order_payload_quantized_tpsl["total_quantity"] = quantized_qty if quantized_qty > 0 else quantity
 
     # Variant 4 & 5: Scaled Margin Payloads (Bypasses HTTP 400 Insufficient funds if available wallet margin < ₹1,000 INR)
     qty_75 = round(quantity * 0.75, 3) if coin in ['BTC', 'ETH', 'SOL'] else (float(int(quantity * 0.75)) if quantity * 0.75 >= 1.0 else round(quantity * 0.75, 2))
