@@ -144,9 +144,9 @@ WATCHLIST = [
     'XRP-USDT', 'ADA-USDT', 'LINK-USDT', 'NEAR-USDT', 'BCH-USDT', 
     'SUI-USDT', 'LTC-USDT', 'DOT-USDT', 'PEPE-USDT', 'OP-USDT', 
     'ARB-USDT', 'APT-USDT', 'RENDER-USDT', 'INJ-USDT', 'FET-USDT', 
-    'TIA-USDT', 'WIF-USDT', 'SHIB-USDT', 'FLOKI-USDT', 'AAVE-USDT',
-    'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 'ICP-USDT', 'SAND-USDT',
-    'SEI-USDT', 'ORDI-USDT', 'FIL-USDT', 'JUP-USDT', 'BONK-USDT',
+    'TIA-USDT', 'WIF-USDT', 'SHIB-USDT', 'FLOKI-USDT', 'AAVE-USDT', 
+    'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 'ICP-USDT', 'SAND-USDT', 
+    'SEI-USDT', 'ORDI-USDT', 'FIL-USDT', 'JUP-USDT', 'BONK-USDT', 
     'STX-USDT', 'PENDLE-USDT', 'RUNE-USDT', 'IMX-USDT', 'KAS-USDT'
 ]
 
@@ -506,30 +506,44 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     if quantity <= 0: quantity = 0.1 if coin in ['AAVE', 'QNT', 'LTC', 'BCH'] else (0.01 if coin in ['BNB', 'SOL', 'TAO'] else (0.001 if coin in ['BTC', 'ETH', 'ZEC', 'PAXG'] else 1.0))
 
     # REFINED TP / SL PRICE TICK ROUNDING TO MATCH COINDCX PRECISION:
-    # Coins under $10 (like ICP, ADA, XRP, SUI, NEAR) MUST use 2 decimal places to prevent HTTP 422 errors!
+    # BTC & coins >= $10,000 require 0.1 or integer tick size (2 decimals trigger HTTP 422!).
     formatted_tp = None
     formatted_sl = None
-    formatted_tp_2d = None
-    formatted_sl_2d = None
+    formatted_tp_alt = None
+    formatted_sl_alt = None
 
     if tp_price is not None:
-        if cmp >= 100: formatted_tp = round(float(tp_price), 2)
-        elif cmp >= 10.0: formatted_tp = round(float(tp_price), 3)
-        elif cmp >= 1.0: formatted_tp = round(float(tp_price), 2)   # 2 Decimals for $1-$10 coins (e.g. 3.49 for ICP)
-        else: formatted_tp = round(float(tp_price), 4)
-        formatted_tp_2d = round(float(tp_price), 2)
+        if coin == 'BTC' or cmp >= 10000.0:
+            formatted_tp = round(float(tp_price), 1)               # 1 decimal for BTC (e.g. 86500.2)
+            formatted_tp_alt = float(int(round(float(tp_price))))  # Integer fallback (e.g. 86500.0)
+        elif cmp >= 100.0:
+            formatted_tp = round(float(tp_price), 2)
+            formatted_tp_alt = round(float(tp_price), 1)
+        elif cmp >= 1.0:
+            formatted_tp = round(float(tp_price), 2)               # 2 Decimals for $1-$10 coins (e.g. 3.49 for ICP)
+            formatted_tp_alt = round(float(tp_price), 2)
+        else:
+            formatted_tp = round(float(tp_price), 4)
+            formatted_tp_alt = round(float(tp_price), 4)
 
     if sl_price is not None:
-        if cmp >= 100: formatted_sl = round(float(sl_price), 2)
-        elif cmp >= 10.0: formatted_sl = round(float(sl_price), 3)
-        elif cmp >= 1.0: formatted_sl = round(float(sl_price), 2)   # 2 Decimals for $1-$10 coins (e.g. 3.39 for ICP)
-        else: formatted_sl = round(float(sl_price), 4)
-        formatted_sl_2d = round(float(sl_price), 2)
+        if coin == 'BTC' or cmp >= 10000.0:
+            formatted_sl = round(float(sl_price), 1)               # 1 decimal for BTC (e.g. 82141.6)
+            formatted_sl_alt = float(int(round(float(sl_price))))  # Integer fallback (e.g. 82141.0)
+        elif cmp >= 100.0:
+            formatted_sl = round(float(sl_price), 2)
+            formatted_sl_alt = round(float(sl_price), 1)
+        elif cmp >= 1.0:
+            formatted_sl = round(float(sl_price), 2)               # 2 Decimals for $1-$10 coins (e.g. 3.39 for ICP)
+            formatted_sl_alt = round(float(sl_price), 2)
+        else:
+            formatted_sl = round(float(sl_price), 4)
+            formatted_sl_alt = round(float(sl_price), 4)
 
     futures_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
     ts = int(round(time.time() * 1000))
 
-    # Variant 1: Primary Precision TP/SL Payload
+    # Variant 1: Primary Precision TP/SL Payload (1-Decimal for BTC, 2-Decimal for Altcoins)
     futures_order_payload_tpsl = {
         "side": side.lower(),
         "pair": pair_name,
@@ -543,32 +557,45 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     if formatted_sl is not None:
         futures_order_payload_tpsl["stop_loss_price"] = formatted_sl
 
-    # Variant 2: Strict 2-Decimal TP/SL Payload (Guarantees HTTP 422 bypass on $1-$10 coins)
-    futures_order_payload_2d_tpsl = dict(futures_order_payload_tpsl)
-    if formatted_tp_2d is not None:
-        futures_order_payload_2d_tpsl["take_profit_price"] = formatted_tp_2d
-    if formatted_sl_2d is not None:
-        futures_order_payload_2d_tpsl["stop_loss_price"] = formatted_sl_2d
+    # Variant 2: Alternative Integer / Clean-Tick TP/SL Payload (Guarantees bypass on strict contracts)
+    futures_order_payload_alt_tpsl = dict(futures_order_payload_tpsl)
+    if formatted_tp_alt is not None:
+        futures_order_payload_alt_tpsl["take_profit_price"] = formatted_tp_alt
+    if formatted_sl_alt is not None:
+        futures_order_payload_alt_tpsl["stop_loss_price"] = formatted_sl_alt
 
-    # Variant 3: Quantized Integer Quantity with TP/SL
+    # Variant 3: Quantized Quantity with Primary TP/SL
     quantized_qty = float(int(quantity)) if (cmp < 100.0 or coin in ['AVAX', 'LINK', 'UNI', 'INJ', 'NEAR', 'APT', 'FET', 'RUNE', 'TIA', 'ICP']) else (round(quantity, 1) if coin in ['AAVE', 'QNT', 'LTC', 'BCH'] else quantity)
-    futures_order_payload_quantized_tpsl = dict(futures_order_payload_2d_tpsl)
+    futures_order_payload_quantized_tpsl = dict(futures_order_payload_tpsl)
     futures_order_payload_quantized_tpsl["total_quantity"] = quantized_qty if quantized_qty > 0 else quantity
 
+    # Universal Quantity Formatter for Scaled Variants (Guarantees no coin violates contract step sizes)
+    def format_coin_qty(raw_q):
+        if coin in ['BTC', 'ETH', 'ZEC', 'PAXG'] or cmp >= 1000.0:
+            return round(raw_q, 3) if raw_q > 0.001 else 0.001
+        elif coin in ['BNB', 'SOL', 'TAO']:
+            return round(raw_q, 2) if raw_q > 0.01 else 0.01
+        elif coin in ['AAVE', 'QNT', 'LTC', 'BCH'] or cmp >= 100.0:
+            return round(raw_q, 1) if raw_q > 0.1 else 0.1
+        elif coin in ['AVAX', 'LINK', 'UNI', 'INJ', 'NEAR', 'APT', 'FET', 'RUNE', 'TIA', 'ICP'] or cmp >= 1.0:
+            return float(int(raw_q)) if raw_q >= 1.0 else 1.0
+        else:
+            return float(int(raw_q)) if raw_q >= 1.0 else 1.0
+
     # Variant 4 & 5: Scaled Margin Payloads (Bypasses HTTP 400 Insufficient funds if available wallet margin < ₹1,000 INR)
-    qty_75 = round(quantity * 0.75, 3) if coin in ['BTC', 'ETH', 'SOL'] else (float(int(quantity * 0.75)) if quantity * 0.75 >= 1.0 else round(quantity * 0.75, 2))
-    futures_order_payload_75_tpsl = dict(futures_order_payload_2d_tpsl)
+    qty_75 = format_coin_qty(quantity * 0.75)
+    futures_order_payload_75_tpsl = dict(futures_order_payload_alt_tpsl)
     futures_order_payload_75_tpsl["total_quantity"] = qty_75 if qty_75 > 0 else quantity
 
-    qty_50 = round(quantity * 0.50, 3) if coin in ['BTC', 'ETH', 'SOL'] else (float(int(quantity * 0.50)) if quantity * 0.50 >= 1.0 else round(quantity * 0.50, 2))
-    futures_order_payload_50_tpsl = dict(futures_order_payload_2d_tpsl)
+    qty_50 = format_coin_qty(quantity * 0.50)
+    futures_order_payload_50_tpsl = dict(futures_order_payload_alt_tpsl)
     futures_order_payload_50_tpsl["total_quantity"] = qty_50 if qty_50 > 0 else quantity
 
     # REQUIREMENT 2 RULE: If side == "buy", ONLY execute payloads with inline TP & SL. NO NAKED MARKET ORDERS ALLOWED!
     if side.lower() == "buy":
         endpoint_variants = [
             (futures_url, {"timestamp": ts, "order": futures_order_payload_tpsl}),
-            (futures_url, {"timestamp": ts, "order": futures_order_payload_2d_tpsl}),
+            (futures_url, {"timestamp": ts, "order": futures_order_payload_alt_tpsl}),
             (futures_url, {"timestamp": ts, "order": futures_order_payload_quantized_tpsl}),
             (futures_url, {"timestamp": ts, "order": futures_order_payload_75_tpsl}),
             (futures_url, {"timestamp": ts, "order": futures_order_payload_50_tpsl})
