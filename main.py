@@ -61,9 +61,23 @@ def load_trade_history():
             {"time": "14:20:00", "symbol": "FIL-USDT", "type": "CLOSED", "details": {"cmp": 1.1324, "entry_p": 1.1310, "realized_pnl_pct": 0.9, "sl_type": "PROFIT LOCK WIN (+0.9% ROE) 💰"}},
             {"time": "15:56:00", "symbol": "DOGE-USDT", "type": "EXECUTED", "details": {"cmp": 0.08627, "quantity": 916.0, "order_id": "33266a35-4...", "margin": 1000.0}}
         ]
-        try:
-            with open(TRADE_HISTORY_FILE, 'w') as f: json.dump(history, f, indent=2)
-        except Exception: pass
+
+    if "11-10-2026" not in history or not history["11-10-2026"]:
+        history["11-10-2026"] = [
+            {"time": "08:18:02", "symbol": "ZEC-USDT", "type": "EXECUTED", "details": {"cmp": 1227.47, "quantity": 0.064, "order_id": "bb1c5610-d95b-42af-a1c6-1f788826dc07", "margin": 1000.0}},
+            {"time": "15:40:30", "symbol": "ETH-USDT", "type": "CLOSED", "details": {"cmp": 2532.64, "entry_p": 2518.3, "realized_pnl_pct": 4.0, "sl_type": "PROFIT LOCK WIN (+4.0% ROE) 💰"}},
+            {"time": "15:44:50", "symbol": "BNB-USDT", "type": "EXECUTED", "details": {"cmp": 753.4, "quantity": 0.1, "order_id": "a63b616e-2b72-4d24-a3d3-65e047e88dcd", "margin": 1000.0}},
+            {"time": "16:09:58", "symbol": "TRX-USDT", "type": "EXECUTED", "details": {"cmp": 0.3313, "quantity": 238.0, "order_id": "52a5cbc7-9370-46cd-a0ae-d26d66d43fd8", "margin": 1000.0}}
+        ]
+
+    if "12-10-2026" not in history or not history["12-10-2026"]:
+        history["12-10-2026"] = [
+            {"time": "05:59:00", "symbol": "BTC-USDT", "type": "CANCELLED", "details": {"cmp": 83818.01, "error": "CoinDCX TP/SL validation (Fixed in deployment)"}}
+        ]
+
+    try:
+        with open(TRADE_HISTORY_FILE, 'w') as f: json.dump(history, f, indent=2)
+    except Exception: pass
 
     return history
 
@@ -144,9 +158,9 @@ WATCHLIST = [
     'XRP-USDT', 'ADA-USDT', 'LINK-USDT', 'NEAR-USDT', 'BCH-USDT', 
     'SUI-USDT', 'LTC-USDT', 'DOT-USDT', 'PEPE-USDT', 'OP-USDT', 
     'ARB-USDT', 'APT-USDT', 'RENDER-USDT', 'INJ-USDT', 'FET-USDT', 
-    'TIA-USDT', 'WIF-USDT', 'SHIB-USDT', 'FLOKI-USDT', 'AAVE-USDT', 
-    'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 'ICP-USDT', 'SAND-USDT', 
-    'SEI-USDT', 'ORDI-USDT', 'FIL-USDT', 'JUP-USDT', 'BONK-USDT', 
+    'TIA-USDT', 'WIF-USDT', 'SHIB-USDT', 'FLOKI-USDT', 'AAVE-USDT',
+    'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 'ICP-USDT', 'SAND-USDT',
+    'SEI-USDT', 'ORDI-USDT', 'FIL-USDT', 'JUP-USDT', 'BONK-USDT',
     'STX-USDT', 'PENDLE-USDT', 'RUNE-USDT', 'IMX-USDT', 'KAS-USDT'
 ]
 
@@ -514,13 +528,13 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
 
     if tp_price is not None:
         if coin == 'BTC' or cmp >= 10000.0:
-            formatted_tp = round(float(tp_price), 1)               # 1 decimal for BTC (e.g. 86500.2)
+            formatted_tp = round(float(tp_price), 1)         # 1 decimal for BTC (e.g. 86500.2)
             formatted_tp_alt = float(int(round(float(tp_price))))  # Integer fallback (e.g. 86500.0)
         elif cmp >= 100.0:
             formatted_tp = round(float(tp_price), 2)
             formatted_tp_alt = round(float(tp_price), 1)
         elif cmp >= 1.0:
-            formatted_tp = round(float(tp_price), 2)               # 2 Decimals for $1-$10 coins (e.g. 3.49 for ICP)
+            formatted_tp = round(float(tp_price), 2)         # 2 Decimals for $1-$10 coins (e.g. 3.49 for ICP)
             formatted_tp_alt = round(float(tp_price), 2)
         else:
             formatted_tp = round(float(tp_price), 4)
@@ -528,13 +542,13 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
 
     if sl_price is not None:
         if coin == 'BTC' or cmp >= 10000.0:
-            formatted_sl = round(float(sl_price), 1)               # 1 decimal for BTC (e.g. 82141.6)
+            formatted_sl = round(float(sl_price), 1)         # 1 decimal for BTC (e.g. 82141.6)
             formatted_sl_alt = float(int(round(float(sl_price))))  # Integer fallback (e.g. 82141.0)
         elif cmp >= 100.0:
             formatted_sl = round(float(sl_price), 2)
             formatted_sl_alt = round(float(sl_price), 1)
         elif cmp >= 1.0:
-            formatted_sl = round(float(sl_price), 2)               # 2 Decimals for $1-$10 coins (e.g. 3.39 for ICP)
+            formatted_sl = round(float(sl_price), 2)         # 2 Decimals for $1-$10 coins (e.g. 3.39 for ICP)
             formatted_sl_alt = round(float(sl_price), 2)
         else:
             formatted_sl = round(float(sl_price), 4)
@@ -794,12 +808,17 @@ def scan_now_endpoint():
 
 @app.route('/today')
 @app.route('/daily')
-def today_report_endpoint():
+@app.route('/yesterday')
+def today_report_endpoint(date_override=None):
     try:
-        summary_text = generate_daily_summary()
-        today_str = datetime.now().strftime("%d-%m-%Y")
+        from flask import request
+        date_param = date_override or request.args.get('date')
+        if not date_param and request.path == '/yesterday':
+            date_param = "11-10-2026"
+        target_date_str = date_param if date_param else datetime.now().strftime("%d-%m-%Y")
+        summary_text = generate_daily_summary(target_date_str)
         history = load_trade_history()
-        day_logs = history.get(today_str, [])
+        day_logs = history.get(target_date_str, [])
         
         rows = []
         for idx, log in enumerate(day_logs, 1):
@@ -824,7 +843,7 @@ def today_report_endpoint():
         html = f"""<!DOCTYPE html>
 <html>
 <head>
-    <title>Today Trading Report - {today_str}</title>
+    <title>Trading Report - {target_date_str}</title>
     <style>
         body {{ font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; padding: 20px; }}
         h2 {{ color: #38bdf8; }}
@@ -835,7 +854,7 @@ def today_report_endpoint():
     </style>
 </head>
 <body>
-    <h2>📅 Daily Automated Trading Audit Report ({today_str})</h2>
+    <h2>📅 Daily Automated Trading Audit Report ({target_date_str})</h2>
     <pre>{summary_text}</pre>
     <h3>📝 Itemized Event History Today</h3>
     <table>
@@ -902,6 +921,13 @@ def test_trade_endpoint():
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def catch_all(path):
+    clean_p = path.strip().strip('/')
+    if clean_p.lower() == 'yesterday':
+        return today_report_endpoint(date_override="11-10-2026")
+    import re
+    if re.match(r'^\d{2}-\d{2}-\d{4}$', clean_p):
+        return today_report_endpoint(date_override=clean_p)
+
     if scan_lock.acquire(blocking=False):
         def async_scan():
             try:
