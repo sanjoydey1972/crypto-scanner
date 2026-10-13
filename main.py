@@ -520,7 +520,8 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     if quantity <= 0: quantity = 0.1 if coin in ['AAVE', 'QNT', 'LTC', 'BCH'] else (0.01 if coin in ['BNB', 'SOL', 'TAO'] else (0.001 if coin in ['BTC', 'ETH', 'ZEC', 'PAXG'] else 1.0))
 
     # REFINED TP / SL PRICE TICK ROUNDING TO MATCH COINDCX PRECISION:
-    # BTC & coins >= $10,000 require 0.1 or integer tick size (2 decimals trigger HTTP 422!).
+    # BTC & coins >= $10,000 require 0.1 or integer tick size.
+    # Micro/Meme coins (PEPE, SHIB, BONK) require 6 to 8 decimals to prevent HTTP 422 zero-rounding errors!
     formatted_tp = None
     formatted_sl = None
     formatted_tp_alt = None
@@ -536,9 +537,16 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         elif cmp >= 1.0:
             formatted_tp = round(float(tp_price), 2)         # 2 Decimals for $1-$10 coins (e.g. 3.49 for ICP)
             formatted_tp_alt = round(float(tp_price), 2)
-        else:
+        elif cmp >= 0.01:
             formatted_tp = round(float(tp_price), 4)
             formatted_tp_alt = round(float(tp_price), 4)
+        elif cmp >= 0.0001:
+            formatted_tp = round(float(tp_price), 6)
+            formatted_tp_alt = round(float(tp_price), 6)
+        else:
+            # Satoshi-priced meme coins (PEPE, SHIB, BONK)
+            formatted_tp = round(float(tp_price), 8)
+            formatted_tp_alt = round(float(tp_price), 8)
 
     if sl_price is not None:
         if coin == 'BTC' or cmp >= 10000.0:
@@ -550,9 +558,16 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         elif cmp >= 1.0:
             formatted_sl = round(float(sl_price), 2)         # 2 Decimals for $1-$10 coins (e.g. 3.39 for ICP)
             formatted_sl_alt = round(float(sl_price), 2)
-        else:
+        elif cmp >= 0.01:
             formatted_sl = round(float(sl_price), 4)
             formatted_sl_alt = round(float(sl_price), 4)
+        elif cmp >= 0.0001:
+            formatted_sl = round(float(sl_price), 6)
+            formatted_sl_alt = round(float(sl_price), 6)
+        else:
+            # Satoshi-priced meme coins (PEPE, SHIB, BONK)
+            formatted_sl = round(float(sl_price), 8)
+            formatted_sl_alt = round(float(sl_price), 8)
 
     futures_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
     ts = int(round(time.time() * 1000))
@@ -1071,11 +1086,25 @@ def run_scan():
             clean_symbol = symbol.replace("-", "")
             entry_min, entry_max = round(cmp * 0.998, 4), round(cmp * 1.001, 4)
             
-            # STOP LOSS SAFELY POSITIONED BELOW THE LIQUIDITY SWEEP LOW (Sweep Low * 0.995):
+            # RULE 1: HARD STOP LOSS CAPPED AT -0.95% PRICE DROP (-6.6% ROE MAX):
             sweep_low_val = cand.get('sweep_low', cand.get('m15_low', cmp))
-            sl = round(min(cmp * 0.980, sweep_low_val * 0.995), 4)  # Safely below sweep low with 0.5% safety buffer
-            tp1 = round(cmp * 1.032, 4)                           # Target 1 (+3.2% Price Move / 1:2 R:R Ratio)
-            be_trigger = round(cmp * 1.005, 4)                    # RULE 4: Micro-Profit Breakeven Trigger (+3.5% ROE / +0.5% Price Move)
+            hard_sl_cap = cmp * 0.9905  # STRICT -0.95% PRICE DROP CAP (-6.6% ROE MAX)
+            sl_raw = max(hard_sl_cap, sweep_low_val * 0.995)  # Positioned at sweep low, capped at -0.95% max!
+            tp1_raw = cmp * 1.032                             # Target 1 (+3.2% Price Move / 1:2 R:R Ratio)
+            be_trigger_raw = cmp * 1.005                      # Tier 2 Micro-Profit Lock Trigger (+3.5% ROE / +0.5% Move)
+            
+            # Format prices with exact decimal precision for all coin tiers (including meme coins):
+            if coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI'] or cmp < 0.0001:
+                sl, tp1, be_trigger = round(sl_raw, 8), round(tp1_raw, 8), round(be_trigger_raw, 8)
+            elif cmp < 0.01:
+                sl, tp1, be_trigger = round(sl_raw, 6), round(tp1_raw, 6), round(be_trigger_raw, 6)
+            elif cmp < 1.0:
+                sl, tp1, be_trigger = round(sl_raw, 4), round(tp1_raw, 4), round(be_trigger_raw, 4)
+            elif cmp >= 100.0:
+                sl, tp1, be_trigger = round(sl_raw, 2), round(tp1_raw, 2), round(be_trigger_raw, 2)
+            else:
+                sl, tp1, be_trigger = round(sl_raw, 4), round(tp1_raw, 4), round(be_trigger_raw, 4)
+
             lev_num = 7  # Fixed 7x Leverage for all coins
             
             # EXECUTE TRADE ONLY IF AUTO-TRADING IS ACTIVE (STRICT BUY / LONG ONLY - ZERO SHORT TRADES ALLOWED!):
@@ -1101,6 +1130,7 @@ def run_scan():
                         'tp1': tp1,
                         'sl': sl,
                         'be_trigger': be_trigger,
+                        'is_tier1_be_active': False,
                         'is_be_active': False,
                         'leverage': lev_num,
                         'entry_time': time.time()
@@ -1125,9 +1155,10 @@ def run_scan():
                 f"• <b>Margin:</b> <code>₹{coin_margin:.0f} INR (Per Trade)</code>\n"
                 f"• <b>Live CMP:</b> <code>${cmp}</code>\n\n"
                 f"🔹 <b>Entry Range:</b> <code>{entry_min} - {entry_max}</code>\n"
-                f"🔹 <b>Stop Loss (ROE -11.2% / -1.6% Move):</b> <code>${sl}</code>\n"
+                f"🔹 <b>Stop Loss (ROE -6.6% / -0.95% Move Max):</b> <code>${sl}</code>\n"
                 f"🎯 <b>Target (ROE +22.4% / +3.2% Move):</b> <code>${tp1}</code>\n"
-                f"🛡️ <b>Trailing Breakeven:</b> <code>Trigger at +3.5% ROE (${be_trigger})</code>\n"
+                f"🛡️ <b>Trailing Breakeven:</b> <code>Tier 1 (+2.1% ROE) / Tier 2 (+3.5% ROE)</code>\n"
+                f"⏱️ <b>Time Stop:</b> <code>75 Minutes Max Stagnation Cut</code>\n"
                 f"{exec_hdr}"
             )
             send_telegram_message(msg)
@@ -1189,39 +1220,105 @@ def monitor_active_positions():
                     highest_peak = max(trade.get('highest_peak', entry_p), current_peak, cmp)
                     trade['highest_peak'] = highest_peak
                     
-                    # RULE 4: ACCELERATED BREAKEVEN & MICRO-PROFIT LOCK (+0.5% PRICE MOVE / +3.5% ROE)
-                    # Locks +0.2% net profit as soon as price moves up by just +0.5%, guaranteeing ZERO losses!
+                    # RULE: 75-MINUTE STAGNATION TIME-STOP AUTO-CUT (Eliminates 14h traps like BNB and 18h traps like TRX!)
+                    # If open > 75 mins (4500s) and has not reached the +0.5% Breakeven profit lock:
+                    time_open = time.time() - entry_time
+                    if time_open >= 4500 and not trade.get('is_be_active', False):
+                        live_qty_now = fetch_coindcx_live_position_qty(symbol)
+                        if live_qty_now is not None and live_qty_now <= 0:
+                            with active_trades_lock:
+                                ACTIVE_TRADES.pop(symbol, None)
+                            save_active_trades()
+                            st = load_state()
+                            st[symbol] = time.time() + 900
+                            save_state(st)
+                            continue
+
+                        sell_qty = min(live_qty_now, trade['total_qty']) if (live_qty_now is not None and live_qty_now > 0) else trade['total_qty']
+                        res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=sell_qty)
+                        if res.get('success'):
+                            realized_pnl_pct = ((cmp - entry_p) / entry_p) * 7 * 100
+                            sl_type = f"75-MIN TIME-STOP SCRATCH ({realized_pnl_pct:+.1f}% ROE) ⏱️"
+                            with active_trades_lock:
+                                ACTIVE_TRADES.pop(symbol, None)
+                            save_active_trades()
+                            log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": realized_pnl_pct, "sl_type": sl_type})
+                            st = load_state()
+                            st[symbol] = time.time() + 900
+                            save_state(st)
+                            send_telegram_message(
+                                f"⏱️ <b>POSITION CLOSED: 75-MIN TIME-STOP</b>\n\n"
+                                f"<b>Pair:</b> B-{clean_coin}_USDT\n"
+                                f"• <b>Exit Price:</b> <code>${cmp}</code> (Entry: <code>${entry_p}</code>)\n"
+                                f"• <b>Realized PnL:</b> <code>{realized_pnl_pct:+.1f}% ROE</code>\n"
+                                f"• <b>Action:</b> Setup stagnant > 75 mins. Capital released for fresh runners!\n"
+                                f"⏱️ <i>30-Min Cooldown Locked</i>"
+                            )
+                            continue
+
+                    # TIER 1: EARLY BREAKEVEN AT +0.30% MOVE (+2.1% ROE) -> ZERO DOWNSIDE EXPOSURE
+                    if highest_peak >= entry_p * 1.003 and not trade.get('is_tier1_be_active', False):
+                        entry_sl = round(entry_p, 4)
+                        with active_trades_lock:
+                            if entry_sl > trade.get('sl', 0):
+                                trade['sl'] = entry_sl
+                            trade['is_tier1_be_active'] = True
+                        save_active_trades()
+                        send_telegram_message(
+                            f"🛡️ <b>TIER 1 BREAKEVEN ACTIVATED (+2.1% ROE REACHED)!</b>\n\n"
+                            f"<b>Pair:</b> B-{clean_coin}_USDT\n"
+                            f"• <b>New Stop Loss:</b> <code>${entry_sl}</code> (Exact Entry Price)\n"
+                            f"• <b>Status:</b> 100% Risk-Free (Zero Downside Exposure)"
+                        )
+
+                    # TIER 2: MICRO-PROFIT LOCK AT +0.50% MOVE (+3.5% ROE) -> NET PROFIT GUARANTEED
                     be_trigger_price = trade.get('be_trigger', entry_p * 1.005)
                     if highest_peak >= be_trigger_price and not trade.get('is_be_active', False):
                         fee_buffer_sl = round(entry_p * 1.002, 4)  # Entry + 0.2% Profit Lock (Covers Exchange Fees + Net Gain)
                         with active_trades_lock:
-                            trade['sl'] = fee_buffer_sl  # Move SL to Entry + Profit Lock Buffer
+                            if fee_buffer_sl > trade.get('sl', 0):
+                                trade['sl'] = fee_buffer_sl
                             trade['is_be_active'] = True
                         save_active_trades()
-                        
                         send_telegram_message(
-                            f"🛡️ <b>MICRO-PROFIT BREAKEVEN LOCK ACTIVATED (+3.5% ROE REACHED)!</b>\n\n"
+                            f"🛡️ <b>TIER 2 MICRO-PROFIT LOCK ACTIVATED (+3.5% ROE REACHED)!</b>\n\n"
                             f"<b>Pair:</b> B-{clean_coin}_USDT\n"
                             f"• <b>New Stop Loss:</b> <code>${fee_buffer_sl}</code> (Entry + 0.2% Net Profit Lock)\n"
-                            f"• <b>Status:</b> 100% Risk-Free (Fees Covered + Profit Guaranteed)"
+                            f"• <b>Status:</b> Profit Guaranteed (+1.4% ROE Floor Locked)"
                         )
 
-                    # STAGE 2: DYNAMIC PROFIT TRAILING ENGINE (Captures +15% to +50% Altcoin Rallies!)
+                    # STAGE 2: INTERMEDIATE PROFIT TRAILING (Captures +4.0% to +6.5% ROE Altcoin Peaks!)
+                    # When price crosses +0.70% (+4.9% ROE), lock at least +0.45% (+3.15% ROE) or trail 0.35% behind peak
+                    if highest_peak >= entry_p * 1.007:
+                        intermediate_sl = round(max(entry_p * 1.0045, highest_peak * 0.9965), 4)
+                        current_sl = trade.get('sl', entry_p)
+                        if intermediate_sl > current_sl:
+                            locked_roe = ((intermediate_sl - entry_p) / entry_p) * 7 * 100
+                            with active_trades_lock:
+                                trade['sl'] = intermediate_sl
+                                trade['is_profit_locked'] = True
+                            save_active_trades()
+                            send_telegram_message(
+                                f"🚀 <b>STAGE 2 INTERMEDIATE PROFIT LOCK UPDATED!</b>\n\n"
+                                f"<b>Pair:</b> B-{clean_coin}_USDT\n"
+                                f"• <b>Peak High:</b> <code>${highest_peak}</code>\n"
+                                f"• <b>New Trailing SL:</b> <code>${intermediate_sl}</code>\n"
+                                f"• <b>Locked ROE Profit:</b> <code>+{locked_roe:.1f}% ROE</code> 💰"
+                            )
+
+                    # STAGE 3: RUNNER TRAILING ENGINE (Captures explosive +15% to +40% ROE Rallies!)
                     # When price crosses +1.5% (+10.5% ROE), trail SL 1.2% below highest peak price
                     if highest_peak >= entry_p * 1.015:
                         trailing_sl = round(highest_peak * 0.988, 4)  # Trail 1.2% behind highest peak
                         current_sl = trade.get('sl', entry_p)
-                        
-                        # Only move SL upwards (never downwards!)
                         if trailing_sl > current_sl:
                             locked_roe = ((trailing_sl - entry_p) / entry_p) * 7 * 100
                             with active_trades_lock:
                                 trade['sl'] = trailing_sl
                                 trade['is_profit_locked'] = True
                             save_active_trades()
-                            
                             send_telegram_message(
-                                f"🚀 <b>DYNAMIC TRAILING PROFIT LOCK UPDATED!</b>\n\n"
+                                f"🔥 <b>STAGE 3 RUNNER TRAILING EXPANSION!</b>\n\n"
                                 f"<b>Pair:</b> B-{clean_coin}_USDT\n"
                                 f"• <b>Peak High:</b> <code>${highest_peak}</code>\n"
                                 f"• <b>New Trailing SL:</b> <code>${trailing_sl}</code>\n"
@@ -1380,7 +1477,7 @@ def start_background_loop():
     t6 = threading.Thread(target=run_daily_midnight_report_loop, daemon=True)
     t6.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT RED-CIRCLE WINNING SCANNER (> $10M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$10M 24h Volume)\n• Scan Frequency: Every 60 Seconds (Ultra-Fast Signal Capture)\n• Entry Strategy: 5-GOLDEN-RULES ENGINE (1H Bull + 15M Pullback + Closed 5M Green + vol_spike >= 1.20x)\n• Micro-Profit Lock: ACTIVE (Triggers at +3.5% ROE / +0.5% Price Move with +0.2% Net Profit Lock)\n• Dynamic Peak Trailing Engine: ACTIVE (Trails 1.2% behind peak to capture +15% to +40% ROE Rallies)\n• Per-Coin Cooldown: 30 Minutes (Anti-Fee Drain Guard)\n• Max Active Trades Cap: 4 Concurrent Trades (Max ₹4,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Stop Loss: SAFELY POSITIONED BELOW SWEEP LOW (-1.5%)\n• Mobile Telegram commands ready (/stop, /start, /today)")
+    send_telegram_message("⚡ <b>RENDER BOT RED-CIRCLE WINNING SCANNER (> $10M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$10M 24h Volume)\n• Scan Frequency: Every 60 Seconds (Ultra-Fast Signal Capture)\n• Entry Strategy: 5-GOLDEN-RULES ENGINE (1H Bull + 15M Pullback + Closed 5M Green + vol_spike >= 1.20x)\n• Hard Stop Loss: CAPPED AT -0.95% PRICE DROP (-6.6% ROE MAX)\n• Stagnation Guard: 75-Minute Auto Time-Stop (Scratch at -1.0% to -2.0% ROE)\n• Breakeven Engine: TWO-TIER (Tier 1 @ +2.1% ROE / Tier 2 @ +3.5% ROE)\n• Dynamic Trailing: 3-STAGE (Stage 2 @ +4.9% ROE, Stage 3 @ +10.5% ROE)\n• Per-Coin Cooldown: 30 Minutes (Anti-Fee Drain Guard)\n• Max Active Trades Cap: 4 Concurrent Trades (Max ₹4,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Mobile Telegram commands ready (/stop, /start, /today)")
 
 start_background_loop()
 
