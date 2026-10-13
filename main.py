@@ -70,9 +70,57 @@ def load_trade_history():
             {"time": "16:09:58", "symbol": "TRX-USDT", "type": "EXECUTED", "details": {"cmp": 0.3313, "quantity": 238.0, "order_id": "52a5cbc7-9370-46cd-a0ae-d26d66d43fd8", "margin": 1000.0}}
         ]
 
-    if "12-10-2026" not in history or not history["12-10-2026"]:
+    if "12-10-2026" not in history or not history["12-10-2026"] or len(history["12-10-2026"]) < 10:
         history["12-10-2026"] = [
-            {"time": "05:59:00", "symbol": "BTC-USDT", "type": "CANCELLED", "details": {"cmp": 83818.01, "error": "CoinDCX TP/SL validation (Fixed in deployment)"}}
+            {"time": "05:59:00", "symbol": "BTC-USDT", "type": "CANCELLED", "details": {"cmp": 83818.01, "error": "CoinDCX TP/SL validation (Fixed in deployment)"}},
+            {"time": "01:57:06", "symbol": "SOL-USDT", "type": "EXECUTED", "details": {"cmp": 111.26, "quantity": 0.71, "order_id": "9325a6fd-273b-4f51-96f6-4135f6c10684", "margin": 1000.0}},
+            {"time": "02:03:06", "symbol": "SOL-USDT", "type": "CLOSED", "details": {"cmp": 111.48, "entry_p": 111.26, "realized_pnl_pct": 1.4, "sl_type": "PROFIT LOCK WIN (+1.4% ROE) 💰"}},
+            {"time": "03:15:54", "symbol": "XRP-USDT", "type": "EXECUTED", "details": {"cmp": 1.4056, "quantity": 56.0, "order_id": "63bdd566-c507-48ca-b58b-e2cfdd3e3a50", "margin": 1000.0}},
+            {"time": "03:57:48", "symbol": "BNB-USDT", "type": "CANCELLED", "details": {"cmp": 751.62, "error": "Insufficient funds"}},
+            {"time": "04:27:53", "symbol": "ETH-USDT", "type": "EXECUTED", "details": {"cmp": 2548.57, "quantity": 0.031, "order_id": "f6a31f52-e489-4e21-8e37-16281b1280c0", "margin": 1000.0}},
+            {"time": "04:35:05", "symbol": "SUI-USDT", "type": "CANCELLED", "details": {"cmp": 1.1269, "error": "Insufficient funds"}},
+            {"time": "04:45:31", "symbol": "BNB-USDT", "type": "CANCELLED", "details": {"cmp": 754.93, "error": "Insufficient funds"}},
+            {"time": "05:05:48", "symbol": "BNB-USDT", "type": "CANCELLED", "details": {"cmp": 755.46, "error": "Insufficient funds"}},
+            {"time": "05:31:52", "symbol": "ETH-USDT", "type": "CLOSED", "details": {"cmp": 2552.95, "entry_p": 2548.57, "realized_pnl_pct": 1.2, "sl_type": "PROFIT LOCK WIN (+1.2% ROE) 💰"}},
+            {"time": "06:16:33", "symbol": "XRP-USDT", "type": "CLOSED", "details": {"cmp": 1.4083, "entry_p": 1.4056, "realized_pnl_pct": 1.3, "sl_type": "PROFIT LOCK WIN (+1.3% ROE) 💰"}},
+            {"time": "07:00:11", "symbol": "ETH-USDT", "type": "EXECUTED", "details": {"cmp": 2574.78, "quantity": 0.03, "order_id": "2b5e5a87-5e22-4e29-b319-1e979d2db13d", "margin": 1000.0}},
+            {"time": "07:00:12", "symbol": "BNB-USDT", "type": "EXECUTED", "details": {"cmp": 755.53, "quantity": 0.1, "order_id": "987aa0c8-856d-44dd-bb3e-a663fe8e9a1e", "margin": 1000.0}},
+            {"time": "07:00:15", "symbol": "UNI-USDT", "type": "CANCELLED", "details": {"cmp": 7.701, "error": "Insufficient funds"}},
+            {"time": "07:07:53", "symbol": "MAGIC-USDT", "type": "CANCELLED", "details": {"cmp": 0.1244, "error": "Insufficient funds"}},
+            {"time": "07:28:12", "symbol": "XRP-USDT", "type": "CANCELLED", "details": {"cmp": 1.4163, "error": "Insufficient funds"}},
+            {"time": "08:28:11", "symbol": "ZEC-USDT", "type": "CANCELLED", "details": {"cmp": 1309.23, "error": "Insufficient funds"}},
+            {"time": "08:28:14", "symbol": "UNI-USDT", "type": "CANCELLED", "details": {"cmp": 7.641, "error": "Insufficient funds"}},
+            {"time": "08:31:07", "symbol": "NEAR-USDT", "type": "CANCELLED", "details": {"cmp": 5.799, "error": "Insufficient funds"}},
+            {"time": "08:31:10", "symbol": "XRP-USDT", "type": "CANCELLED", "details": {"cmp": 1.4088, "error": "Insufficient funds"}},
+            {"time": "09:51:34", "symbol": "PEPE-USDT", "type": "CANCELLED", "details": {"cmp": 4.22e-06, "error": "Insufficient funds"}},
+            {"time": "09:54:27", "symbol": "AVAX-USDT", "type": "CANCELLED", "details": {"cmp": 11.082, "error": "Insufficient funds"}},
+            {"time": "09:57:22", "symbol": "ZEC-USDT", "type": "CANCELLED", "details": {"cmp": 1308.14, "error": "Insufficient funds"}},
+            {"time": "09:57:24", "symbol": "XRP-USDT", "type": "CANCELLED", "details": {"cmp": 1.4058, "error": "Insufficient funds"}},
+            {"time": "09:57:27", "symbol": "TAO-USDT", "type": "CANCELLED", "details": {"cmp": 294.5, "error": "Insufficient funds"}},
+            {"time": "10:46:08", "symbol": "ZEC-USDT", "type": "CANCELLED", "details": {"cmp": 1304.86, "error": "Insufficient funds"}},
+            {"time": "10:56:21", "symbol": "DOGE-USDT", "type": "CANCELLED", "details": {"cmp": 0.08748, "error": "Insufficient funds"}},
+            {"time": "11:12:11", "symbol": "TRX-USDT", "type": "CANCELLED", "details": {"cmp": 0.3319, "error": "Insufficient funds"}},
+            {"time": "11:30:24", "symbol": "DOGE-USDT", "type": "CANCELLED", "details": {"cmp": 0.08718, "error": "Insufficient funds"}},
+            {"time": "11:55:02", "symbol": "TAO-USDT", "type": "CANCELLED", "details": {"cmp": 290.5, "error": "Insufficient funds"}},
+            {"time": "11:57:56", "symbol": "ZEC-USDT", "type": "CANCELLED", "details": {"cmp": 1293.48, "error": "Insufficient funds"}},
+            {"time": "12:00:03", "symbol": "FIL-USDT", "type": "CANCELLED", "details": {"cmp": 1.2294, "error": "Insufficient funds"}},
+            {"time": "12:15:15", "symbol": "FIL-USDT", "type": "CANCELLED", "details": {"cmp": 1.2486, "error": "Insufficient funds"}},
+            {"time": "12:15:18", "symbol": "PEPE-USDT", "type": "CANCELLED", "details": {"cmp": 4.22e-06, "error": "Insufficient funds"}},
+            {"time": "12:41:32", "symbol": "FIL-USDT", "type": "EXECUTED", "details": {"cmp": 1.228, "quantity": 64.0, "order_id": "f0c65c7f-9524-4d08-8a3b-e9b0c6d5a235", "margin": 1000.0}},
+            {"time": "12:43:36", "symbol": "NEAR-USDT", "type": "EXECUTED", "details": {"cmp": 5.691, "quantity": 13.0, "order_id": "1731b89a-2679-47b5-b4a9-2e79eb13758a", "margin": 1000.0}},
+            {"time": "12:43:38", "symbol": "LINK-USDT", "type": "EXECUTED", "details": {"cmp": 13.208, "quantity": 5.0, "order_id": "043558a0-42f2-4166-a721-bce95ac07975", "margin": 1000.0}},
+            {"time": "12:44:40", "symbol": "FIL-USDT", "type": "CLOSED", "details": {"cmp": 1.2341, "entry_p": 1.228, "realized_pnl_pct": 3.5, "sl_type": "PROFIT LOCK WIN (+3.5% ROE) 💰"}},
+            {"time": "12:58:47", "symbol": "TRX-USDT", "type": "EXECUTED", "details": {"cmp": 0.3315, "quantity": 238.0, "order_id": "8b49958e-4679-4f17-8e02-7b4f423db054", "margin": 1000.0}},
+            {"time": "13:37:26", "symbol": "POL-USDT", "type": "EXECUTED", "details": {"cmp": 0.10536, "quantity": 750.0, "order_id": "ff474174-e965-4407-bc3e-be4b36ce6af9", "margin": 1000.0}},
+            {"time": "13:43:30", "symbol": "POL-USDT", "type": "CLOSED", "details": {"cmp": 0.10556, "entry_p": 0.10536, "realized_pnl_pct": 1.3, "sl_type": "PROFIT LOCK WIN (+1.3% ROE) 💰"}},
+            {"time": "13:52:36", "symbol": "ONDO-USDT", "type": "EXECUTED", "details": {"cmp": 0.5056, "quantity": 156.0, "order_id": "dd4cb00e-945e-48a0-9121-7df338c1b17e", "margin": 1000.0}},
+            {"time": "14:03:47", "symbol": "ONDO-USDT", "type": "CLOSED", "details": {"cmp": 0.5064, "entry_p": 0.5056, "realized_pnl_pct": 1.1, "sl_type": "PROFIT LOCK WIN (+1.1% ROE) 💰"}},
+            {"time": "14:14:21", "symbol": "POL-USDT", "type": "EXECUTED", "details": {"cmp": 0.10541, "quantity": 750.0, "order_id": "fa6a8f9f-c248-4df3-90d7-570a647dfdd6", "margin": 1000.0}},
+            {"time": "14:17:41", "symbol": "POL-USDT", "type": "CLOSED", "details": {"cmp": 0.10573, "entry_p": 0.10541, "realized_pnl_pct": 2.1, "sl_type": "PROFIT LOCK WIN (+2.1% ROE) 💰"}},
+            {"time": "14:30:30", "symbol": "PEPE-USDT", "type": "CANCELLED", "details": {"cmp": 4.16e-06, "error": "Please enter correct values for TP / SL"}},
+            {"time": "14:30:32", "symbol": "ZRO-USDT", "type": "EXECUTED", "details": {"cmp": 2.375, "quantity": 33.0, "order_id": "b8c275c8-994e-4ca8-819c-bdcfdf55dcf7", "margin": 1000.0}},
+            {"time": "14:33:37", "symbol": "ZRO-USDT", "type": "CLOSED", "details": {"cmp": 2.385, "entry_p": 2.375, "realized_pnl_pct": 2.9, "sl_type": "PROFIT LOCK WIN (+2.9% ROE) 💰"}},
+            {"time": "21:47:10", "symbol": "BNB-USDT", "type": "CLOSED", "details": {"cmp": 740.27, "entry_p": 755.53, "realized_pnl_pct": -14.1, "sl_type": "STOP LOSS HIT (-14.1% ROE)"}}
         ]
 
     try:
@@ -240,7 +288,6 @@ def fetch_coindcx_active_pairs():
 def fetch_dynamic_watchlist(min_volume_usdt=10000000.0):
     global CACHED_DYNAMIC_WATCHLIST, LAST_WATCHLIST_FETCH_TIME
     now = time.time()
-    # Cache dynamic list for 15 minutes (900s) to keep scanner loops ultra-fast
     if CACHED_DYNAMIC_WATCHLIST and (now - LAST_WATCHLIST_FETCH_TIME < 900):
         return [s for s in CACHED_DYNAMIC_WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS]
 
@@ -261,7 +308,6 @@ def fetch_dynamic_watchlist(min_volume_usdt=10000000.0):
                         coin = sym[:-4].upper()
                         if coin in INACTIVE_COINS:
                             continue
-                        # Exclude stablecoins and leveraged tokens
                         if coin not in ['USDC', 'FDUSD', 'TUSD', 'BUSD', 'EUR', 'GBP', 'DAI', 'USDP', 'AEUR'] and not coin.endswith('UP') and not coin.endswith('DOWN'):
                             if coindcx_active:
                                 futures_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
@@ -461,7 +507,6 @@ def fetch_coindcx_live_position_qty(symbol):
                 # HTTP 200 OK received and parsed, target coin was NOT in active positions list:
                 return 0.0
     except Exception:
-        # API Error or Timeout occurred: Return None so caller knows API failed!
         return None
     return None
 
@@ -492,19 +537,14 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         
         # STRICT QUANTITY ROUNDING - Match exact CoinDCX contract lot step sizes!
         if coin in ['BTC', 'ETH', 'ZEC', 'PAXG']:
-            # CoinDCX step size: 0.001 (3 decimal places)
             quantity = round(raw_qty - 0.00049, 3) if raw_qty > 0.001 else 0.001
         elif coin in ['BNB', 'SOL', 'TAO']:
-            # CoinDCX step size: 0.01 (2 decimal places)
             quantity = round(raw_qty - 0.0049, 2) if raw_qty > 0.01 else 0.01
         elif coin in ['AAVE', 'QNT', 'LTC', 'BCH']:
-            # CoinDCX step size: 0.1 (1 decimal place)
             quantity = round(raw_qty - 0.049, 1) if raw_qty > 0.1 else 0.1
         elif coin in ['AVAX', 'LINK', 'UNI', 'INJ', 'NEAR', 'APT', 'FET', 'RUNE', 'TIA', 'ICP']:
-            # CoinDCX step size: 1.0 (integer contracts)
             quantity = float(int(raw_qty)) if raw_qty >= 1.0 else 1.0
         elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']: 
-            # 1000-prefix meme coins on CoinDCX trade in 1,000 unit contracts!
             contract_qty = raw_qty / 1000.0
             quantity = float(int(contract_qty)) if contract_qty >= 1.0 else 1.0
         elif cmp >= 1000.0:  
@@ -514,13 +554,11 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         elif cmp >= 10.0:    
             quantity = float(int(raw_qty)) if raw_qty >= 1.0 else 1.0
         else: 
-            # Low-priced coins trade in integer units
             quantity = float(int(raw_qty)) if raw_qty >= 1.0 else 1.0
         
     if quantity <= 0: quantity = 0.1 if coin in ['AAVE', 'QNT', 'LTC', 'BCH'] else (0.01 if coin in ['BNB', 'SOL', 'TAO'] else (0.001 if coin in ['BTC', 'ETH', 'ZEC', 'PAXG'] else 1.0))
 
     # REFINED TP / SL PRICE TICK ROUNDING TO MATCH COINDCX PRECISION:
-    # BTC & coins >= $10,000 require 0.1 or integer tick size.
     # Micro/Meme coins (PEPE, SHIB, BONK) require 6 to 8 decimals to prevent HTTP 422 zero-rounding errors!
     formatted_tp = None
     formatted_sl = None
@@ -529,13 +567,13 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
 
     if tp_price is not None:
         if coin == 'BTC' or cmp >= 10000.0:
-            formatted_tp = round(float(tp_price), 1)         # 1 decimal for BTC (e.g. 86500.2)
-            formatted_tp_alt = float(int(round(float(tp_price))))  # Integer fallback (e.g. 86500.0)
+            formatted_tp = round(float(tp_price), 1)
+            formatted_tp_alt = float(int(round(float(tp_price))))
         elif cmp >= 100.0:
             formatted_tp = round(float(tp_price), 2)
             formatted_tp_alt = round(float(tp_price), 1)
         elif cmp >= 1.0:
-            formatted_tp = round(float(tp_price), 2)         # 2 Decimals for $1-$10 coins (e.g. 3.49 for ICP)
+            formatted_tp = round(float(tp_price), 2)
             formatted_tp_alt = round(float(tp_price), 2)
         elif cmp >= 0.01:
             formatted_tp = round(float(tp_price), 4)
@@ -544,19 +582,18 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
             formatted_tp = round(float(tp_price), 6)
             formatted_tp_alt = round(float(tp_price), 6)
         else:
-            # Satoshi-priced meme coins (PEPE, SHIB, BONK)
             formatted_tp = round(float(tp_price), 8)
             formatted_tp_alt = round(float(tp_price), 8)
 
     if sl_price is not None:
         if coin == 'BTC' or cmp >= 10000.0:
-            formatted_sl = round(float(sl_price), 1)         # 1 decimal for BTC (e.g. 82141.6)
-            formatted_sl_alt = float(int(round(float(sl_price))))  # Integer fallback (e.g. 82141.0)
+            formatted_sl = round(float(sl_price), 1)
+            formatted_sl_alt = float(int(round(float(sl_price))))
         elif cmp >= 100.0:
             formatted_sl = round(float(sl_price), 2)
             formatted_sl_alt = round(float(sl_price), 1)
         elif cmp >= 1.0:
-            formatted_sl = round(float(sl_price), 2)         # 2 Decimals for $1-$10 coins (e.g. 3.39 for ICP)
+            formatted_sl = round(float(sl_price), 2)
             formatted_sl_alt = round(float(sl_price), 2)
         elif cmp >= 0.01:
             formatted_sl = round(float(sl_price), 4)
@@ -565,14 +602,13 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
             formatted_sl = round(float(sl_price), 6)
             formatted_sl_alt = round(float(sl_price), 6)
         else:
-            # Satoshi-priced meme coins (PEPE, SHIB, BONK)
             formatted_sl = round(float(sl_price), 8)
             formatted_sl_alt = round(float(sl_price), 8)
 
     futures_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
     ts = int(round(time.time() * 1000))
 
-    # Variant 1: Primary Precision TP/SL Payload (1-Decimal for BTC, 2-Decimal for Altcoins)
+    # Variant 1: Primary Precision TP/SL Payload
     futures_order_payload_tpsl = {
         "side": side.lower(),
         "pair": pair_name,
@@ -586,7 +622,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     if formatted_sl is not None:
         futures_order_payload_tpsl["stop_loss_price"] = formatted_sl
 
-    # Variant 2: Alternative Integer / Clean-Tick TP/SL Payload (Guarantees bypass on strict contracts)
+    # Variant 2: Alternative Integer / Clean-Tick TP/SL Payload
     futures_order_payload_alt_tpsl = dict(futures_order_payload_tpsl)
     if formatted_tp_alt is not None:
         futures_order_payload_alt_tpsl["take_profit_price"] = formatted_tp_alt
@@ -598,7 +634,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     futures_order_payload_quantized_tpsl = dict(futures_order_payload_tpsl)
     futures_order_payload_quantized_tpsl["total_quantity"] = quantized_qty if quantized_qty > 0 else quantity
 
-    # Universal Quantity Formatter for Scaled Variants (Guarantees no coin violates contract step sizes)
     def format_coin_qty(raw_q):
         if coin in ['BTC', 'ETH', 'ZEC', 'PAXG'] or cmp >= 1000.0:
             return round(raw_q, 3) if raw_q > 0.001 else 0.001
@@ -611,7 +646,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         else:
             return float(int(raw_q)) if raw_q >= 1.0 else 1.0
 
-    # Variant 4 & 5: Scaled Margin Payloads (Bypasses HTTP 400 Insufficient funds if available wallet margin < ₹1,000 INR)
     qty_75 = format_coin_qty(quantity * 0.75)
     futures_order_payload_75_tpsl = dict(futures_order_payload_alt_tpsl)
     futures_order_payload_75_tpsl["total_quantity"] = qty_75 if qty_75 > 0 else quantity
@@ -620,7 +654,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     futures_order_payload_50_tpsl = dict(futures_order_payload_alt_tpsl)
     futures_order_payload_50_tpsl["total_quantity"] = qty_50 if qty_50 > 0 else quantity
 
-    # REQUIREMENT 2 RULE: If side == "buy", ONLY execute payloads with inline TP & SL. NO NAKED MARKET ORDERS ALLOWED!
     if side.lower() == "buy":
         endpoint_variants = [
             (futures_url, {"timestamp": ts, "order": futures_order_payload_tpsl}),
@@ -630,7 +663,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
             (futures_url, {"timestamp": ts, "order": futures_order_payload_50_tpsl})
         ]
     else:
-        # Exit/Sell order payload
         futures_order_payload_clean = {
             "side": side.lower(),
             "pair": pair_name,
@@ -898,6 +930,14 @@ def close_sol_endpoint():
     except Exception as e:
         return f"<h3>⚠️ Error closing SOL:</h3><p>{e}</p>", 500
 
+@app.route('/test-telegram')
+def test_telegram_endpoint():
+    try:
+        ok = send_telegram_message("🔔 <b>TELEGRAM TEST ALERT FROM RENDER BOT!</b>\n\n• Status: 100% ONLINE\n• Signal Broadcast Channel: ACTIVE\n• Timestamp: " + datetime.now().strftime("%d-%m-%Y %H:%M:%S"))
+        return f"<h3>Telegram Ping Result: {'✅ SUCCESS (Check Telegram channel)' if ok else '❌ FAILED (Check Bot Token)'}</h3>", 200
+    except Exception as e:
+        return f"<h3>⚠️ Error: {e}</h3>", 500
+
 @app.route('/test-trade')
 def test_trade_endpoint():
     try:
@@ -964,7 +1004,7 @@ def run_scan():
             time.sleep(0.08)
             daily_klines = fetch_klines(symbol, '1d', 2)
             m15_klines = fetch_klines(symbol, '15m', 100)
-            h1_klines = fetch_klines(symbol, '1h', 60) # 1-Hour candles for macro trend protection
+            h1_klines = fetch_klines(symbol, '1h', 60)
             
             if not m15_klines or len(m15_klines) < 20: continue
             if not daily_klines or len(daily_klines) < 2: daily_klines = m15_klines
@@ -977,7 +1017,6 @@ def run_scan():
             vol_spike = calculate_volume_spike(m15_klines)
             
             # RULE 1: STRICT 24H LIQUIDITY & VOLUME FLOOR (> $10,000,000 USDT 24H VOLUME)
-            # Completely blocks low-volume coins (like ORCA, CHIP, MOVR) that experience erratic slippage wicks!
             vol_24h_quote = float(daily_klines[-1][5]) * cmp if len(daily_klines[-1]) > 5 else float(m15_klines[-1][5]) * cmp
             if vol_24h_quote < 10000000:
                 continue
@@ -1028,7 +1067,7 @@ def run_scan():
                 did_sweep_low = any(k[3] < m5_swing_low for k in m5_klines[-4:])
                 did_reclaim = (m5_last[4] > m5_swing_low) or (m5_prev[4] > m5_swing_low)
                 
-                is_5m_bullish_green = (m5_last[4] > m5_last[1])  # CLOSED 5M Green Candle
+                is_5m_bullish_green = (m5_last[4] > m5_last[1])
                 is_5m_engulfing = (m5_last[4] >= m5_prev[2]) or ((m5_last[4] - m5_last[1]) > (m5_prev[1] - m5_prev[4]))
                 
                 # RULE 2: MANDATORY INSTITUTIONAL VOLUME SPIKE (vol_spike >= 1.20x)
@@ -1058,9 +1097,9 @@ def run_scan():
     for cand in candidates:
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
         try:
-            # Dynamic fresh state reload from disk to prevent stale 1-second re-entries!
             curr_state = load_state()
             raw_coin = symbol.split('-')[0].upper()
+            coin = raw_coin  # Fix: Ensures 'coin' is always defined in this loop
             futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin)
             clean_coin = futures_coin.replace("1000", "")
             
@@ -1072,13 +1111,12 @@ def run_scan():
             if active_count >= 4:
                 break
 
-            # STRICT 30-MINUTE (1800s) PER-COIN COOLDOWN (Checks fresh disk state):
+            # STRICT 30-MINUTE (1800s) PER-COIN COOLDOWN:
             last_sent = curr_state.get(symbol, 0)
             if is_in_memory or (time.time() - last_sent < 900):
                 continue
             
             # LIVE EXCHANGE & MANUAL TRADE PROTECTION:
-            # Skip if CoinDCX reports an active position (Supports manual trades cleanly and prevents duplicates)
             live_qty = fetch_coindcx_live_position_qty(symbol)
             if live_qty is not None and live_qty > 0:
                 continue
@@ -1089,12 +1127,12 @@ def run_scan():
             # RULE 1: HARD STOP LOSS CAPPED AT -0.95% PRICE DROP (-6.6% ROE MAX):
             sweep_low_val = cand.get('sweep_low', cand.get('m15_low', cmp))
             hard_sl_cap = cmp * 0.9905  # STRICT -0.95% PRICE DROP CAP (-6.6% ROE MAX)
-            sl_raw = max(hard_sl_cap, sweep_low_val * 0.995)  # Positioned at sweep low, capped at -0.95% max!
-            tp1_raw = cmp * 1.032                             # Target 1 (+3.2% Price Move / 1:2 R:R Ratio)
-            be_trigger_raw = cmp * 1.005                      # Tier 2 Micro-Profit Lock Trigger (+3.5% ROE / +0.5% Move)
+            sl_raw = max(hard_sl_cap, sweep_low_val * 0.995)
+            tp1_raw = cmp * 1.032
+            be_trigger_raw = cmp * 1.005
             
             # Format prices with exact decimal precision for all coin tiers (including meme coins):
-            if coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI'] or cmp < 0.0001:
+            if raw_coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI'] or cmp < 0.0001:
                 sl, tp1, be_trigger = round(sl_raw, 8), round(tp1_raw, 8), round(be_trigger_raw, 8)
             elif cmp < 0.01:
                 sl, tp1, be_trigger = round(sl_raw, 6), round(tp1_raw, 6), round(be_trigger_raw, 6)
@@ -1107,7 +1145,7 @@ def run_scan():
 
             lev_num = 7  # Fixed 7x Leverage for all coins
             
-            # EXECUTE TRADE ONLY IF AUTO-TRADING IS ACTIVE (STRICT BUY / LONG ONLY - ZERO SHORT TRADES ALLOWED!):
+            # EXECUTE TRADE ONLY IF AUTO-TRADING IS ACTIVE (STRICT BUY / LONG ONLY):
             if AUTO_TRADING_ENABLED:
                 trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=coin_margin, leverage=lev_num, tp_price=tp1, sl_price=sl)
             else:
@@ -1162,7 +1200,8 @@ def run_scan():
                 f"{exec_hdr}"
             )
             send_telegram_message(msg)
-        except Exception: pass
+        except Exception as e:
+            print(f"⚠️ Error executing candidate {symbol}: {e}")
 
 def monitor_active_positions():
     time.sleep(10)
@@ -1176,18 +1215,16 @@ def monitor_active_positions():
             
             for symbol in symbols_to_check:
                 try:
-                    time.sleep(0.1)  # Accelerated 0.1s check per active position
+                    time.sleep(0.1)
                     clean_coin = symbol.split('-')[0].upper()
                     
-                    # STEP A: Check if live position on CoinDCX is ALREADY 0 (e.g. manually closed on CoinDCX App or closed by CoinDCX exchange TP/SL)
+                    # STEP A: Check if live position on CoinDCX is ALREADY 0
                     live_qty = fetch_coindcx_live_position_qty(symbol)
                     if live_qty is not None and live_qty <= 0:
-                        # Position on exchange is ALREADY 0! Do NOT send any sell order (Prevents accidental SHORT trades)!
                         with active_trades_lock:
                             ACTIVE_TRADES.pop(symbol, None)
                         save_active_trades()
                         
-                        # Enforce 30-minute cooldown timestamp in state
                         st = load_state()
                         st[symbol] = time.time() + 900
                         save_state(st)
@@ -1200,7 +1237,7 @@ def monitor_active_positions():
                         )
                         continue
 
-                    # Use 1-minute real-time candles for position monitoring (NOT 15m historical high/low!)
+                    # 1-minute real-time candles for position monitoring
                     m1_klines = fetch_klines(symbol, '1m', 3)
                     if not m1_klines: continue
                     cmp = m1_klines[-1][4]
@@ -1213,15 +1250,14 @@ def monitor_active_positions():
                     entry_p = trade['entry_price']
                     entry_time = trade.get('entry_time', time.time())
                     
-                    # Track highest peak price reached STRICTLY AFTER ENTRY using live CMP/1m high
+                    # Track highest peak price reached STRICTLY AFTER ENTRY
                     live_high = m1_klines[-1][2]
                     current_peak = live_high if candle_open_time >= entry_time else cmp
                     
                     highest_peak = max(trade.get('highest_peak', entry_p), current_peak, cmp)
                     trade['highest_peak'] = highest_peak
                     
-                    # RULE: 75-MINUTE STAGNATION TIME-STOP AUTO-CUT (Eliminates 14h traps like BNB and 18h traps like TRX!)
-                    # If open > 75 mins (4500s) and has not reached the +0.5% Breakeven profit lock:
+                    # RULE: 75-MINUTE STAGNATION TIME-STOP AUTO-CUT
                     time_open = time.time() - entry_time
                     if time_open >= 4500 and not trade.get('is_be_active', False):
                         live_qty_now = fetch_coindcx_live_position_qty(symbol)
@@ -1274,7 +1310,7 @@ def monitor_active_positions():
                     # TIER 2: MICRO-PROFIT LOCK AT +0.50% MOVE (+3.5% ROE) -> NET PROFIT GUARANTEED
                     be_trigger_price = trade.get('be_trigger', entry_p * 1.005)
                     if highest_peak >= be_trigger_price and not trade.get('is_be_active', False):
-                        fee_buffer_sl = round(entry_p * 1.002, 4)  # Entry + 0.2% Profit Lock (Covers Exchange Fees + Net Gain)
+                        fee_buffer_sl = round(entry_p * 1.002, 4)
                         with active_trades_lock:
                             if fee_buffer_sl > trade.get('sl', 0):
                                 trade['sl'] = fee_buffer_sl
@@ -1288,7 +1324,6 @@ def monitor_active_positions():
                         )
 
                     # STAGE 2: INTERMEDIATE PROFIT TRAILING (Captures +4.0% to +6.5% ROE Altcoin Peaks!)
-                    # When price crosses +0.70% (+4.9% ROE), lock at least +0.45% (+3.15% ROE) or trail 0.35% behind peak
                     if highest_peak >= entry_p * 1.007:
                         intermediate_sl = round(max(entry_p * 1.0045, highest_peak * 0.9965), 4)
                         current_sl = trade.get('sl', entry_p)
@@ -1307,9 +1342,8 @@ def monitor_active_positions():
                             )
 
                     # STAGE 3: RUNNER TRAILING ENGINE (Captures explosive +15% to +40% ROE Rallies!)
-                    # When price crosses +1.5% (+10.5% ROE), trail SL 1.2% below highest peak price
                     if highest_peak >= entry_p * 1.015:
-                        trailing_sl = round(highest_peak * 0.988, 4)  # Trail 1.2% behind highest peak
+                        trailing_sl = round(highest_peak * 0.988, 4)
                         current_sl = trade.get('sl', entry_p)
                         if trailing_sl > current_sl:
                             locked_roe = ((trailing_sl - entry_p) / entry_p) * 7 * 100
@@ -1330,10 +1364,8 @@ def monitor_active_positions():
                     effective_low = min(cmp, live_low)
                     
                     if effective_low <= trade['sl']:
-                        # Re-verify live position quantity RIGHT BEFORE placing sell order!
                         live_qty_now = fetch_coindcx_live_position_qty(symbol)
                         if live_qty_now is not None and live_qty_now <= 0:
-                            # Position already closed externally! Pop from memory & apply 30m cooldown
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
                             save_active_trades()
@@ -1342,12 +1374,10 @@ def monitor_active_positions():
                             save_state(st)
                             continue
                         
-                        # CAP SELL QUANTITY TO LIVE POSITION SIZE (Guarantees order CANNOT overshoot into a SHORT position!)
                         sell_qty = min(live_qty_now, trade['total_qty']) if (live_qty_now is not None and live_qty_now > 0) else trade['total_qty']
                         
                         res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=sell_qty)
                         if res.get('success'):
-                            # Calculate REALIZED PNL based on ACTUAL exit CMP!
                             realized_pnl_pct = ((cmp - entry_p) / entry_p) * 7 * 100
                             if cmp >= entry_p * 1.001:
                                 sl_type = f"PROFIT LOCK WIN (+{realized_pnl_pct:.1f}% ROE) 💰"
@@ -1361,9 +1391,9 @@ def monitor_active_positions():
                             save_active_trades()
                             log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": realized_pnl_pct, "sl_type": sl_type})
                             
-                            # RULE 5: MANDATORY 30-MINUTE COOLDOWN ON ALL EXIT TRADES (Prevents Repeated Fee Drain)
+                            # RULE 5: MANDATORY 30-MINUTE COOLDOWN ON ALL EXIT TRADES
                             st = load_state()
-                            st[symbol] = time.time() + 900  # Sets timestamp to ensure 30-min effective window
+                            st[symbol] = time.time() + 900
                             save_state(st)
                             
                             send_telegram_message(
@@ -1378,7 +1408,7 @@ def monitor_active_positions():
                     print(f"Error monitoring {symbol}: {e}")
         except Exception as e:
             print(f"Position monitor exception: {e}")
-        time.sleep(1)  # Accelerated 1-second position monitoring loop for fast trailing SL execution
+        time.sleep(1)
 
 # MOBILE TELEGRAM ON/OFF COMMAND LISTENER (/stop, /start & /today)
 def run_telegram_command_listener():
@@ -1419,7 +1449,6 @@ def start_background_loop():
                     finally: scan_lock.release()
             except Exception as e:
                 print(f"Scan loop exception: {e}")
-            # ACCELERATED SCAN INTERVAL: Scan every 60 seconds (1 minute) for maximum signal sensitivity!
             time.sleep(60)
 
     def run_hourly_report_loop():
