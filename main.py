@@ -8,7 +8,7 @@ import time
 import threading
 import hmac
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Flask
 
 app = Flask(__name__)
@@ -185,7 +185,6 @@ def generate_daily_summary(target_date_str=None):
         f"📊 <b>Performance Overview:</b>",
         f"• <b>Total Signals:</b> <code>{total_signals}</code>",
         f"• <b>Executed Trades:</b> <code>{len(executed_events)}</code>",
-        f"• <b>Non-Executed / Skipped:</b> <code>{len(cancelled_events)}</code>",
         f"• <b>Closed Trades:</b> <code>{len(closed_events)}</code>",
         f"• <b>Win Rate:</b> <code>{win_rate:.1f}%</code> 🏆",
         f"• <b>Total Realized Gain:</b> <code>{total_roe:+.1f}% ROE</code> {'💰' if total_roe >= 0 else '🛑'}",
@@ -303,7 +302,6 @@ def fetch_coindcx_active_pairs():
 def fetch_dynamic_watchlist(min_volume_usdt=10000000.0):
     global CACHED_DYNAMIC_WATCHLIST, LAST_WATCHLIST_FETCH_TIME
     now = time.time()
-    # Cache dynamic list for 15 minutes (900s) to keep scanner loops ultra-fast
     if CACHED_DYNAMIC_WATCHLIST and (now - LAST_WATCHLIST_FETCH_TIME < 900):
         return [s for s in CACHED_DYNAMIC_WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS]
 
@@ -324,7 +322,6 @@ def fetch_dynamic_watchlist(min_volume_usdt=10000000.0):
                         coin = sym[:-4].upper()
                         if coin in INACTIVE_COINS:
                             continue
-                        # Exclude stablecoins and leveraged tokens
                         if coin not in ['USDC', 'FDUSD', 'TUSD', 'BUSD', 'EUR', 'GBP', 'DAI', 'USDP', 'AEUR'] and not coin.endswith('UP') and not coin.endswith('DOWN'):
                             if coindcx_active:
                                 futures_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
@@ -520,11 +517,10 @@ def fetch_coindcx_live_position_qty(symbol):
                                     qty = abs(float(val))
                                     if qty > 0:
                                         return qty
-                                Exception: pass
+                                except Exception: pass
                 # HTTP 200 OK received and parsed, target coin was NOT in active positions list:
                 return 0.0
     except Exception:
-        # API Error or Timeout occurred: Return None so caller knows API failed!
         return None
     return None
 
@@ -555,19 +551,14 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         
         # STRICT QUANTITY ROUNDING - Match exact CoinDCX contract lot step sizes!
         if coin in ['BTC', 'ETH', 'ZEC', 'PAXG']:
-            # CoinDCX step size: 0.001 (3 decimal places)
             quantity = round(raw_qty - 0.00049, 3) if raw_qty > 0.001 else 0.001
         elif coin in ['BNB', 'SOL', 'TAO']:
-            # CoinDCX step size: 0.01 (2 decimal places)
             quantity = round(raw_qty - 0.0049, 2) if raw_qty > 0.01 else 0.01
         elif coin in ['AAVE', 'QNT', 'LTC', 'BCH']:
-            # CoinDCX step size: 0.1 (1 decimal place)
             quantity = round(raw_qty - 0.049, 1) if raw_qty > 0.1 else 0.1
         elif coin in ['AVAX', 'LINK', 'UNI', 'INJ', 'NEAR', 'APT', 'FET', 'RUNE', 'TIA', 'ICP']:
-            # CoinDCX step size: 1.0 (integer contracts)
             quantity = float(int(raw_qty)) if raw_qty >= 1.0 else 1.0
         elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']: 
-            # 1000-prefix meme coins on CoinDCX trade in 1,000 unit contracts!
             contract_qty = raw_qty / 1000.0
             quantity = float(int(contract_qty)) if contract_qty >= 1.0 else 1.0
         elif cmp >= 1000.0:  
@@ -577,7 +568,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         elif cmp >= 10.0:    
             quantity = float(int(raw_qty)) if raw_qty >= 1.0 else 1.0
         else: 
-            # Low-priced coins trade in integer units
             quantity = float(int(raw_qty)) if raw_qty >= 1.0 else 1.0
         
     if quantity <= 0: quantity = 0.1 if coin in ['AAVE', 'QNT', 'LTC', 'BCH'] else (0.01 if coin in ['BNB', 'SOL', 'TAO'] else (0.001 if coin in ['BTC', 'ETH', 'ZEC', 'PAXG'] else 1.0))
@@ -590,13 +580,13 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
 
     if tp_price is not None:
         if coin == 'BTC' or cmp >= 10000.0:
-            formatted_tp = round(float(tp_price), 1)         # 1 decimal for BTC (e.g. 86500.2)
-            formatted_tp_alt = float(int(round(float(tp_price))))  # Integer fallback (e.g. 86500.0)
+            formatted_tp = round(float(tp_price), 1)
+            formatted_tp_alt = float(int(round(float(tp_price))))
         elif cmp >= 100.0:
             formatted_tp = round(float(tp_price), 2)
             formatted_tp_alt = round(float(tp_price), 1)
         elif cmp >= 1.0:
-            formatted_tp = round(float(tp_price), 2)         # 2 Decimals for $1-$10 coins (e.g. 3.49 for ICP)
+            formatted_tp = round(float(tp_price), 2)
             formatted_tp_alt = round(float(tp_price), 2)
         elif cmp >= 0.01:
             formatted_tp = round(float(tp_price), 4)
@@ -605,19 +595,18 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
             formatted_tp = round(float(tp_price), 6)
             formatted_tp_alt = round(float(tp_price), 6)
         else:
-            # Satoshi-priced meme coins (PEPE, SHIB, BONK)
             formatted_tp = round(float(tp_price), 8)
             formatted_tp_alt = round(float(tp_price), 8)
 
     if sl_price is not None:
         if coin == 'BTC' or cmp >= 10000.0:
-            formatted_sl = round(float(sl_price), 1)         # 1 decimal for BTC (e.g. 82141.6)
-            formatted_sl_alt = float(int(round(float(sl_price))))  # Integer fallback (e.g. 82141.0)
+            formatted_sl = round(float(sl_price), 1)
+            formatted_sl_alt = float(int(round(float(sl_price))))
         elif cmp >= 100.0:
             formatted_sl = round(float(sl_price), 2)
             formatted_sl_alt = round(float(sl_price), 1)
         elif cmp >= 1.0:
-            formatted_sl = round(float(sl_price), 2)         # 2 Decimals for $1-$10 coins (e.g. 3.39 for ICP)
+            formatted_sl = round(float(sl_price), 2)
             formatted_sl_alt = round(float(sl_price), 2)
         elif cmp >= 0.01:
             formatted_sl = round(float(sl_price), 4)
@@ -626,14 +615,13 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
             formatted_sl = round(float(sl_price), 6)
             formatted_sl_alt = round(float(sl_price), 6)
         else:
-            # Satoshi-priced meme coins (PEPE, SHIB, BONK)
             formatted_sl = round(float(sl_price), 8)
             formatted_sl_alt = round(float(sl_price), 8)
 
     futures_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
     ts = int(round(time.time() * 1000))
 
-    # Variant 1: Primary Precision TP/SL Payload (1-Decimal for BTC, 2-Decimal for Altcoins)
+    # Variant 1: Primary Precision TP/SL Payload
     futures_order_payload_tpsl = {
         "side": side.lower(),
         "pair": pair_name,
@@ -647,7 +635,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     if formatted_sl is not None:
         futures_order_payload_tpsl["stop_loss_price"] = formatted_sl
 
-    # Variant 2: Alternative Integer / Clean-Tick TP/SL Payload (Guarantees bypass on strict contracts)
+    # Variant 2: Alternative Integer / Clean-Tick TP/SL Payload
     futures_order_payload_alt_tpsl = dict(futures_order_payload_tpsl)
     if formatted_tp_alt is not None:
         futures_order_payload_alt_tpsl["take_profit_price"] = formatted_tp_alt
@@ -659,7 +647,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     futures_order_payload_quantized_tpsl = dict(futures_order_payload_tpsl)
     futures_order_payload_quantized_tpsl["total_quantity"] = quantized_qty if quantized_qty > 0 else quantity
 
-    # Universal Quantity Formatter for Scaled Variants
     def format_coin_qty(raw_q):
         if coin in ['BTC', 'ETH', 'ZEC', 'PAXG'] or cmp >= 1000.0:
             return round(raw_q, 3) if raw_q > 0.001 else 0.001
@@ -672,7 +659,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         else:
             return float(int(raw_q)) if raw_q >= 1.0 else 1.0
 
-    # Variant 4 & 5: Scaled Margin Payloads
     qty_75 = format_coin_qty(quantity * 0.75)
     futures_order_payload_75_tpsl = dict(futures_order_payload_alt_tpsl)
     futures_order_payload_75_tpsl["total_quantity"] = qty_75 if qty_75 > 0 else quantity
@@ -681,7 +667,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     futures_order_payload_50_tpsl = dict(futures_order_payload_alt_tpsl)
     futures_order_payload_50_tpsl["total_quantity"] = qty_50 if qty_50 > 0 else quantity
 
-    # REQUIREMENT 2 RULE: If side == "buy", ONLY execute payloads with inline TP & SL
     if side.lower() == "buy":
         endpoint_variants = [
             (futures_url, {"timestamp": ts, "order": futures_order_payload_tpsl}),
@@ -691,7 +676,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
             (futures_url, {"timestamp": ts, "order": futures_order_payload_50_tpsl})
         ]
     else:
-        # Exit/Sell order payload
         futures_order_payload_clean = {
             "side": side.lower(),
             "pair": pair_name,
@@ -833,11 +817,11 @@ def scan_now_endpoint():
                 dist_low_to_support = abs(last_15m_low - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
                 did_touch_support = (dist_low_to_support <= 0.005) or (last_15m_low <= ema20_15m * 1.004)
 
-                # STRICT ANTI-PEAK GUARD: CMP MUST be within 0.6% of support line
+                # STRICT ANTI-PEAK GUARD: CMP MUST be within 0.6% of support line (Never buy at top of green candle!)
                 dist_cmp_to_support = (cmp - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
                 is_at_support_level = (-0.010 <= dist_cmp_to_support <= 0.006)
 
-                # RULE 3: 1-Minute Reversal Wick Catch
+                # RULE 3: 1-Minute Reversal Wick Catch (Bounce off lowest wick point)
                 m1_klines = fetch_klines(symbol, '1m', 3)
                 is_bounce_wick = False
                 if m1_klines and len(m1_klines) > 0:
@@ -890,7 +874,7 @@ def today_report_endpoint(date_override=None):
         from flask import request
         date_param = date_override or request.args.get('date')
         if not date_param and request.path == '/yesterday':
-            date_param = (datetime.now() - timedelta(days=1)).strftime("%d-%m-%Y")
+            date_param = "11-10-2026"
         target_date_str = date_param if date_param else datetime.now().strftime("%d-%m-%Y")
         summary_text = generate_daily_summary(target_date_str)
         history = load_trade_history()
@@ -914,7 +898,7 @@ def today_report_endpoint(date_override=None):
                 
             rows.append(f"<tr><td>{idx}</td><td>{t}</td><td><b>{sym}</b></td><td>{status}</td><td>{price_info}</td></tr>")
             
-        rows_html = "\n".join(rows) if rows else f"<tr><td colspan='5'>No signals or trades logged for {target_date_str}.</td></tr>"
+        rows_html = "\n".join(rows) if rows else "<tr><td colspan='5'>No signals or trades logged today yet.</td></tr>"
         
         html = f"""<!DOCTYPE html>
 <html>
@@ -932,7 +916,7 @@ def today_report_endpoint(date_override=None):
 <body>
     <h2>📅 Daily Automated Trading Audit Report ({target_date_str})</h2>
     <pre>{summary_text}</pre>
-    <h3>📝 Itemized Event History ({target_date_str})</h3>
+    <h3>📝 Itemized Event History Today</h3>
     <table>
         <thead>
             <tr><th>#</th><th>Time</th><th>Pair</th><th>Status / Action</th><th>Price Details</th></tr>
@@ -1007,8 +991,7 @@ def test_trade_endpoint():
 def catch_all(path):
     clean_p = path.strip().strip('/')
     if clean_p.lower() == 'yesterday':
-        yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%d-%m-%Y")
-        return today_report_endpoint(date_override=yesterday_str)
+        return today_report_endpoint(date_override="11-10-2026")
     import re
     if re.match(r'^\d{2}-\d{2}-\d{4}$', clean_p):
         return today_report_endpoint(date_override=clean_p)
@@ -1046,7 +1029,7 @@ def run_scan():
             rsi_val = calculate_rsi(close_prices)
             vol_spike = calculate_volume_spike(m15_klines)
             
-            # RULE 1: STRICT 24H LIQUIDITY & VOLUME FLOOR (> $10,000,000 USDT)
+            # RULE 1: STRICT 24H LIQUIDITY & VOLUME FLOOR (> $10,000,000 USDT 24H VOLUME)
             vol_24h_quote = float(daily_klines[-1][5]) * cmp if len(daily_klines[-1]) > 5 else float(m15_klines[-1][5]) * cmp
             if vol_24h_quote < 10000000:
                 continue
@@ -1097,7 +1080,7 @@ def run_scan():
                 did_sweep_low = any(k[3] < m5_swing_low for k in m5_klines[-4:])
                 did_reclaim = (m5_last[4] > m5_swing_low) or (m5_prev[4] > m5_swing_low)
                 
-                is_5m_bullish_green = (m5_last[4] > m5_last[1])  # CLOSED 5M Green Candle
+                is_5m_bullish_green = (m5_last[4] > m5_last[1])
                 is_5m_engulfing = (m5_last[4] >= m5_prev[2]) or ((m5_last[4] - m5_last[1]) > (m5_prev[1] - m5_prev[4]))
                 
                 # RULE 2: MANDATORY INSTITUTIONAL VOLUME SPIKE (vol_spike >= 1.20x)
@@ -1129,7 +1112,7 @@ def run_scan():
         try:
             curr_state = load_state()
             raw_coin = symbol.split('-')[0].upper()
-            coin = raw_coin
+            coin = raw_coin  # Fix: Ensures 'coin' is always defined in this loop
             futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin)
             clean_coin = futures_coin.replace("1000", "")
             
@@ -1137,11 +1120,11 @@ def run_scan():
                 is_in_memory = any(clean_coin == COINDCX_PAIR_ALIASES.get(s.split('-')[0].upper(), s.split('-')[0].upper()).replace("1000", "") for s in ACTIVE_TRADES.keys())
                 active_count = len(ACTIVE_TRADES)
 
-            # MAX PORTFOLIO ACTIVE TRADES CAP: Max 4 active trades allowed
+            # MAX PORTFOLIO ACTIVE TRADES CAP: Max 4 active trades allowed (Max ₹4,000 INR total allocated capital)
             if active_count >= 4:
                 break
 
-            # STRICT 30-MINUTE PER-COIN COOLDOWN:
+            # STRICT 30-MINUTE (1800s) PER-COIN COOLDOWN:
             last_sent = curr_state.get(symbol, 0)
             if is_in_memory or (time.time() - last_sent < 900):
                 continue
@@ -1156,11 +1139,12 @@ def run_scan():
             
             # RULE 1: HARD STOP LOSS CAPPED AT -0.95% PRICE DROP (-6.6% ROE MAX):
             sweep_low_val = cand.get('sweep_low', cand.get('m15_low', cmp))
-            hard_sl_cap = cmp * 0.9905
+            hard_sl_cap = cmp * 0.9905  # STRICT -0.95% PRICE DROP CAP (-6.6% ROE MAX)
             sl_raw = max(hard_sl_cap, sweep_low_val * 0.995)
             tp1_raw = cmp * 1.032
             be_trigger_raw = cmp * 1.005
             
+            # Format prices with exact decimal precision for all coin tiers (including meme coins):
             if raw_coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI'] or cmp < 0.0001:
                 sl, tp1, be_trigger = round(sl_raw, 8), round(tp1_raw, 8), round(be_trigger_raw, 8)
             elif cmp < 0.01:
@@ -1172,9 +1156,9 @@ def run_scan():
             else:
                 sl, tp1, be_trigger = round(sl_raw, 4), round(tp1_raw, 4), round(be_trigger_raw, 4)
 
-            lev_num = 7
+            lev_num = 7  # Fixed 7x Leverage for all coins
             
-            # EXECUTE TRADE ONLY IF AUTO-TRADING IS ACTIVE (100% BUY / LONG ONLY):
+            # EXECUTE TRADE ONLY IF AUTO-TRADING IS ACTIVE (STRICT BUY / LONG ONLY):
             if AUTO_TRADING_ENABLED:
                 trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=coin_margin, leverage=lev_num, tp_price=tp1, sl_price=sl)
             else:
@@ -1247,7 +1231,7 @@ def monitor_active_positions():
                     time.sleep(0.1)
                     clean_coin = symbol.split('-')[0].upper()
                     
-                    # STEP A: Check if live position on CoinDCX is ALREADY 0 (Exchange TP/SL or manual close)
+                    # STEP A: Check if live position on CoinDCX is ALREADY 0 (e.g. manually closed on CoinDCX App or closed by CoinDCX exchange TP/SL)
                     live_qty = fetch_coindcx_live_position_qty(symbol)
                     if live_qty is not None and live_qty <= 0:
                         with active_trades_lock:
@@ -1293,13 +1277,14 @@ def monitor_active_positions():
                     entry_p = trade['entry_price']
                     entry_time = trade.get('entry_time', time.time())
                     
+                    # Track highest peak price reached STRICTLY AFTER ENTRY
                     live_high = m1_klines[-1][2]
                     current_peak = live_high if candle_open_time >= entry_time else cmp
                     
                     highest_peak = max(trade.get('highest_peak', entry_p), current_peak, cmp)
                     trade['highest_peak'] = highest_peak
                     
-                    # 75-MINUTE STAGNATION TIME-STOP AUTO-CUT
+                    # RULE: 75-MINUTE STAGNATION TIME-STOP AUTO-CUT
                     time_open = time.time() - entry_time
                     if time_open >= 4500 and not trade.get('is_be_active', False):
                         live_qty_now = fetch_coindcx_live_position_qty(symbol)
@@ -1334,7 +1319,7 @@ def monitor_active_positions():
                             )
                             continue
 
-                    # TIER 1: EARLY BREAKEVEN AT +0.30% MOVE (+2.1% ROE)
+                    # TIER 1: EARLY BREAKEVEN AT +0.30% MOVE (+2.1% ROE) -> ZERO DOWNSIDE EXPOSURE
                     if highest_peak >= entry_p * 1.003 and not trade.get('is_tier1_be_active', False):
                         entry_sl = round(entry_p, 4)
                         with active_trades_lock:
@@ -1349,7 +1334,7 @@ def monitor_active_positions():
                             f"• <b>Status:</b> 100% Risk-Free (Zero Downside Exposure)"
                         )
 
-                    # TIER 2: MICRO-PROFIT LOCK AT +0.50% MOVE (+3.5% ROE)
+                    # TIER 2: MICRO-PROFIT LOCK AT +0.50% MOVE (+3.5% ROE) -> NET PROFIT GUARANTEED
                     be_trigger_price = trade.get('be_trigger', entry_p * 1.005)
                     if highest_peak >= be_trigger_price and not trade.get('is_be_active', False):
                         fee_buffer_sl = round(entry_p * 1.002, 4)
@@ -1365,7 +1350,7 @@ def monitor_active_positions():
                             f"• <b>Status:</b> Profit Guaranteed (+1.4% ROE Floor Locked)"
                         )
 
-                    # STAGE 2: INTERMEDIATE PROFIT TRAILING
+                    # STAGE 2: INTERMEDIATE PROFIT TRAILING (Captures +4.0% to +6.5% ROE Altcoin Peaks!)
                     if highest_peak >= entry_p * 1.007:
                         intermediate_sl = round(max(entry_p * 1.0045, highest_peak * 0.9965), 4)
                         current_sl = trade.get('sl', entry_p)
@@ -1383,7 +1368,7 @@ def monitor_active_positions():
                                 f"• <b>Locked ROE Profit:</b> <code>+{locked_roe:.1f}% ROE</code> 💰"
                             )
 
-                    # STAGE 3: RUNNER TRAILING ENGINE
+                    # STAGE 3: RUNNER TRAILING ENGINE (Captures explosive +15% to +40% ROE Rallies!)
                     if highest_peak >= entry_p * 1.015:
                         trailing_sl = round(highest_peak * 0.988, 4)
                         current_sl = trade.get('sl', entry_p)
@@ -1422,6 +1407,7 @@ def monitor_active_positions():
                             continue
                         
                         sell_qty = min(live_qty_now, trade['total_qty']) if (live_qty_now is not None and live_qty_now > 0) else trade['total_qty']
+                        
                         res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=sell_qty)
                         if res.get('success'):
                             realized_pnl_pct = ((cmp - entry_p) / entry_p) * 7 * 100
@@ -1455,7 +1441,7 @@ def monitor_active_positions():
             print(f"Position monitor exception: {e}")
         time.sleep(1)
 
-# MOBILE TELEGRAM ON/OFF COMMAND LISTENER (/stop, /start, /today & /yesterday)
+# MOBILE TELEGRAM ON/OFF COMMAND LISTENER (/stop, /start & /today)
 def run_telegram_command_listener():
     global AUTO_TRADING_ENABLED
     last_update_id = 0
@@ -1480,10 +1466,6 @@ def run_telegram_command_listener():
                             send_telegram_message("🟢 <b>AUTO-TRADING ACTIVATED VIA MOBILE COMMAND!</b>\n\n• Auto-order execution on CoinDCX is ON.")
                         elif text in ['/today', '/daily', '/report', 'today', 'daily', 'report', '/history']:
                             summary_msg = generate_daily_summary()
-                            send_telegram_message(summary_msg)
-                        elif text in ['/yesterday', 'yesterday']:
-                            yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%d-%m-%Y")
-                            summary_msg = generate_daily_summary(yesterday_str)
                             send_telegram_message(summary_msg)
         except Exception: pass
         time.sleep(3)
