@@ -117,7 +117,15 @@ def load_trade_history():
             {"time": "12:44:40", "symbol": "FIL-USDT", "type": "CLOSED", "details": {"cmp": 1.2341, "entry_p": 1.228, "realized_pnl_pct": 3.5, "sl_type": "PROFIT LOCK WIN (+3.5% ROE) 💰"}},
             {"time": "12:58:47", "symbol": "TRX-USDT", "type": "EXECUTED", "details": {"cmp": 0.3315, "quantity": 238.0, "order_id": "8b49958e-4679-4f17-8e02-7b4f423db054", "margin": 1000.0}},
             {"time": "13:37:26", "symbol": "POL-USDT", "type": "EXECUTED", "details": {"cmp": 0.10536, "quantity": 750.0, "order_id": "ff474174-e965-4407-bc3e-be4b36ce6af9", "margin": 1000.0}},
-            {"time": "13:43:30", "symbol": "POL-USDT", "type": "CLOSED", "details": {"cmp": 0.10556, "entry_p": 0.10536, "realized_pnl_pct": 1.3, "sl_type": "PROFIT LOCK WIN (+1.3% ROE) 💰"}}
+            {"time": "13:43:30", "symbol": "POL-USDT", "type": "CLOSED", "details": {"cmp": 0.10556, "entry_p": 0.10536, "realized_pnl_pct": 1.3, "sl_type": "PROFIT LOCK WIN (+1.3% ROE) 💰"}},
+            {"time": "13:52:36", "symbol": "ONDO-USDT", "type": "EXECUTED", "details": {"cmp": 0.5056, "quantity": 156.0, "order_id": "dd4cb00e-945e-48a0-9121-7df338c1b17e", "margin": 1000.0}},
+            {"time": "14:03:47", "symbol": "ONDO-USDT", "type": "CLOSED", "details": {"cmp": 0.5064, "entry_p": 0.5056, "realized_pnl_pct": 1.1, "sl_type": "PROFIT LOCK WIN (+1.1% ROE) 💰"}},
+            {"time": "14:14:21", "symbol": "POL-USDT", "type": "EXECUTED", "details": {"cmp": 0.10541, "quantity": 750.0, "order_id": "fa6a8f9f-c248-4df3-90d7-570a647dfdd6", "margin": 1000.0}},
+            {"time": "14:17:41", "symbol": "POL-USDT", "type": "CLOSED", "details": {"cmp": 0.10573, "entry_p": 0.10541, "realized_pnl_pct": 2.1, "sl_type": "PROFIT LOCK WIN (+2.1% ROE) 💰"}},
+            {"time": "14:30:30", "symbol": "PEPE-USDT", "type": "CANCELLED", "details": {"cmp": 4.16e-06, "error": "Please enter correct values for TP / SL"}},
+            {"time": "14:30:32", "symbol": "ZRO-USDT", "type": "EXECUTED", "details": {"cmp": 2.375, "quantity": 33.0, "order_id": "b8c275c8-994e-4ca8-819c-bdcfdf55dcf7", "margin": 1000.0}},
+            {"time": "14:33:37", "symbol": "ZRO-USDT", "type": "CLOSED", "details": {"cmp": 2.385, "entry_p": 2.375, "realized_pnl_pct": 2.9, "sl_type": "PROFIT LOCK WIN (+2.9% ROE) 💰"}},
+            {"time": "21:47:10", "symbol": "BNB-USDT", "type": "CLOSED", "details": {"cmp": 740.27, "entry_p": 755.53, "realized_pnl_pct": -14.1, "sl_type": "STOP LOSS HIT (-14.1% ROE)"}}
         ]
 
     if "13-10-2026" not in history or not history["13-10-2026"] or len(history["13-10-2026"]) < 10:
@@ -1174,6 +1182,7 @@ def run_scan():
             rsi_val = calculate_rsi(close_prices)
             vol_spike = calculate_volume_spike(m15_klines)
             
+            # Bulletproof 24h Volume: max(yesterday_completed, today_ongoing) to prevent midnight reset bug while capturing breakouts
             if daily_klines and len(daily_klines) >= 2 and len(daily_klines[0]) > 5:
                 vol_24h_quote = max(float(daily_klines[0][5]), float(daily_klines[-1][5])) * cmp
             elif daily_klines and len(daily_klines) > 0 and len(daily_klines[-1]) > 5:
@@ -1373,50 +1382,69 @@ def monitor_active_positions():
                     time.sleep(0.1)
                     clean_coin = symbol.split('-')[0].upper()
                     
-                    # STEP A: Check if live position on CoinDCX is ALREADY 0
-                    live_qty = fetch_coindcx_live_position_qty(symbol)
-                    if live_qty is not None and live_qty <= 0:
-                        with active_trades_lock:
-                            trade_info = ACTIVE_TRADES.pop(symbol, None)
-                        save_active_trades()
-                        
-                        if trade_info:
-                            entry_p = trade_info.get('entry_price', 0)
-                            m1_k = fetch_klines(symbol, '1m', 1)
-                            exit_cmp = m1_k[-1][4] if (m1_k and len(m1_k) > 0) else entry_p
-                            realized_pnl_pct = ((exit_cmp - entry_p) / entry_p) * 7 * 100 if entry_p > 0 else 0.0
-                            pnl_inr = (realized_pnl_pct / 100.0) * 1000.0
-                            if exit_cmp >= entry_p * 1.001:
-                                sl_type = f"EXCHANGE TP / PROFIT HIT (+{realized_pnl_pct:.1f}% ROE / +₹{pnl_inr:.2f} INR) 💰"
-                            elif abs(exit_cmp - entry_p) / entry_p <= 0.0025:
-                                sl_type = "EXCHANGE BREAKEVEN (FEES COVERED)"
-                            else:
-                                sl_type = f"EXCHANGE SL / CLOSE HIT ({realized_pnl_pct:.1f}% ROE / -₹{abs(pnl_inr):.2f} INR) 🛑"
-                            log_trade_event(symbol, "CLOSED", {"cmp": exit_cmp, "entry_p": entry_p, "realized_pnl_pct": realized_pnl_pct, "sl_type": sl_type})
-                        
-                        st = load_state()
-                        st[symbol] = time.time() + 900
-                        save_state(st)
-                        
-                        send_telegram_message(
-                            f"🛡️ <b>POSITION CLOSED EXTERNALLY / EXCHANGE SL TRIGGERED!</b>\n\n"
-                            f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                            f"• <b>Status:</b> Detected closed on CoinDCX App / Exchange SL\n"
-                            f"• <b>Protection:</b> 30-Min Cooldown Activated (No Re-entry / No Short Trade)"
-                        )
-                        continue
+                    with active_trades_lock:
+                        if symbol not in ACTIVE_TRADES: continue
+                        trade = ACTIVE_TRADES[symbol]
+
+                    entry_time = trade.get('entry_time', time.time())
+                    time_since_entry = time.time() - entry_time
+                    
+                    # Grace period: Wait at least 60s after entry before checking external closure
+                    if time_since_entry >= 60:
+                        live_qty = fetch_coindcx_live_position_qty(symbol)
+                        if live_qty is not None and live_qty <= 0:
+                            time.sleep(2)
+                            confirm_qty = fetch_coindcx_live_position_qty(symbol)
+                            if confirm_qty is not None and confirm_qty <= 0:
+                                with active_trades_lock:
+                                    trade_info = ACTIVE_TRADES.pop(symbol, None)
+                                save_active_trades()
+                                
+                                if trade_info:
+                                    entry_p = trade_info.get('entry_price', 0)
+                                    m1_k = fetch_klines(symbol, '1m', 1)
+                                    exit_cmp = m1_k[-1][4] if (m1_k and len(m1_k) > 0) else entry_p
+                                    realized_pnl_pct = ((exit_cmp - entry_p) / entry_p) * 7 * 100 if entry_p > 0 else 0.0
+                                    pnl_inr = (realized_pnl_pct / 100.0) * 1000.0
+
+                                    if exit_cmp >= entry_p * 1.001:
+                                        sl_type = f"EXCHANGE TP / PROFIT HIT (+{realized_pnl_pct:.1f}% ROE) 💰"
+                                        title = "PROFIT TARGET / RUNNER EXIT 💰"
+                                        icon = "💰"
+                                    elif abs(exit_cmp - entry_p) / entry_p <= 0.0025:
+                                        sl_type = "EXCHANGE BREAKEVEN (FEES COVERED)"
+                                        title = "BREAKEVEN EXIT ⚖️"
+                                        icon = "⚖️"
+                                    else:
+                                        sl_type = f"EXCHANGE SL / CLOSE HIT ({realized_pnl_pct:.1f}% ROE) 🛑"
+                                        title = "STOP LOSS TRIGGERED 🛑"
+                                        icon = "🛑"
+
+                                    log_trade_event(symbol, "CLOSED", {"cmp": exit_cmp, "entry_p": entry_p, "realized_pnl_pct": realized_pnl_pct, "sl_type": sl_type})
+                                
+                                    st = load_state()
+                                    st[symbol] = time.time() + 900
+                                    save_state(st)
+                                    
+                                    cmp_fmt = f"{exit_cmp:.8f}" if exit_cmp < 0.001 else f"{exit_cmp}"
+                                    entry_fmt = f"{entry_p:.8f}" if entry_p < 0.001 else f"{entry_p}"
+                                    send_telegram_message(
+                                        f"🏁 <b>POSITION CLOSED: {title}</b>\n\n"
+                                        f"<b>Pair:</b> B-{clean_coin}_USDT\n"
+                                        f"• <b>Entry Price:</b> <code>${entry_fmt}</code>\n"
+                                        f"• <b>Exit Price:</b> <code>${cmp_fmt}</code>\n"
+                                        f"• <b>Realized PnL:</b> <code>{realized_pnl_pct:+.1f}% ROE ({pnl_inr:+.2f} INR)</code> {icon}\n"
+                                        f"• <b>Trigger:</b> {sl_type}\n"
+                                        f"🛡️ <i>30-Min Cooldown Activated (No Re-entry / No Short Trade)</i>"
+                                    )
+                                continue
 
                     m1_klines = fetch_klines(symbol, '1m', 3)
                     if not m1_klines: continue
                     cmp = m1_klines[-1][4]
                     candle_open_time = m1_klines[-1][0] / 1000.0
                     
-                    with active_trades_lock:
-                        if symbol not in ACTIVE_TRADES: continue
-                        trade = ACTIVE_TRADES[symbol]
-                    
                     entry_p = trade['entry_price']
-                    entry_time = trade.get('entry_time', time.time())
                     
                     live_high = m1_klines[-1][2]
                     current_peak = live_high if candle_open_time >= entry_time else cmp
@@ -1537,7 +1565,7 @@ def monitor_active_positions():
                                     f"• <b>Realized PnL:</b> <code>{realized_pnl_pct:+.1f}% ROE ({pnl_inr:+.2f} INR)</code> 🛑\n"
                                     f"• <b>Trigger:</b> Exchange Bracket SL Triggered\n"
                                     f"🛡️ <i>30-Min Cooldown Activated (No Re-entry / No Short Trade)</i>"
-                                Preserved)
+                                )
                             st = load_state()
                             st[symbol] = time.time() + 900
                             save_state(st)
@@ -1570,15 +1598,17 @@ def monitor_active_positions():
                                 f"⏱️ <i>30-Min Cooldown Locked (No Re-Entries)</i>"
                             )
                         else:
-                            print(f"⚠️ Error closing {symbol} on SL/TP trigger: {res.get('error')}")
+                            print(f"SL Close failed for {symbol}: {res.get('error')}")
                 except Exception as e:
-                    print(f"Error checking position {symbol}: {e}")
+                    print(f"Error monitoring {symbol}: {e}")
         except Exception as e:
-            print(f"Error in monitor loop: {e}")
-        time.sleep(3)
+            print(f"Position monitor exception: {e}")
+        time.sleep(1)
 
 def run_telegram_command_listener():
+    global AUTO_TRADING_ENABLED
     last_update_id = 0
+    time.sleep(10)
     while True:
         try:
             url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=5"
