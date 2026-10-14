@@ -240,15 +240,18 @@ def generate_daily_summary(target_date_str=None):
 
     return "\n".join(lines)
 
+# Core 47 High-Volume Liquid CoinDCX Futures Pairs (Permanent Baseline Guarantee)
 WATCHLIST = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AVAX-USDT', 'DOGE-USDT', 
     'XRP-USDT', 'ADA-USDT', 'LINK-USDT', 'NEAR-USDT', 'BCH-USDT', 
     'SUI-USDT', 'LTC-USDT', 'DOT-USDT', 'PEPE-USDT', 'OP-USDT', 
     'ARB-USDT', 'APT-USDT', 'RENDER-USDT', 'INJ-USDT', 'FET-USDT', 
-    'TIA-USDT', 'WIF-USDT', 'SHIB-USDT', 'FLOKI-USDT', 'AAVE-USDT',
-    'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 'ICP-USDT', 'SAND-USDT',
-    'SEI-USDT', 'ORDI-USDT', 'FIL-USDT', 'JUP-USDT', 'BONK-USDT',
-    'STX-USDT', 'PENDLE-USDT', 'RUNE-USDT', 'IMX-USDT', 'KAS-USDT'
+    'TIA-USDT', 'WIF-USDT', 'SHIB-USDT', 'FLOKI-USDT', 'AAVE-USDT', 
+    'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 'ICP-USDT', 'SAND-USDT', 
+    'SEI-USDT', 'ORDI-USDT', 'FIL-USDT', 'JUP-USDT', 'BONK-USDT', 
+    'STX-USDT', 'PENDLE-USDT', 'RUNE-USDT', 'IMX-USDT', 'KAS-USDT',
+    'ZEC-USDT', 'BAT-USDT', 'TAO-USDT', 'ENA-USDT', 'TRX-USDT',
+    'ONDO-USDT', 'POL-USDT'
 ]
 
 ctx = ssl._create_unverified_context()
@@ -329,7 +332,9 @@ def fetch_dynamic_watchlist(min_volume_usdt=10000000.0):
     if CACHED_DYNAMIC_WATCHLIST and (now - LAST_WATCHLIST_FETCH_TIME < 900):
         return [s for s in CACHED_DYNAMIC_WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS]
 
-    dynamic_list = []
+    # Baseline: Start with our complete 47 curated liquid CoinDCX Futures pairs:
+    base_pool = [s for s in WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS]
+    dynamic_extra = []
     coindcx_active = fetch_coindcx_active_pairs()
 
     ticker_urls = [
@@ -353,24 +358,28 @@ def fetch_dynamic_watchlist(min_volume_usdt=10000000.0):
                             if coin in INACTIVE_COINS:
                                 continue
                             if coin not in ['USDC', 'FDUSD', 'TUSD', 'BUSD', 'EUR', 'GBP', 'DAI', 'USDP', 'AEUR'] and not coin.endswith('UP') and not coin.endswith('DOWN'):
+                                futures_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
+                                pair_1 = f"B-{futures_coin}_USDT"
+                                pair_2 = f"B-{coin}_USDT"
+                                # Check if it exists in CoinDCX active instruments:
                                 if coindcx_active:
-                                    futures_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
-                                    pair_1 = f"B-{futures_coin}_USDT"
-                                    pair_2 = f"B-{coin}_USDT"
                                     is_active = (pair_1 in coindcx_active) or (pair_2 in coindcx_active)
                                     if not is_active:
                                         continue
                                 valid_tickers.append((f"{coin}-USDT", quote_vol))
                     if valid_tickers:
                         valid_tickers.sort(key=lambda x: x[1], reverse=True)
-                        dynamic_list = [x[0] for x in valid_tickers]
+                        dynamic_extra = [x[0] for x in valid_tickers]
                         break
         except Exception: pass
 
-    if not dynamic_list:
-        dynamic_list = [s for s in WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS]
+    # Always preserve the core WATCHLIST, and append any dynamic high-volume discovery pairs:
+    combined_watchlist = list(base_pool)
+    for s in dynamic_extra:
+        if s not in combined_watchlist and s.split('-')[0].upper() not in INACTIVE_COINS:
+            combined_watchlist.append(s)
 
-    CACHED_DYNAMIC_WATCHLIST = dynamic_list
+    CACHED_DYNAMIC_WATCHLIST = combined_watchlist
     LAST_WATCHLIST_FETCH_TIME = now
     return CACHED_DYNAMIC_WATCHLIST
 
@@ -562,7 +571,6 @@ def fetch_all_coindcx_live_positions():
     secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
     if not api_key or not secret_key: return None
 
-    # CoinDCX mandatory pagination payload: page, size, timestamp (epoch in seconds)
     body_variants = [
         {"timestamp": int(time.time()), "page": "1", "size": "50", "margin_currency_short_name": ["USDT"]},
         {"timestamp": int(round(time.time() * 1000)), "page": "1", "size": "50"},
@@ -873,10 +881,10 @@ def send_hourly_market_report():
         bull_coins, bear_coins, neutral_coins = [], [], []
 
         scan_pool = fetch_dynamic_watchlist()
-        for symbol in scan_pool[:40]:
+        for symbol in scan_pool[:47]:
             clean_sym = symbol.replace("-", "_")
             try:
-                time.sleep(0.05)
+                time.sleep(0.04)
                 m15_klines = fetch_klines(symbol, '15m', 30)
                 if m15_klines and len(m15_klines) >= 15:
                     close_prices = [k[4] for k in m15_klines]
@@ -912,7 +920,7 @@ def scan_now_endpoint():
         scan_pool = fetch_dynamic_watchlist()
         for symbol in scan_pool:
             try:
-                time.sleep(0.05)
+                time.sleep(0.04)
                 m15_klines = fetch_klines(symbol, '15m', 100)
                 h1_klines = fetch_klines(symbol, '1h', 60)
                 if not m15_klines or len(m15_klines) < 20: 
@@ -929,8 +937,14 @@ def scan_now_endpoint():
                 vol_spike = calculate_volume_spike(m15_klines)
                 
                 ema20_15m = calculate_ema(close_prices, 20)
-                # Check completed 24h candle daily_klines[0] so volume doesn't falsely reset to 0 after midnight UTC:
-                vol_24h_quote = float(daily_klines[0][5]) * cmp if (daily_klines and len(daily_klines) >= 2 and len(daily_klines[0]) > 5) else (float(daily_klines[-1][5]) * cmp if len(daily_klines[-1]) > 5 else 15000000.0)
+                
+                # Bulletproof 24h Volume: max(yesterday_completed, today_ongoing) to prevent midnight reset bug while capturing breakouts
+                if daily_klines and len(daily_klines) >= 2 and len(daily_klines[0]) > 5:
+                    vol_24h_quote = max(float(daily_klines[0][5]), float(daily_klines[-1][5])) * cmp
+                elif daily_klines and len(daily_klines) > 0 and len(daily_klines[-1]) > 5:
+                    vol_24h_quote = float(daily_klines[-1][5]) * cmp
+                else:
+                    vol_24h_quote = 15000000.0
                 
                 h1_macro_bullish = True
                 if h1_klines and len(h1_klines) >= 20:
@@ -1141,7 +1155,7 @@ def run_scan():
 
     for symbol in scan_pool:
         try:
-            time.sleep(0.08)
+            time.sleep(0.04)
             daily_klines = fetch_klines(symbol, '1d', 2)
             m15_klines = fetch_klines(symbol, '15m', 100)
             h1_klines = fetch_klines(symbol, '1h', 60)
@@ -1156,8 +1170,14 @@ def run_scan():
             rsi_val = calculate_rsi(close_prices)
             vol_spike = calculate_volume_spike(m15_klines)
             
-            # Check completed 24h candle daily_klines[0] so volume doesn't falsely reset to 0 after midnight UTC:
-            vol_24h_quote = float(daily_klines[0][5]) * cmp if (daily_klines and len(daily_klines) >= 2 and len(daily_klines[0]) > 5) else (float(daily_klines[-1][5]) * cmp if len(daily_klines[-1]) > 5 else 15000000.0)
+            # Bulletproof 24h Volume: max(yesterday_completed, today_ongoing) to prevent midnight reset bug while capturing breakouts
+            if daily_klines and len(daily_klines) >= 2 and len(daily_klines[0]) > 5:
+                vol_24h_quote = max(float(daily_klines[0][5]), float(daily_klines[-1][5])) * cmp
+            elif daily_klines and len(daily_klines) > 0 and len(daily_klines[-1]) > 5:
+                vol_24h_quote = float(daily_klines[-1][5]) * cmp
+            else:
+                vol_24h_quote = 15000000.0
+
             if vol_24h_quote < 10000000:
                 continue
 
