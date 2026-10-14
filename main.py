@@ -320,77 +320,156 @@ def fetch_coindcx_active_pairs():
     if active_set:
         CACHED_COINDCX_ACTIVE_PAIRS = active_set
         LAST_COINDCX_ACTIVE_FETCH = now
-        print(f"✅ Cached {len(active_set)} active CoinDCX futures pairs.")
-    return active_set
 
-def fetch_dynamic_watchlist():
+    return CACHED_COINDCX_ACTIVE_PAIRS
+
+def fetch_dynamic_watchlist(min_volume_usdt=10000000.0):
     global CACHED_DYNAMIC_WATCHLIST, LAST_WATCHLIST_FETCH_TIME
     now = time.time()
-    if CACHED_DYNAMIC_WATCHLIST and (now - LAST_WATCHLIST_FETCH_TIME < 3600):
-        return CACHED_DYNAMIC_WATCHLIST
+    if CACHED_DYNAMIC_WATCHLIST and (now - LAST_WATCHLIST_FETCH_TIME < 900):
+        return [s for s in CACHED_DYNAMIC_WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS]
 
-    top_coins = []
-    try:
-        # Fetch 24h market ticker from CoinDCX / Binance public data
-        url = "https://api.binance.com/api/v3/ticker/24hr"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            usdt_pairs = [d for d in data if d.get('symbol', '').endswith('USDT')]
-            usdt_pairs.sort(key=lambda x: float(x.get('quoteVolume', 0)), reverse=True)
-            for item in usdt_pairs:
-                sym = item.get('symbol', '')
-                base = sym.replace('USDT', '')
-                if any(x in base for x in ['UP', 'DOWN', 'BEAR', 'BULL']): continue
-                top_coins.append(f"{base}-USDT")
-                if len(top_coins) >= 70: break
-    except Exception as e:
-        print(f"Watchlist dynamic fetch error: {e}")
-
+    dynamic_list = []
     coindcx_active = fetch_coindcx_active_pairs()
 
-    final_pool = []
-    seen = set()
-    combined_source = (top_coins + WATCHLIST) if top_coins else WATCHLIST
-    for sym in combined_source:
-        raw_coin = sym.split('-')[0].upper()
-        if raw_coin in seen or raw_coin in INACTIVE_COINS: continue
-        futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin)
-        b_pair = f"B-{futures_coin}_USDT"
-        
-        if coindcx_active:
-            if (b_pair in coindcx_active) or (f"B-{raw_coin}_USDT" in coindcx_active) or (f"{raw_coin}USDT" in coindcx_active) or (f"B-{futures_coin}USDT" in coindcx_active):
-                seen.add(raw_coin)
-                final_pool.append(sym)
-        else:
-            seen.add(raw_coin)
-            final_pool.append(sym)
-
-    if final_pool:
-        CACHED_DYNAMIC_WATCHLIST = final_pool
-        LAST_WATCHLIST_FETCH_TIME = now
-        print(f"🎯 Dynamic Watchlist Updated: {len(final_pool)} liquid coins ready.")
-        return final_pool
-    return WATCHLIST
-
-def fetch_klines(symbol, interval='15m', limit=100):
-    clean_sym = symbol.replace("-", "")
-    endpoints = [
-        f"https://api.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval}&limit={limit}",
-        f"https://api1.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval}&limit={limit}",
-        f"https://api2.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval}&limit={limit}",
-        f"https://api3.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval}&limit={limit}"
+    ticker_urls = [
+        "https://api.binance.com/api/v3/ticker/24hr",
+        "https://api1.binance.com/api/v3/ticker/24hr",
+        "https://api.mexc.com/api/v3/ticker/24hr",
+        "https://data-api.binance.vision/api/v3/ticker/24hr"
     ]
-    for url in endpoints:
+    for t_url in ticker_urls:
         try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            req = urllib.request.Request(t_url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 if isinstance(data, list) and len(data) > 0:
-                    return [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])] for k in data]
-        except Exception:
-            continue
-    return None
+                    valid_tickers = []
+                    for item in data:
+                        sym = item.get('symbol', '')
+                        quote_vol = float(item.get('quoteVolume', 0))
+                        if sym.endswith('USDT') and quote_vol >= min_volume_usdt:
+                            coin = sym[:-4].upper()
+                            if coin in INACTIVE_COINS:
+                                continue
+                            if coin not in ['USDC', 'FDUSD', 'TUSD', 'BUSD', 'EUR', 'GBP', 'DAI', 'USDP', 'AEUR'] and not coin.endswith('UP') and not coin.endswith('DOWN'):
+                                if coindcx_active:
+                                    futures_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
+                                    pair_1 = f"B-{futures_coin}_USDT"
+                                    pair_2 = f"B-{coin}_USDT"
+                                    is_active = (pair_1 in coindcx_active) or (pair_2 in coindcx_active)
+                                    if not is_active:
+                                        continue
+                                valid_tickers.append((f"{coin}-USDT", quote_vol))
+                    if valid_tickers:
+                        valid_tickers.sort(key=lambda x: x[1], reverse=True)
+                        dynamic_list = [x[0] for x in valid_tickers]
+                        break
+        except Exception: pass
+
+    if not dynamic_list:
+        dynamic_list = [s for s in WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS]
+
+    CACHED_DYNAMIC_WATCHLIST = dynamic_list
+    LAST_WATCHLIST_FETCH_TIME = now
+    return CACHED_DYNAMIC_WATCHLIST
+
+def fetch_klines(symbol, interval_str="15m", limit=100):
+    coin = symbol.split('-')[0].upper()
+    clean_sym = f"{coin}USDT"
+    
+    # Provider 1: Binance Endpoints (Multiple mirrors)
+    binance_endpoints = [
+        f"https://api.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}",
+        f"https://api1.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}",
+        f"https://api2.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}",
+        f"https://api3.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}",
+        f"https://data-api.binance.vision/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}"
+    ]
+    for url in binance_endpoints:
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, context=ctx, timeout=4) as resp:
+                raw = json.loads(resp.read().decode('utf-8'))
+                if isinstance(raw, list) and len(raw) > 0 and isinstance(raw[0], list):
+                    return [[int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])] for c in raw]
+        except Exception: pass
+
+    # Provider 2: MEXC Public Market API (High-availability global API, identical to Binance format)
+    try:
+        url = f"https://api.mexc.com/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=4) as resp:
+            raw = json.loads(resp.read().decode('utf-8'))
+            if isinstance(raw, list) and len(raw) > 0 and isinstance(raw[0], list):
+                return [[int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])] for c in raw]
+    except Exception: pass
+
+    # Provider 3: CoinDCX Public Candles API
+    try:
+        futures_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
+        pair_str = f"B-{futures_coin}_USDT"
+        coindcx_int = "1" if interval_str == "1m" else ("5" if interval_str == "5m" else ("15" if interval_str == "15m" else ("60" if interval_str == "1h" else "1D")))
+        url = f"https://public.coindcx.com/market_data/candles?pair={pair_str}&interval={coindcx_int}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            raw = json.loads(resp.read().decode('utf-8'))
+            if isinstance(raw, list) and len(raw) > 0:
+                raw_sorted = sorted(raw, key=lambda x: x.get('time', 0))
+                formatted = []
+                for c in raw_sorted[-limit:]:
+                    t = int(c.get('time', time.time() * 1000))
+                    o = float(c.get('open', 0))
+                    h = float(c.get('high', 0))
+                    l = float(c.get('low', 0))
+                    cl = float(c.get('close', 0))
+                    v = float(c.get('volume', 0))
+                    formatted.append([t, o, h, l, cl, v])
+                if len(formatted) > 0:
+                    return formatted
+    except Exception: pass
+
+    # Provider 4: Gate.io Public Candlesticks API
+    try:
+        gate_int = "1m" if interval_str == "1m" else ("5m" if interval_str == "5m" else ("15m" if interval_str == "15m" else ("1h" if interval_str == "1h" else "1d")))
+        url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={coin}_USDT&interval={gate_int}&limit={limit}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            raw = json.loads(resp.read().decode('utf-8'))
+            if isinstance(raw, list) and len(raw) > 0 and isinstance(raw[0], list):
+                raw_sorted = sorted(raw, key=lambda x: int(x[0]))
+                formatted = []
+                for c in raw_sorted:
+                    t = int(c[0]) * 1000
+                    v = float(c[1])
+                    cl = float(c[2])
+                    h = float(c[3])
+                    l = float(c[4])
+                    o = float(c[5])
+                    formatted.append([t, o, h, l, cl, v])
+                if len(formatted) > 0:
+                    return formatted
+    except Exception: pass
+
+    # Provider 5: Bybit Public Market API
+    try:
+        bybit_int = "1" if interval_str == "1m" else ("5" if interval_str == "5m" else ("15" if interval_str == "15m" else ("60" if interval_str == "1h" else "D")))
+        bybit_sym = f"1000{coin}USDT" if coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI', 'LUNC', 'SATS'] else f"{coin}USDT"
+        url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={bybit_sym}&interval={bybit_int}&limit={limit}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            list_data = data.get('result', {}).get('list', [])
+            if list_data:
+                list_sorted = sorted(list_data, key=lambda x: int(x[0]))
+                formatted = []
+                for c in list_sorted:
+                    formatted.append([int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])])
+                if len(formatted) > 0:
+                    return formatted
+    except Exception: pass
+
+    return []
 
 def calculate_ema(prices, period=20):
     if len(prices) < period: return prices[-1] if prices else 0.0
@@ -829,8 +908,8 @@ def send_hourly_market_report():
 @app.route('/scan-now')
 def scan_now_endpoint():
     try:
-        scan_pool = fetch_dynamic_watchlist()
         report_lines = []
+        scan_pool = fetch_dynamic_watchlist()
         for symbol in scan_pool:
             try:
                 time.sleep(0.05)
