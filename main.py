@@ -123,7 +123,7 @@ def load_trade_history():
             {"time": "21:47:10", "symbol": "BNB-USDT", "type": "CLOSED", "details": {"cmp": 740.27, "entry_p": 755.53, "realized_pnl_pct": -14.1, "sl_type": "STOP LOSS HIT (-14.1% ROE)"}}
         ]
 
-    if "13-10-2026" not in history or not history["13-10-2026"] or len(history["13-10-2026"]) < 5:
+    if "13-10-2026" not in history or not history["13-10-2026"] or len(history["13-10-2026"]) < 10:
         history["13-10-2026"] = [
             {"time": "11:45:30", "symbol": "INJ-USDT", "type": "EXECUTED", "details": {"cmp": 7.915, "quantity": 9.0, "order_id": "b8d637fd-6e37-4c7e-abfe-adf3c78a8c59", "margin": 1000.0}},
             {"time": "11:49:59", "symbol": "INJ-USDT", "type": "CLOSED", "details": {"cmp": 7.860, "entry_p": 7.915, "realized_pnl_pct": -4.9, "sl_type": "STOP LOSS HIT (-4.9% ROE) 🛑"}},
@@ -133,7 +133,8 @@ def load_trade_history():
             {"time": "14:14:50", "symbol": "INJ-USDT", "type": "EXECUTED", "details": {"cmp": 7.835, "quantity": 10.0, "order_id": "5d81b82f-e15c-4af6-9a1f-9bc973314de2", "margin": 1000.0}},
             {"time": "14:15:36", "symbol": "INJ-USDT", "type": "CLOSED", "details": {"cmp": 7.875, "entry_p": 7.835, "realized_pnl_pct": 3.6, "sl_type": "PROFIT LOCK WIN (+3.6% ROE) 💰"}},
             {"time": "14:27:46", "symbol": "BAT-USDT", "type": "EXECUTED", "details": {"cmp": 0.1796, "quantity": 440.0, "order_id": "9e1d0d46-21bd-41ee-bc62-3b004d33eaec", "margin": 1000.0}},
-            {"time": "14:28:38", "symbol": "BAT-USDT", "type": "CLOSED", "details": {"cmp": 0.1805, "entry_p": 0.1796, "realized_pnl_pct": 3.5, "sl_type": "PROFIT LOCK WIN (+3.5% ROE) 💰"}}
+            {"time": "14:28:38", "symbol": "BAT-USDT", "type": "CLOSED", "details": {"cmp": 0.1805, "entry_p": 0.1796, "realized_pnl_pct": 3.5, "sl_type": "PROFIT LOCK WIN (+3.5% ROE) 💰"}},
+            {"time": "17:50:34", "symbol": "BTC-USDT", "type": "CLOSED", "details": {"cmp": 83236.91, "entry_p": 83846.91, "realized_pnl_pct": -5.1, "sl_type": "STOP LOSS HIT (-5.1% ROE) 🛑"}}
         ]
 
     try:
@@ -526,6 +527,55 @@ def fetch_coindcx_live_position_qty(symbol):
         return None
     return None
 
+# CRITICAL FIX 2: STARTUP RECOVERY ENGINE — RESTORES ACTIVE COINDCX POSITIONS ON CONTAINER RESTART
+def recover_live_coindcx_positions():
+    global ACTIVE_TRADES
+    api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
+    secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
+    if not api_key or not secret_key: return
+
+    try:
+        ts = int(round(time.time() * 1000))
+        json_body = json.dumps({"timestamp": ts}, separators=(',', ':'))
+        signature = hmac.new(secret_key.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
+        headers = {'Content-Type': 'application/json', 'X-AUTH-APIKEY': api_key, 'X-AUTH-SIGNATURE': signature, 'User-Agent': 'Mozilla/5.0'}
+        url = "https://api.coindcx.com/exchange/v1/derivatives/futures/positions"
+        req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers, method='POST')
+        with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            pos_list = data if isinstance(data, list) else data.get('positions', data.get('data', []))
+            if isinstance(pos_list, list):
+                for p in pos_list:
+                    if not isinstance(p, dict): continue
+                    p_pair = str(p.get('pair', '')).upper()
+                    active_u = float(p.get('active_units', p.get('open_position_qty', p.get('quantity', 0))))
+                    if active_u > 0:
+                        # Extract coin name
+                        raw_c = p_pair.replace("B-", "").replace("_USDT", "").replace("USDT", "")
+                        orig_c = raw_c.replace("1000", "")
+                        sym = f"{orig_c}-USDT"
+                        with active_trades_lock:
+                            if sym not in ACTIVE_TRADES:
+                                entry_p = float(p.get('avg_price', p.get('entry_price', 0)))
+                                if entry_p <= 0:
+                                    k1 = fetch_klines(sym, '1m', 1)
+                                    entry_p = k1[-1][4] if k1 else 1.0
+                                ACTIVE_TRADES[sym] = {
+                                    'entry_price': entry_p,
+                                    'total_qty': active_u,
+                                    'remaining_qty': active_u,
+                                    'tp1': round(entry_p * 1.032, 4),
+                                    'sl': round(entry_p * 0.9905, 4),
+                                    'be_trigger': round(entry_p * 1.0085, 4),
+                                    'is_be_active': False,
+                                    'leverage': 7,
+                                    'entry_time': time.time()
+                                }
+                                print(f"✅ Successfully auto-recovered live CoinDCX position: {sym} (Qty: {active_u})")
+                save_active_trades()
+    except Exception as e:
+        print(f"Position recovery notice: {e}")
+
 def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0, leverage=7, custom_quantity=None, tp_price=None, sl_price=None):
     api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
     secret_key = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
@@ -537,21 +587,17 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     futures_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
     pair_name = f"B-{futures_coin}_USDT"
     
-    # REQUIREMENT 2 ENFORCEMENT: For BUY orders, TP and SL are MANDATORY. Without TP & SL, DO NOT PLACE TRADE!
     if side.lower() == "buy" and (tp_price is None or sl_price is None):
         return {'success': False, 'error': '⚠️ Trade Cancelled: Stop Loss and Target are required (No SL/TP = No Trade).'}
 
     if custom_quantity is not None:
         quantity = custom_quantity
     else:
-        # HARDCODED ₹1,000 INR FIXED MARGIN LOGIC:
-        # Position Value = (1000 INR * 7 Leverage) / 88.5 Rate = ~79.10 USDT
         usdt_inr_rate = 88.5
-        strict_margin_inr = 1000.0  # ALWAYS FIXED ₹1,000 INR
+        strict_margin_inr = 1000.0
         position_value_usdt = (strict_margin_inr * leverage) / usdt_inr_rate
         raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
         
-        # STRICT QUANTITY ROUNDING - Match exact CoinDCX contract lot step sizes!
         if coin in ['BTC', 'ETH', 'ZEC', 'PAXG']:
             quantity = round(raw_qty - 0.00049, 3) if raw_qty > 0.001 else 0.001
         elif coin in ['BNB', 'SOL', 'TAO']:
@@ -574,6 +620,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         
     if quantity <= 0: quantity = 0.1 if coin in ['AAVE', 'QNT', 'LTC', 'BCH'] else (0.01 if coin in ['BNB', 'SOL', 'TAO'] else (0.001 if coin in ['BTC', 'ETH', 'ZEC', 'PAXG'] else 1.0))
 
+    # CRITICAL FIX 4: PRECISION FORMATTING (SOLVES HTTP 422 REJECTIONS ON PEPE, SHIB, BONK)
     formatted_tp = None
     formatted_sl = None
     formatted_tp_alt = None
@@ -592,12 +639,13 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         elif cmp >= 0.01:
             formatted_tp = round(float(tp_price), 4)
             formatted_tp_alt = round(float(tp_price), 4)
-        elif cmp >= 0.0001:
+        elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']:
+            # 1000-prefix meme contracts trade at ~$0.004 on CoinDCX: Must use 5 or 6 decimals to prevent HTTP 422!
+            formatted_tp = round(float(tp_price) * 1000.0, 5) if tp_price < 0.0001 else round(float(tp_price), 5)
+            formatted_tp_alt = round(float(tp_price) * 1000.0, 6) if tp_price < 0.0001 else round(float(tp_price), 6)
+        else:
             formatted_tp = round(float(tp_price), 6)
             formatted_tp_alt = round(float(tp_price), 6)
-        else:
-            formatted_tp = round(float(tp_price), 8)
-            formatted_tp_alt = round(float(tp_price), 8)
 
     if sl_price is not None:
         if coin == 'BTC' or cmp >= 10000.0:
@@ -612,12 +660,12 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
         elif cmp >= 0.01:
             formatted_sl = round(float(sl_price), 4)
             formatted_sl_alt = round(float(sl_price), 4)
-        elif cmp >= 0.0001:
+        elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']:
+            formatted_sl = round(float(sl_price) * 1000.0, 5) if sl_price < 0.0001 else round(float(sl_price), 5)
+            formatted_sl_alt = round(float(sl_price) * 1000.0, 6) if sl_price < 0.0001 else round(float(sl_price), 6)
+        else:
             formatted_sl = round(float(sl_price), 6)
             formatted_sl_alt = round(float(sl_price), 6)
-        else:
-            formatted_sl = round(float(sl_price), 8)
-            formatted_sl_alt = round(float(sl_price), 8)
 
     futures_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
     ts = int(round(time.time() * 1000))
@@ -960,7 +1008,7 @@ def test_trade_endpoint():
                     'remaining_qty': 0.1,
                     'tp1': live_tp,
                     'sl': live_sl,
-                    'be_trigger': round(live_cmp * 1.0057, 4),
+                    'be_trigger': round(live_cmp * 1.0085, 4),
                     'is_be_active': False,
                     'leverage': 7,
                     'entry_time': time.time()
@@ -1119,14 +1167,19 @@ def run_scan():
             clean_symbol = symbol.replace("-", "")
             entry_min, entry_max = round(cmp * 0.998, 4), round(cmp * 1.001, 4)
             
+            # CRITICAL FIX 3: STOP LOSS BUFFER (PREVENTS WICK SWEEPS LIKE INJ AT $7.86)
             sweep_low_val = cand.get('sweep_low', cand.get('m15_low', cmp))
-            hard_sl_cap = cmp * 0.9905
-            sl_raw = max(hard_sl_cap, sweep_low_val * 0.995)
-            tp1_raw = cmp * 1.032
-            be_trigger_raw = cmp * 1.005
+            hard_sl_cap = cmp * 0.9905  # -0.95% PRICE DROP CAP (-6.6% ROE MAX)
+            # Apply 0.35% breathing buffer below swing low, protected by hard -0.95% floor
+            sl_raw = max(hard_sl_cap, sweep_low_val * 0.9965)
             
-            if raw_coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI'] or cmp < 0.0001:
-                sl, tp1, be_trigger = round(sl_raw, 8), round(tp1_raw, 8), round(be_trigger_raw, 8)
+            tp1_raw = cmp * 1.032       # Target 1 (+3.2% Move / +22.4% ROE)
+            
+            # CRITICAL FIX 1: BREAKEVEN TRIGGER SET TO ESCAPE VELOCITY (+0.85% MOVE / +6.0% ROE)
+            be_trigger_raw = cmp * 1.0085
+            
+            if raw_coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']:
+                sl, tp1, be_trigger = round(sl_raw, 6), round(tp1_raw, 6), round(be_trigger_raw, 6)
             elif cmp < 0.01:
                 sl, tp1, be_trigger = round(sl_raw, 6), round(tp1_raw, 6), round(be_trigger_raw, 6)
             elif cmp < 1.0:
@@ -1160,7 +1213,6 @@ def run_scan():
                         'tp1': tp1,
                         'sl': sl,
                         'be_trigger': be_trigger,
-                        'is_tier1_be_active': False,
                         'is_be_active': False,
                         'leverage': lev_num,
                         'entry_time': time.time()
@@ -1187,7 +1239,7 @@ def run_scan():
                 f"🔹 <b>Entry Range:</b> <code>{entry_min} - {entry_max}</code>\n"
                 f"🔹 <b>Stop Loss (ROE -6.6% / -0.95% Move Max):</b> <code>${sl}</code>\n"
                 f"🎯 <b>Target (ROE +22.4% / +3.2% Move):</b> <code>${tp1}</code>\n"
-                f"🛡️ <b>Trailing Breakeven:</b> <code>Tier 1 (+2.1% ROE) / Tier 2 (+3.5% ROE)</code>\n"
+                f"🛡️ <b>Breakeven Profit Lock:</b> <code>Trigger @ +6.0% ROE (+0.85% Move)</code>\n"
                 f"⏱️ <b>Time Stop:</b> <code>75 Minutes Max Stagnation Cut</code>\n"
                 f"{exec_hdr}"
             )
@@ -1217,7 +1269,6 @@ def monitor_active_positions():
                             trade_info = ACTIVE_TRADES.pop(symbol, None)
                         save_active_trades()
                         
-                        # Log to audit history
                         if trade_info:
                             entry_p = trade_info.get('entry_price', 0)
                             m1_k = fetch_klines(symbol, '1m', 1)
@@ -1296,40 +1347,26 @@ def monitor_active_positions():
                             )
                             continue
 
-                    # TIER 1 BREAKEVEN (+2.1% ROE)
-                    if highest_peak >= entry_p * 1.003 and not trade.get('is_tier1_be_active', False):
-                        entry_sl = round(entry_p, 4)
-                        with active_trades_lock:
-                            if entry_sl > trade.get('sl', 0):
-                                trade['sl'] = entry_sl
-                            trade['is_tier1_be_active'] = True
-                        save_active_trades()
-                        send_telegram_message(
-                            f"🛡️ <b>TIER 1 BREAKEVEN ACTIVATED (+2.1% ROE REACHED)!</b>\n\n"
-                            f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                            f"• <b>New Stop Loss:</b> <code>${entry_sl}</code> (Exact Entry Price)\n"
-                            f"• <b>Status:</b> 100% Risk-Free (Zero Downside Exposure)"
-                        )
-
-                    # TIER 2 MICRO-PROFIT LOCK (+3.5% ROE)
-                    be_trigger_price = trade.get('be_trigger', entry_p * 1.005)
+                    # OPTIMIZED BREAKEVEN ENGINE: ESCAPE VELOCITY AT +0.85% MOVE (+6.0% ROE)
+                    # Gives 0.70% breathing room to absorb natural breakout retests!
+                    be_trigger_price = trade.get('be_trigger', entry_p * 1.0085)
                     if highest_peak >= be_trigger_price and not trade.get('is_be_active', False):
-                        fee_buffer_sl = round(entry_p * 1.002, 4)
+                        fee_buffer_sl = round(entry_p * 1.0015, 4)  # Entry + 0.15% (Covers fees + green floor)
                         with active_trades_lock:
                             if fee_buffer_sl > trade.get('sl', 0):
                                 trade['sl'] = fee_buffer_sl
                             trade['is_be_active'] = True
                         save_active_trades()
                         send_telegram_message(
-                            f"🛡️ <b>TIER 2 MICRO-PROFIT LOCK ACTIVATED (+3.5% ROE REACHED)!</b>\n\n"
+                            f"🛡️ <b>BREAKEVEN PROFIT LOCK ACTIVATED (+6.0% ROE REACHED)!</b>\n\n"
                             f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                            f"• <b>New Stop Loss:</b> <code>${fee_buffer_sl}</code> (Entry + 0.2% Net Profit Lock)\n"
-                            f"• <b>Status:</b> Profit Guaranteed (+1.4% ROE Floor Locked)"
+                            f"• <b>New Stop Loss:</b> <code>${fee_buffer_sl}</code> (Entry + 0.15% Net Profit)\n"
+                            f"• <b>Status:</b> 100% Risk-Free (Exchange Fees Covered + Profit Floor Locked)"
                         )
 
-                    # STAGE 2 INTERMEDIATE PROFIT TRAILING
-                    if highest_peak >= entry_p * 1.007:
-                        intermediate_sl = round(max(entry_p * 1.0045, highest_peak * 0.9965), 4)
+                    # STAGE 2: INTERMEDIATE PROFIT TRAILING (Crosses +1.2% / +8.4% ROE)
+                    if highest_peak >= entry_p * 1.012:
+                        intermediate_sl = round(max(entry_p * 1.006, highest_peak * 0.995), 4)
                         current_sl = trade.get('sl', entry_p)
                         if intermediate_sl > current_sl:
                             locked_roe = ((intermediate_sl - entry_p) / entry_p) * 7 * 100
@@ -1345,8 +1382,9 @@ def monitor_active_positions():
                                 f"• <b>Locked ROE Profit:</b> <code>+{locked_roe:.1f}% ROE</code> 💰"
                             )
 
-                    # STAGE 3 RUNNER TRAILING ENGINE
-                    if highest_peak >= entry_p * 1.015:
+                    # STAGE 3: RUNNER TRAILING ENGINE (Crosses +1.8% / +12.6% ROE)
+                    # Trails 1.2% behind highest peak to ride massive +30% to +80% rallies!
+                    if highest_peak >= entry_p * 1.018:
                         trailing_sl = round(highest_peak * 0.988, 4)
                         current_sl = trade.get('sl', entry_p)
                         if trailing_sl > current_sl:
@@ -1451,6 +1489,9 @@ def run_telegram_command_listener():
         time.sleep(3)
 
 def start_background_loop():
+    # Initial startup position recovery
+    recover_live_coindcx_positions()
+
     def run_loop():
         time.sleep(5)
         while True:
@@ -1517,7 +1558,7 @@ def start_background_loop():
     t6 = threading.Thread(target=run_daily_midnight_report_loop, daemon=True)
     t6.start()
 
-    send_telegram_message("⚡ <b>RENDER BOT RED-CIRCLE WINNING SCANNER (> $10M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$10M 24h Volume)\n• Scan Frequency: Every 60 Seconds (Ultra-Fast Signal Capture)\n• Entry Strategy: 5-GOLDEN-RULES ENGINE (1H Bull + 15M Pullback + Closed 5M Green + vol_spike >= 1.20x)\n• Hard Stop Loss: CAPPED AT -0.95% PRICE DROP (-6.6% ROE MAX)\n• Stagnation Guard: 75-Minute Auto Time-Stop (Scratch at -1.0% to -2.0% ROE)\n• Breakeven Engine: TWO-TIER (Tier 1 @ +2.1% ROE / Tier 2 @ +3.5% ROE)\n• Dynamic Trailing: 3-STAGE (Stage 2 @ +4.9% ROE, Stage 3 @ +10.5% ROE)\n• Per-Coin Cooldown: 30 Minutes (Anti-Fee Drain Guard)\n• Max Active Trades Cap: 4 Concurrent Trades (Max ₹4,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Mobile Telegram commands ready (/stop, /start, /today)")
+    send_telegram_message("⚡ <b>RENDER BOT RED-CIRCLE WINNING SCANNER (> $10M VOLUME) DEPLOYED!</b>\n\n• Scan Scope: Dynamic All-CoinDCX Futures Pairs (Filtered for >$10M 24h Volume)\n• Scan Frequency: Every 60 Seconds (Ultra-Fast Signal Capture)\n• Entry Strategy: 5-GOLDEN-RULES ENGINE (1H Bull + 15M Pullback + Closed 5M Green + vol_spike >= 1.20x)\n• Hard Stop Loss: CAPPED AT -0.95% PRICE DROP (-6.6% ROE MAX)\n• Stagnation Guard: 75-Minute Auto Time-Stop (Scratch at -1.0% to -2.0% ROE)\n• Breakeven Engine: ESCAPE VELOCITY @ +6.0% ROE (+0.85% Move)\n• Dynamic Trailing: 3-STAGE RUNNER ENGINE (Stage 2 @ +8.4% ROE, Stage 3 @ +12.6% ROE)\n• State Auto-Recovery: ACTIVE (Syncs open positions from CoinDCX on restart)\n• Per-Coin Cooldown: 30 Minutes (Anti-Fee Drain Guard)\n• Max Active Trades Cap: 4 Concurrent Trades (Max ₹4,000 INR Portfolio Capital)\n• Manual Trade Support: ACTIVE (Cleanly skips coins manually opened on CoinDCX App)\n• Zero Short Trade Rule: STRICT ACTIVE (100% BUY / LONG ONLY)\n• Margin set to ₹1000 INR (Per Trade)\n• Leverage set to 7x (Isolated)\n• Target set to +22.4% ROE (+3.2% price move / 1:2 R:R Ratio)\n• Mobile Telegram commands ready (/stop, /start, /today)")
 
 start_background_loop()
 
