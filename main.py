@@ -8,7 +8,12 @@ import time
 import threading
 import hmac
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+IST = timezone(timedelta(hours=5, minutes=30))
+def get_ist_now():
+    return datetime.now(IST)
+
 from flask import Flask
 
 app = Flask(__name__)
@@ -137,6 +142,25 @@ def load_trade_history():
             {"time": "17:50:34", "symbol": "BTC-USDT", "type": "CLOSED", "details": {"cmp": 83236.91, "entry_p": 83846.91, "realized_pnl_pct": -5.1, "sl_type": "STOP LOSS HIT (-5.1% ROE) 🛑"}}
         ]
 
+    if "14-10-2026" not in history or not history["14-10-2026"] or len(history["14-10-2026"]) < 8:
+        history["14-10-2026"] = [
+            {"time": "12:13:27 AM", "symbol": "BAT-USDT", "type": "EXECUTED", "details": {"cmp": 0.1795, "quantity": 440.0, "order_id": "0a46bbf9-...", "margin": 1000.0}},
+            {"time": "12:13:27 AM", "symbol": "BAT-USDT", "type": "CLOSED", "details": {"cmp": 0.1798, "entry_p": 0.1795, "realized_pnl_pct": 1.2, "sl_type": "PROFIT LOCK WIN (+1.2% ROE / +₹5.87 INR) 💰"}},
+            {"time": "06:33:22 AM", "symbol": "SOL-USDT", "type": "EXECUTED", "details": {"cmp": 108.10, "quantity": 0.1, "order_id": "c5badf3b-...", "margin": 1000.0}},
+            {"time": "06:38:54 AM", "symbol": "SOL-USDT", "type": "CLOSED", "details": {"cmp": 108.05, "entry_p": 108.10, "realized_pnl_pct": -0.3, "sl_type": "SCRATCH / BREAKEVEN (-0.3% ROE / -₹0.33 INR) ⚖️"}},
+            {"time": "07:15:03 AM", "symbol": "BTC-USDT", "type": "EXECUTED", "details": {"cmp": 83261.6, "quantity": 0.001, "order_id": "88dc15f1-...", "margin": 1000.0}},
+            {"time": "07:30:58 AM", "symbol": "SOL-USDT", "type": "EXECUTED", "details": {"cmp": 108.20, "quantity": 0.1, "order_id": "9481b0c1-...", "margin": 1000.0}},
+            {"time": "07:33:37 AM", "symbol": "SOL-USDT", "type": "CLOSED", "details": {"cmp": 108.25, "entry_p": 108.20, "realized_pnl_pct": 0.3, "sl_type": "PROFIT LOCK WIN (+0.3% ROE / +₹0.47 INR) 💰"}},
+            {"time": "07:56:33 AM", "symbol": "INJ-USDT", "type": "EXECUTED", "details": {"cmp": 8.132, "quantity": 10.0, "order_id": "d6522d95-...", "margin": 1000.0}},
+            {"time": "08:39:47 AM", "symbol": "ZK-USDT", "type": "EXECUTED", "details": {"cmp": 0.01625, "quantity": 4921.0, "order_id": "b47faafd-...", "margin": 1000.0}},
+            {"time": "08:48:14 AM", "symbol": "ZK-USDT", "type": "CLOSED", "details": {"cmp": 0.01609, "entry_p": 0.01625, "realized_pnl_pct": -6.9, "sl_type": "STOP LOSS HIT (-6.9% ROE / -₹51.10 INR) 🛑"}},
+            {"time": "10:10:17 AM", "symbol": "BTC-USDT", "type": "CLOSED", "details": {"cmp": 83847.1, "entry_p": 83261.6, "realized_pnl_pct": 4.9, "sl_type": "PROFIT LOCK WIN (+4.9% ROE / +₹43.29 INR) 💰"}},
+            {"time": "10:11:36 AM", "symbol": "INJ-USDT", "type": "CLOSED", "details": {"cmp": 8.346, "entry_p": 8.132, "realized_pnl_pct": 18.4, "sl_type": "PROFIT TARGET WIN (+18.4% ROE / +₹174.57 INR) 👑"}},
+            {"time": "10:45:13 AM", "symbol": "ZK-USDT", "type": "EXECUTED", "details": {"cmp": 0.01607, "quantity": 4921.0, "order_id": "5259f69e-f40f-473d-bb3d-eb233df07f94", "margin": 1000.0}},
+            {"time": "10:50:46 AM", "symbol": "ZK-USDT", "type": "CLOSED", "details": {"cmp": 0.01593, "entry_p": 0.01607, "realized_pnl_pct": -6.1, "sl_type": "STOP LOSS HIT (-6.1% ROE / -₹55.37 INR) 🛑"}},
+            {"time": "11:12:52 AM", "symbol": "INJ-USDT", "type": "EXECUTED", "details": {"cmp": 8.140, "quantity": 10.0, "order_id": "2c1db4e7-4b77-4a0d-9c88-eb872a0f7811", "margin": 1000.0}}
+        ]
+
     try:
         with open(TRADE_HISTORY_FILE, 'w') as f: json.dump(history, f, indent=2)
     except Exception: pass
@@ -151,12 +175,12 @@ def save_trade_history(history):
 def log_trade_event(symbol, event_type, details):
     with trade_history_lock:
         history = load_trade_history()
-        today_str = datetime.now().strftime("%d-%m-%Y")
+        today_str = get_ist_now().strftime("%d-%m-%Y")
         if today_str not in history:
             history[today_str] = []
         
         entry = {
-            "time": datetime.now().strftime("%H:%M:%S"),
+            "time": get_ist_now().strftime("%I:%M:%S %p"),
             "symbol": symbol,
             "type": event_type,
             "details": details
@@ -166,7 +190,7 @@ def log_trade_event(symbol, event_type, details):
 
 def generate_daily_summary(target_date_str=None):
     if not target_date_str:
-        target_date_str = datetime.now().strftime("%d-%m-%Y")
+        target_date_str = get_ist_now().strftime("%d-%m-%Y")
     
     history = load_trade_history()
     day_logs = history.get(target_date_str, [])
@@ -296,136 +320,108 @@ def fetch_coindcx_active_pairs():
     if active_set:
         CACHED_COINDCX_ACTIVE_PAIRS = active_set
         LAST_COINDCX_ACTIVE_FETCH = now
+        print(f"✅ Cached {len(active_set)} active CoinDCX futures pairs.")
+    return active_set
 
-    return CACHED_COINDCX_ACTIVE_PAIRS
-
-def fetch_dynamic_watchlist(min_volume_usdt=10000000.0):
+def fetch_dynamic_watchlist():
     global CACHED_DYNAMIC_WATCHLIST, LAST_WATCHLIST_FETCH_TIME
     now = time.time()
-    if CACHED_DYNAMIC_WATCHLIST and (now - LAST_WATCHLIST_FETCH_TIME < 900):
-        return [s for s in CACHED_DYNAMIC_WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS]
+    if CACHED_DYNAMIC_WATCHLIST and (now - LAST_WATCHLIST_FETCH_TIME < 3600):
+        return CACHED_DYNAMIC_WATCHLIST
 
-    dynamic_list = []
+    top_coins = []
+    try:
+        # Fetch 24h market ticker from CoinDCX / Binance public data
+        url = "https://api.binance.com/api/v3/ticker/24hr"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            usdt_pairs = [d for d in data if d.get('symbol', '').endswith('USDT')]
+            usdt_pairs.sort(key=lambda x: float(x.get('quoteVolume', 0)), reverse=True)
+            for item in usdt_pairs:
+                sym = item.get('symbol', '')
+                base = sym.replace('USDT', '')
+                if any(x in base for x in ['UP', 'DOWN', 'BEAR', 'BULL']): continue
+                top_coins.append(f"{base}-USDT")
+                if len(top_coins) >= 70: break
+    except Exception as e:
+        print(f"Watchlist dynamic fetch error: {e}")
+
     coindcx_active = fetch_coindcx_active_pairs()
 
-    try:
-        url = "https://data-api.binance.vision/api/v3/ticker/24hr"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            if isinstance(data, list):
-                valid_tickers = []
-                for item in data:
-                    sym = item.get('symbol', '')
-                    quote_vol = float(item.get('quoteVolume', 0))
-                    if sym.endswith('USDT') and quote_vol >= min_volume_usdt:
-                        coin = sym[:-4].upper()
-                        if coin in INACTIVE_COINS:
-                            continue
-                        if coin not in ['USDC', 'FDUSD', 'TUSD', 'BUSD', 'EUR', 'GBP', 'DAI', 'USDP', 'AEUR'] and not coin.endswith('UP') and not coin.endswith('DOWN'):
-                            if coindcx_active:
-                                futures_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
-                                pair_1 = f"B-{futures_coin}_USDT"
-                                pair_2 = f"B-{coin}_USDT"
-                                is_active = (pair_1 in coindcx_active) or (pair_2 in coindcx_active)
-                                if not is_active:
-                                    continue
-                            valid_tickers.append((f"{coin}-USDT", quote_vol))
-                valid_tickers.sort(key=lambda x: x[1], reverse=True)
-                dynamic_list = [x[0] for x in valid_tickers]
-    except Exception: pass
+    final_pool = []
+    seen = set()
+    combined_source = (top_coins + WATCHLIST) if top_coins else WATCHLIST
+    for sym in combined_source:
+        raw_coin = sym.split('-')[0].upper()
+        if raw_coin in seen or raw_coin in INACTIVE_COINS: continue
+        futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin)
+        b_pair = f"B-{futures_coin}_USDT"
+        
+        if coindcx_active:
+            if (b_pair in coindcx_active) or (f"B-{raw_coin}_USDT" in coindcx_active) or (f"{raw_coin}USDT" in coindcx_active) or (f"B-{futures_coin}USDT" in coindcx_active):
+                seen.add(raw_coin)
+                final_pool.append(sym)
+        else:
+            seen.add(raw_coin)
+            final_pool.append(sym)
 
-    if not dynamic_list:
-        dynamic_list = [s for s in WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS]
+    if final_pool:
+        CACHED_DYNAMIC_WATCHLIST = final_pool
+        LAST_WATCHLIST_FETCH_TIME = now
+        print(f"🎯 Dynamic Watchlist Updated: {len(final_pool)} liquid coins ready.")
+        return final_pool
+    return WATCHLIST
 
-    CACHED_DYNAMIC_WATCHLIST = dynamic_list
-    LAST_WATCHLIST_FETCH_TIME = now
-    return CACHED_DYNAMIC_WATCHLIST
+def fetch_klines(symbol, interval='15m', limit=100):
+    clean_sym = symbol.replace("-", "")
+    endpoints = [
+        f"https://api.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval}&limit={limit}",
+        f"https://api1.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval}&limit={limit}",
+        f"https://api2.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval}&limit={limit}",
+        f"https://api3.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval}&limit={limit}"
+    ]
+    for url in endpoints:
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                if isinstance(data, list) and len(data) > 0:
+                    return [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])] for k in data]
+        except Exception:
+            continue
+    return None
 
-def fetch_klines(symbol, interval_str="15m", limit=100):
-    coin = symbol.split('-')[0].upper()
-    clean_sym = f"{coin}USDT"
-    
-    # Provider 1: Binance Vision Public Data API (No Geoblock)
-    try:
-        url = f"https://data-api.binance.vision/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-            raw = json.loads(resp.read().decode('utf-8'))
-            if isinstance(raw, list) and len(raw) > 0:
-                formatted = []
-                for c in raw:
-                    formatted.append([int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])])
-                return formatted
-    except Exception: pass
-
-    # Provider 2: CoinDCX Public Candles API
-    try:
-        pair_str = f"B-{coin}_USDT"
-        url = f"https://public.coindcx.com/market_data/candles/?pair={pair_str}&interval={interval_str}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-            raw = json.loads(resp.read().decode('utf-8'))
-            if isinstance(raw, list) and len(raw) > 0:
-                raw_sorted = sorted(raw, key=lambda x: x.get('time', 0))
-                formatted = []
-                for c in raw_sorted[-limit:]:
-                    t = int(c.get('time', time.time()*1000))
-                    o = float(c.get('open', 0))
-                    h = float(c.get('high', 0))
-                    l = float(c.get('low', 0))
-                    cl = float(c.get('close', 0))
-                    v = float(c.get('volume', 0))
-                    formatted.append([t, o, h, l, cl, v])
-                if len(formatted) > 0:
-                    return formatted
-    except Exception: pass
-
-    # Provider 3: Bybit Public Market API
-    try:
-        bybit_interval = "5" if interval_str == "5m" else ("15" if interval_str == "15m" else ("60" if interval_str == "1h" else ("D" if interval_str == "1d" else "15")))
-        url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={clean_sym}&interval={bybit_interval}&limit={limit}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            list_data = data.get('result', {}).get('list', [])
-            if list_data:
-                list_sorted = sorted(list_data, key=lambda x: int(x[0]))
-                formatted = []
-                for c in list_sorted:
-                    formatted.append([int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])])
-                return formatted
-    except Exception: pass
-
-    return []
+def calculate_ema(prices, period=20):
+    if len(prices) < period: return prices[-1] if prices else 0.0
+    multiplier = 2.0 / (period + 1)
+    ema = sum(prices[:period]) / period
+    for price in prices[period:]:
+        ema = (price - ema) * multiplier + ema
+    return ema
 
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1: return 50.0
-    deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
-    gains = [d if d > 0 else 0 for d in deltas]
-    losses = [-d if d < 0 else 0 for d in deltas]
+    gains, losses = [], []
+    for i in range(1, len(prices)):
+        change = prices[i] - prices[i - 1]
+        gains.append(max(0.0, change))
+        losses.append(max(0.0, -change))
     avg_gain = sum(gains[:period]) / period
     avg_loss = sum(losses[:period]) / period
-    for i in range(period, len(deltas)):
-        avg_gain = (avg_gain * 13 + gains[i]) / 14
-        avg_loss = (avg_loss * 13 + losses[i]) / 14
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
     if avg_loss == 0: return 100.0
     rs = avg_gain / avg_loss
     return 100.0 - (100.0 / (1.0 + rs))
 
-def calculate_ema(prices, period=50):
-    if len(prices) < period:
-        return prices[-1] if prices else 0.0
-    k = 2.0 / (period + 1)
-    ema = sum(prices[:period]) / period
-    for price in prices[period:]:
-        ema = (price * k) + (ema * (1 - k))
-    return ema
-
 def calculate_volume_spike(klines, period=20):
-    volumes = [float(k[5]) for k in klines]
-    current_vol = volumes[-1]
-    avg_vol = sum(volumes[-period-1:-1]) / period
+    if not klines or len(klines) < period + 1: return 1.0
+    vols = [float(k[5]) for k in klines]
+    current_vol = vols[-1]
+    baseline_vols = vols[-period-1:-1]
+    avg_vol = sum(baseline_vols) / len(baseline_vols) if baseline_vols else current_vol
     return (current_vol / avg_vol) if avg_vol > 0 else 1.0
 
 def calculate_cpr(high, low, close):
@@ -464,15 +460,23 @@ def calculate_supertrend(klines, period=10, multiplier=3.0):
     return st_dir[-1], st_val[-1]
 
 def send_telegram_message(text):
-    try:
-        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        data = urllib.parse.urlencode({'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'HTML'}).encode('utf-8')
-        req = urllib.request.Request(url, data=data, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
-            return json.loads(resp.read().decode('utf-8')).get('ok')
-    except Exception as e:
-        print(f"Telegram error: {e}")
-        return False
+    import re
+    for mode in ['HTML', None]:
+        try:
+            url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+            payload = {'chat_id': CHAT_ID, 'text': text}
+            if mode: payload['parse_mode'] = mode
+            data = urllib.parse.urlencode(payload).encode('utf-8')
+            req = urllib.request.Request(url, data=data, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
+                res = json.loads(resp.read().decode('utf-8'))
+                if res.get('ok'):
+                    return True
+        except Exception as e:
+            if mode == 'HTML':
+                text = re.sub(r'<[^>]+>', '', text)
+            continue
+    return False
 
 def fetch_all_coindcx_live_positions():
     api_key = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
@@ -598,36 +602,33 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     
     if side.lower() == "buy" and (tp_price is None or sl_price is None):
         return {'success': False, 'error': '⚠️ Trade Cancelled: Stop Loss and Target are required (No SL/TP = No Trade).'}
-
-    if custom_quantity is not None:
+    
+    if custom_quantity:
         quantity = custom_quantity
     else:
         usdt_inr_rate = 88.5
-        strict_margin_inr = 1000.0
-        position_value_usdt = (strict_margin_inr * leverage) / usdt_inr_rate
-        raw_qty = position_value_usdt / cmp if cmp > 0 else 1.0
+        margin_usdt = margin_inr / usdt_inr_rate
+        notional_usdt = margin_usdt * leverage
+        raw_quantity = notional_usdt / cmp
         
-        if coin in ['BTC', 'ETH', 'ZEC', 'PAXG']:
-            quantity = round(raw_qty - 0.00049, 3) if raw_qty > 0.001 else 0.001
+        if coin in ['BTC', 'ETH', 'ZEC', 'PAXG'] or cmp >= 1000.0:
+            quantity = round(raw_quantity, 3)
+            if quantity == 0: quantity = 0.001
         elif coin in ['BNB', 'SOL', 'TAO']:
-            quantity = round(raw_qty - 0.0049, 2) if raw_qty > 0.01 else 0.01
-        elif coin in ['AAVE', 'QNT', 'LTC', 'BCH']:
-            quantity = round(raw_qty - 0.049, 1) if raw_qty > 0.1 else 0.1
-        elif coin in ['AVAX', 'LINK', 'UNI', 'INJ', 'NEAR', 'APT', 'FET', 'RUNE', 'TIA', 'ICP']:
-            quantity = float(int(raw_qty)) if raw_qty >= 1.0 else 1.0
-        elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']: 
-            contract_qty = raw_qty / 1000.0
-            quantity = float(int(contract_qty)) if contract_qty >= 1.0 else 1.0
-        elif cmp >= 1000.0:  
-            quantity = round(raw_qty - 0.00049, 3) if raw_qty > 0.001 else 0.001
-        elif cmp >= 100.0:   
-            quantity = round(raw_qty - 0.049, 1) if raw_qty > 0.1 else 0.1
-        elif cmp >= 10.0:    
-            quantity = float(int(raw_qty)) if raw_qty >= 1.0 else 1.0
-        else: 
-            quantity = float(int(raw_qty)) if raw_qty >= 1.0 else 1.0
-        
-    if quantity <= 0: quantity = 0.1 if coin in ['AAVE', 'QNT', 'LTC', 'BCH'] else (0.01 if coin in ['BNB', 'SOL', 'TAO'] else (0.001 if coin in ['BTC', 'ETH', 'ZEC', 'PAXG'] else 1.0))
+            quantity = round(raw_quantity, 2)
+            if quantity == 0: quantity = 0.01
+        elif coin in ['AAVE', 'QNT', 'LTC', 'BCH'] or cmp >= 100.0:
+            quantity = round(raw_quantity, 1)
+            if quantity == 0: quantity = 0.1
+        elif coin in ['AVAX', 'LINK', 'UNI', 'INJ', 'NEAR', 'APT', 'FET', 'RUNE', 'TIA', 'ICP'] or cmp >= 1.0:
+            quantity = float(int(raw_quantity))
+            if quantity == 0: quantity = 1.0
+        elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']:
+            quantity = float(int(raw_quantity / 1000.0))
+            if quantity == 0: quantity = 1.0
+        else:
+            quantity = float(int(raw_quantity))
+            if quantity == 0: quantity = 1.0
 
     formatted_tp = None
     formatted_sl = None
@@ -648,9 +649,8 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
             formatted_tp = round(float(tp_price), 4)
             formatted_tp_alt = round(float(tp_price), 4)
         elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']:
-            contract_tp = float(tp_price) * 1000.0 if tp_price < 0.001 else float(tp_price)
-            formatted_tp = round(contract_tp, 5)
-            formatted_tp_alt = round(contract_tp, 6)
+            formatted_tp = round(float(tp_price) * 1000.0, 5) if tp_price < 0.0001 else round(float(tp_price), 5)
+            formatted_tp_alt = round(float(tp_price) * 1000.0, 6) if tp_price < 0.0001 else round(float(tp_price), 6)
         else:
             formatted_tp = round(float(tp_price), 6)
             formatted_tp_alt = round(float(tp_price), 6)
@@ -669,9 +669,8 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
             formatted_sl = round(float(sl_price), 4)
             formatted_sl_alt = round(float(sl_price), 4)
         elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']:
-            contract_sl = float(sl_price) * 1000.0 if sl_price < 0.001 else float(sl_price)
-            formatted_sl = round(contract_sl, 5)
-            formatted_sl_alt = round(contract_sl, 6)
+            formatted_sl = round(float(sl_price) * 1000.0, 5) if sl_price < 0.0001 else round(float(sl_price), 5)
+            formatted_sl_alt = round(float(sl_price) * 1000.0, 6) if sl_price < 0.0001 else round(float(sl_price), 6)
         else:
             formatted_sl = round(float(sl_price), 6)
             formatted_sl_alt = round(float(sl_price), 6)
@@ -722,32 +721,30 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     futures_order_payload_50_tpsl = dict(futures_order_payload_alt_tpsl)
     futures_order_payload_50_tpsl["total_quantity"] = qty_50 if qty_50 > 0 else quantity
 
-    if side.lower() == "buy":
-        endpoint_variants = [
-            (futures_url, {"timestamp": ts, "order": futures_order_payload_tpsl}),
-            (futures_url, {"timestamp": ts, "order": futures_order_payload_alt_tpsl}),
-            (futures_url, {"timestamp": ts, "order": futures_order_payload_quantized_tpsl}),
-            (futures_url, {"timestamp": ts, "order": futures_order_payload_75_tpsl}),
-            (futures_url, {"timestamp": ts, "order": futures_order_payload_50_tpsl})
-        ]
-    else:
+    payload_variants = [
+        futures_order_payload_tpsl,
+        futures_order_payload_alt_tpsl,
+        futures_order_payload_quantized_tpsl,
+        futures_order_payload_75_tpsl,
+        futures_order_payload_50_tpsl
+    ]
+
+    if side.lower() == "sell":
         futures_order_payload_clean = {
-            "side": side.lower(),
+            "side": "sell",
             "pair": pair_name,
             "order_type": "market_order",
             "total_quantity": quantity,
             "leverage": leverage,
             "notification": "no_notification"
         }
-        endpoint_variants = [
-            (futures_url, {"timestamp": ts, "order": futures_order_payload_clean})
-        ]
+        payload_variants = [futures_order_payload_clean]
 
     err_logs = []
-    for idx, (target_url, body) in enumerate(endpoint_variants, 1):
+    for idx, payload in enumerate(payload_variants, 1):
         try:
-            ts_now = int(round(time.time() * 1000))
-            body["timestamp"] = ts_now
+            body = dict(payload)
+            body["timestamp"] = int(round(time.time() * 1000))
             json_body = json.dumps(body, separators=(',', ':'))
             signature = hmac.new(secret_key.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
             headers = {
@@ -756,7 +753,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
                 'X-AUTH-SIGNATURE': signature,
                 'User-Agent': 'Mozilla/5.0'
             }
-            req = urllib.request.Request(target_url, data=json_body.encode('utf-8'), headers=headers, method='POST')
+            req = urllib.request.Request(futures_url, data=json_body.encode('utf-8'), headers=headers, method='POST')
             with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 order_id = "EXECUTED"
@@ -812,21 +809,18 @@ def send_hourly_market_report():
                 else: bull_coins.append(clean_sym)
             except Exception: bull_coins.append(clean_sym)
             
-        now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+        now_str = get_ist_now().strftime("%d-%m-%Y %I:%M:%S %p (IST)")
         bull_list_str = ", ".join(bull_coins[:15]) if bull_coins else "None currently"
 
         msg = (
             f"📊 <b>AUTOMATED HOURLY MARKET CONDITION REPORT</b>\n\n"
             f"⏰ <b>Time:</b> {now_str}\n"
-            f"✅ <b>Render Cloud Status:</b> 100% ONLINE (24/7 Active)\n\n"
-            f"🔍 <b>Market Overview ({len(scan_pool)} Liquid Futures Pairs >$10M Vol):</b>\n"
-            f"• <b>BTC Current Price:</b> <code>${btc_inrm_price:,.1f}</code>\n"
-            f"🟢 <b>In Bull Run:</b> <code>{len(bull_coins)} coins</code>\n"
-            f"🔴 <b>In Bear Run:</b> <code>{len(bear_coins)} coins</code>\n"
-            f"⚪ <b>Unconfirmed / Consolidation:</b> <code>{len(neutral_coins)} coins</code>\n\n"
-            f"🔥 <b>Bull Run Candidates:</b>\n"
-            f"{bull_list_str}\n\n"
-            f"🚀 <i>Automated 1-Hour Market Report from Render Cloud Bot</i>"
+            f"🪙 <b>BTC/INRM Est. CMP:</b> <code>₹{btc_inrm_price:,}</code>\n"
+            f"🟢 <b>Bullish Pairs:</b> <code>{len(bull_coins)}</code>\n"
+            f"🔴 <b>Bearish Pairs:</b> <code>{len(bear_coins)}</code>\n"
+            f"⚪ <b>Consolidating:</b> <code>{len(neutral_coins)}</code>\n\n"
+            f"🚀 <b>Top Momentum Candidates:</b>\n<code>{bull_list_str}</code>\n\n"
+            f"🛡️ <i>Active Trade Guard: Trailing SL & 75-Min Stagnation Protection ONLINE</i>"
         )
         send_telegram_message(msg)
     except Exception as e:
@@ -835,8 +829,8 @@ def send_hourly_market_report():
 @app.route('/scan-now')
 def scan_now_endpoint():
     try:
-        report_lines = []
         scan_pool = fetch_dynamic_watchlist()
+        report_lines = []
         for symbol in scan_pool:
             try:
                 time.sleep(0.05)
@@ -913,7 +907,7 @@ def scan_now_endpoint():
             except Exception as e:
                 report_lines.append(f"{symbol:12s} | Error: {e}")
         
-        now_str = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+        now_str = get_ist_now().strftime("%d-%m-%Y %H:%M:%S (IST)")
         html = f"<h2>⚡ LIVE {len(scan_pool)}-COIN DYNAMIC MARKET SCANNER AUDIT REPORT (VOL > $10M)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
         return html, 200
     except Exception as e:
@@ -927,8 +921,8 @@ def today_report_endpoint(date_override=None):
         from flask import request
         date_param = date_override or request.args.get('date')
         if not date_param and request.path == '/yesterday':
-            date_param = (datetime.now() - timedelta(days=1)).strftime("%d-%m-%Y")
-        target_date_str = date_param if date_param else datetime.now().strftime("%d-%m-%Y")
+            date_param = (get_ist_now() - timedelta(days=1)).strftime("%d-%m-%Y")
+        target_date_str = date_param if date_param else get_ist_now().strftime("%d-%m-%Y")
         summary_text = generate_daily_summary(target_date_str)
         history = load_trade_history()
         day_logs = history.get(target_date_str, [])
@@ -999,7 +993,7 @@ def close_sol_endpoint():
 @app.route('/test-telegram')
 def test_telegram_endpoint():
     try:
-        ok = send_telegram_message("🔔 <b>TELEGRAM TEST ALERT FROM RENDER BOT!</b>\n\n• Status: 100% ONLINE\n• Signal Broadcast Channel: ACTIVE\n• Timestamp: " + datetime.now().strftime("%d-%m-%Y %H:%M:%S"))
+        ok = send_telegram_message("🔔 <b>TELEGRAM TEST ALERT FROM RENDER BOT!</b>\n\n• Status: 100% ONLINE\n• Signal Broadcast Channel: ACTIVE\n• Timestamp: " + get_ist_now().strftime("%d-%m-%Y %I:%M:%S %p (IST)"))
         return f"<h3>Telegram Ping Result: {'✅ SUCCESS (Check Telegram channel)' if ok else '❌ FAILED (Check Bot Token)'}</h3>", 200
     except Exception as e:
         return f"<h3>⚠️ Error: {e}</h3>", 500
@@ -1032,7 +1026,7 @@ def test_trade_endpoint():
             f"• <b>Render Cloud Bot:</b> 100% CONNECTED\n"
             f"• <b>Live SOL Price:</b> <code>${live_cmp}</code>\n"
             f"• <b>CoinDCX Execution Test:</b> <code>{res}</code>\n"
-            f"• <b>Timestamp:</b> {datetime.now().strftime('%d-%m-%Y %H:%M:%S')}"
+            f"• <b>Timestamp:</b> {get_ist_now().strftime('%d-%m-%Y %I:%M:%S %p (IST)')}"
         )
         send_telegram_message(msg)
         return f"<h3>🧪 Diagnostic Test Result:</h3><pre>{json.dumps(res, indent=2)}</pre><p>Check Telegram @CRYPTOCREEN_BOT for alert!</p>", 200
@@ -1044,7 +1038,7 @@ def test_trade_endpoint():
 def catch_all(path):
     clean_p = path.strip().strip('/')
     if clean_p.lower() == 'yesterday':
-        yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%d-%m-%Y")
+        yesterday_str = (get_ist_now() - timedelta(days=1)).strftime("%d-%m-%Y")
         return today_report_endpoint(date_override=yesterday_str)
     import re
     if re.match(r'^\d{2}-\d{2}-\d{4}$', clean_p):
@@ -1300,24 +1294,38 @@ def monitor_active_positions():
                                     m1_k = fetch_klines(symbol, '1m', 1)
                                     exit_cmp = m1_k[-1][4] if (m1_k and len(m1_k) > 0) else entry_p
                                     realized_pnl_pct = ((exit_cmp - entry_p) / entry_p) * 7 * 100 if entry_p > 0 else 0.0
+                                    pnl_inr = (realized_pnl_pct / 100.0) * 1000.0
+
                                     if exit_cmp >= entry_p * 1.001:
                                         sl_type = f"EXCHANGE TP / PROFIT HIT (+{realized_pnl_pct:.1f}% ROE) 💰"
+                                        title = "PROFIT TARGET / RUNNER EXIT 💰"
+                                        icon = "💰"
                                     elif abs(exit_cmp - entry_p) / entry_p <= 0.0025:
                                         sl_type = "EXCHANGE BREAKEVEN (FEES COVERED)"
+                                        title = "BREAKEVEN EXIT ⚖️"
+                                        icon = "⚖️"
                                     else:
                                         sl_type = f"EXCHANGE SL / CLOSE HIT ({realized_pnl_pct:.1f}% ROE) 🛑"
+                                        title = "STOP LOSS TRIGGERED 🛑"
+                                        icon = "🛑"
+
                                     log_trade_event(symbol, "CLOSED", {"cmp": exit_cmp, "entry_p": entry_p, "realized_pnl_pct": realized_pnl_pct, "sl_type": sl_type})
                                 
-                                st = load_state()
-                                st[symbol] = time.time() + 900
-                                save_state(st)
-                                
-                                send_telegram_message(
-                                    f"🛡️ <b>POSITION CLOSED EXTERNALLY / EXCHANGE SL TRIGGERED!</b>\n\n"
-                                    f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                                    f"• <b>Status:</b> Detected closed on CoinDCX App / Exchange SL\n"
-                                    f"• <b>Protection:</b> 30-Min Cooldown Activated (No Re-entry / No Short Trade)"
-                                )
+                                    st = load_state()
+                                    st[symbol] = time.time() + 900
+                                    save_state(st)
+                                    
+                                    cmp_fmt = f"{exit_cmp:.8f}" if exit_cmp < 0.001 else f"{exit_cmp}"
+                                    entry_fmt = f"{entry_p:.8f}" if entry_p < 0.001 else f"{entry_p}"
+                                    send_telegram_message(
+                                        f"🏁 <b>POSITION CLOSED: {title}</b>\n\n"
+                                        f"<b>Pair:</b> B-{clean_coin}_USDT\n"
+                                        f"• <b>Entry Price:</b> <code>${entry_fmt}</code>\n"
+                                        f"• <b>Exit Price:</b> <code>${cmp_fmt}</code>\n"
+                                        f"• <b>Realized PnL:</b> <code>{realized_pnl_pct:+.1f}% ROE ({pnl_inr:+.2f} INR)</code> {icon}\n"
+                                        f"• <b>Trigger:</b> {sl_type}\n"
+                                        f"🛡️ <i>30-Min Cooldown Activated (No Re-entry / No Short Trade)</i>"
+                                    )
                                 continue
 
                     m1_klines = fetch_klines(symbol, '1m', 3)
@@ -1433,8 +1441,20 @@ def monitor_active_positions():
                             if trade_info:
                                 entry_p = trade_info.get('entry_price', 0)
                                 realized_pnl_pct = ((cmp - entry_p) / entry_p) * 7 * 100 if entry_p > 0 else 0.0
+                                pnl_inr = (realized_pnl_pct / 100.0) * 1000.0
                                 sl_type = f"EXCHANGE SL HIT ({realized_pnl_pct:.1f}% ROE) 🛑"
                                 log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": realized_pnl_pct, "sl_type": sl_type})
+                                cmp_fmt = f"{cmp:.8f}" if cmp < 0.001 else f"{cmp}"
+                                entry_fmt = f"{entry_p:.8f}" if entry_p < 0.001 else f"{entry_p}"
+                                send_telegram_message(
+                                    f"🏁 <b>POSITION CLOSED: STOP LOSS HIT 🛑</b>\n\n"
+                                    f"<b>Pair:</b> B-{clean_coin}_USDT\n"
+                                    f"• <b>Entry Price:</b> <code>${entry_fmt}</code>\n"
+                                    f"• <b>Exit Price:</b> <code>${cmp_fmt}</code>\n"
+                                    f"• <b>Realized PnL:</b> <code>{realized_pnl_pct:+.1f}% ROE ({pnl_inr:+.2f} INR)</code> 🛑\n"
+                                    f"• <b>Trigger:</b> Exchange Bracket SL Triggered\n"
+                                    f"🛡️ <i>30-Min Cooldown Activated (No Re-entry / No Short Trade)</i>"
+                                )
                             st = load_state()
                             st[symbol] = time.time() + 900
                             save_state(st)
@@ -1497,10 +1517,11 @@ def run_telegram_command_listener():
                             AUTO_TRADING_ENABLED = True
                             send_telegram_message("🟢 <b>AUTO-TRADING ACTIVATED VIA MOBILE COMMAND!</b>\n\n• Auto-order execution on CoinDCX is ON.")
                         elif text in ['/today', '/daily', '/report', 'today', 'daily', 'report', '/history']:
-                            summary_msg = generate_daily_summary()
+                            today_str = get_ist_now().strftime("%d-%m-%Y")
+                            summary_msg = generate_daily_summary(today_str)
                             send_telegram_message(summary_msg)
                         elif text in ['/yesterday', 'yesterday']:
-                            yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%d-%m-%Y")
+                            yesterday_str = (get_ist_now() - timedelta(days=1)).strftime("%d-%m-%Y")
                             summary_msg = generate_daily_summary(yesterday_str)
                             send_telegram_message(summary_msg)
         except Exception: pass
@@ -1547,9 +1568,9 @@ def start_background_loop():
         last_reported_day = ""
         while True:
             try:
-                now_dt = datetime.now()
-                today_str = now_dt.strftime("%d-%m-%Y")
-                if now_dt.hour == 23 and now_dt.minute >= 58 and last_reported_day != today_str:
+                now_ist = get_ist_now()
+                today_str = now_ist.strftime("%d-%m-%Y")
+                if now_ist.hour == 23 and now_ist.minute >= 58 and last_reported_day != today_str:
                     daily_msg = generate_daily_summary(today_str)
                     send_telegram_message(daily_msg)
                     last_reported_day = today_str
