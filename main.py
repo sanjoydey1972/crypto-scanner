@@ -203,27 +203,19 @@ def generate_daily_summary(target_date_str=None):
     return "\n".join(lines)
 
 # ==============================================================================
-# 4. WATCHLIST & PAIR DISCOVERY
+# 4. WATCHLIST & DYNAMIC COINDCX DISCOVERY ENGINE (ALL 180+ PAIRS SUPPORT)
 # ==============================================================================
 WATCHLIST = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AVAX-USDT', 'DOGE-USDT', 
     'XRP-USDT', 'ADA-USDT', 'LINK-USDT', 'NEAR-USDT', 'BCH-USDT', 
     'SUI-USDT', 'LTC-USDT', 'DOT-USDT', 'APT-USDT', 'RENDER-USDT', 
     'INJ-USDT', 'FET-USDT', 'TIA-USDT', 'WIF-USDT', 'AAVE-USDT',
-    'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 'ICP-USDT', 'SAND-USDT',
+    'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 'ICP-USDT', 'SAND-USDT', 
     'SEI-USDT', 'ORDI-USDT', 'FIL-USDT', 'JUP-USDT', 'STX-USDT', 
     'PENDLE-USDT', 'RUNE-USDT', 'IMX-USDT', 'KAS-USDT', 'ZEC-USDT', 
     'BAT-USDT', 'TAO-USDT', 'ENA-USDT', 'TRX-USDT', 'ONDO-USDT', 
     'POL-USDT'
 ]
-
-# Blacklist: Permanently ban chronic bleeders and hyper-volatile micro-penny meme coins
-CHRONIC_BLEEDERS_AND_MEMES = {
-    'ZK', 'ARB', 'OP', 'PEPE', '1000PEPE', 'BONK', '1000BONK', 
-    'SHIB', '1000SHIB', 'FLOKI', '1000FLOKI', 'LUNC', '1000LUNC', 
-    'BABYDOGE', '1000BABYDOGE', 'CHEEMS', '1000CHEEMS', 'CAT', 
-    '1000CAT', 'RATS', '1000RATS', 'MOG', '1000MOG', 'WHY', '1000WHY'
-}
 
 COINDCX_PAIR_ALIASES = {
     'RAY': 'RAYSOL', 'PEPE': '1000PEPE', 'SHIB': '1000SHIB', 'BONK': '1000BONK',
@@ -257,60 +249,89 @@ def fetch_coindcx_active_pairs():
     except Exception:
         pass
 
+    if not active_set:
+        try:
+            url = "https://public.coindcx.com/market_data/trade_info"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict):
+                            p = str(item.get('pair', '')).upper()
+                            if p: active_set.add(p)
+        except Exception:
+            pass
+
     if active_set:
         CACHED_COINDCX_ACTIVE_PAIRS = active_set
         LAST_COINDCX_ACTIVE_FETCH = now
     return CACHED_COINDCX_ACTIVE_PAIRS
 
-def fetch_dynamic_watchlist(min_volume_usdt=10000000.0):
+def fetch_dynamic_watchlist(min_volume_usdt=2500000.0):
     global CACHED_DYNAMIC_WATCHLIST, LAST_WATCHLIST_FETCH_TIME
     now = time.time()
     if CACHED_DYNAMIC_WATCHLIST and (now - LAST_WATCHLIST_FETCH_TIME < 900):
-        return [s for s in CACHED_DYNAMIC_WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS and s.split('-')[0].upper() not in CHRONIC_BLEEDERS_AND_MEMES]
+        return [s for s in CACHED_DYNAMIC_WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS]
 
-    base_pool = [s for s in WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS and s.split('-')[0].upper() not in CHRONIC_BLEEDERS_AND_MEMES]
-    dynamic_extra = []
     coindcx_active = fetch_coindcx_active_pairs()
+    all_discovered_pairs = []
 
+    # Dynamic Discovery: Parse ALL 180+ CoinDCX active futures pairs
+    if coindcx_active:
+        for p in coindcx_active:
+            p_upper = str(p).upper()
+            if p_upper.startswith("B-") and p_upper.endswith("_USDT"):
+                coin_part = p_upper[2:-5]
+                orig_coin = coin_part
+                for k, v in COINDCX_PAIR_ALIASES.items():
+                    if v == coin_part:
+                        orig_coin = k
+                        break
+                sym = f"{orig_coin}-USDT"
+                if sym not in all_discovered_pairs and orig_coin not in INACTIVE_COINS:
+                    all_discovered_pairs.append(sym)
+
+    # Fallback to WATCHLIST if active instruments endpoint was unreachable
+    if not all_discovered_pairs:
+        all_discovered_pairs = [s for s in WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS]
+
+    # Fetch 24hr volumes from Binance/MEXC to filter by min_volume_usdt (>= $2.5M)
     ticker_urls = [
         "https://api.binance.com/api/v3/ticker/24hr",
         "https://api1.binance.com/api/v3/ticker/24hr",
         "https://api.mexc.com/api/v3/ticker/24hr"
     ]
+    ticker_vol_map = {}
     for t_url in ticker_urls:
         try:
             req = urllib.request.Request(t_url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
                 if isinstance(data, list) and len(data) > 0:
-                    valid_tickers = []
                     for item in data:
                         sym = item.get('symbol', '')
-                        quote_vol = float(item.get('quoteVolume', 0))
-                        if sym.endswith('USDT') and quote_vol >= min_volume_usdt:
+                        if sym.endswith('USDT'):
                             coin = sym[:-4].upper()
-                            if coin in INACTIVE_COINS or coin in CHRONIC_BLEEDERS_AND_MEMES:
-                                continue
-                            if coin not in ['USDC', 'FDUSD', 'TUSD', 'BUSD', 'EUR', 'GBP', 'DAI'] and not coin.endswith(('UP', 'DOWN')):
-                                futures_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
-                                if coindcx_active:
-                                    if f"B-{futures_coin}_USDT" not in coindcx_active and f"B-{coin}_USDT" not in coindcx_active:
-                                        continue
-                                valid_tickers.append((f"{coin}-USDT", quote_vol))
-                    if valid_tickers:
-                        valid_tickers.sort(key=lambda x: x[1], reverse=True)
-                        dynamic_extra = [x[0] for x in valid_tickers]
-                        break
+                            quote_vol = float(item.get('quoteVolume', 0))
+                            ticker_vol_map[f"{coin}-USDT"] = quote_vol
+                    break
         except Exception:
             pass
 
-    combined_watchlist = list(base_pool)
-    for s in dynamic_extra:
-        coin_clean = s.split('-')[0].upper()
-        if s not in combined_watchlist and coin_clean not in INACTIVE_COINS and coin_clean not in CHRONIC_BLEEDERS_AND_MEMES:
-            combined_watchlist.append(s)
+    # Keep all pairs that have >= $2,500,000 volume (or include for live candle volume verification)
+    qualified_pairs = []
+    for sym in all_discovered_pairs:
+        vol = ticker_vol_map.get(sym, 5000000.0)
+        if vol >= min_volume_usdt:
+            qualified_pairs.append((sym, vol))
 
-    CACHED_DYNAMIC_WATCHLIST = combined_watchlist
+    if qualified_pairs:
+        qualified_pairs.sort(key=lambda x: x[1], reverse=True)
+        CACHED_DYNAMIC_WATCHLIST = [x[0] for x in qualified_pairs]
+    else:
+        CACHED_DYNAMIC_WATCHLIST = all_discovered_pairs
+
     LAST_WATCHLIST_FETCH_TIME = now
     return CACHED_DYNAMIC_WATCHLIST
 
@@ -574,7 +595,7 @@ def recover_live_coindcx_positions():
                         'total_qty': active_u,
                         'remaining_qty': active_u,
                         'tp1': round(entry_p * 1.032, 4),
-                        'sl': round(entry_p * 0.9905, 4),
+                        'sl': round(entry_p * (1.0 - (0.04 / 7.0)), 4),
                         'be_trigger': round(entry_p * 1.0085, 4),
                         'is_be_active': False,
                         'leverage': 7,
@@ -754,7 +775,7 @@ def test_trade_endpoint():
         sol_klines = fetch_klines("SOL-USDT", "15m", 5)
         live_cmp = sol_klines[-1][4] if sol_klines else 118.80
         live_tp = round(live_cmp * 1.01, 2)
-        live_sl = round(live_cmp * 0.99, 2)
+        live_sl = round(live_cmp * (1.0 - (0.04 / 7.0)), 2)
         res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=live_cmp, margin_inr=1000.0, leverage=7, custom_quantity=0.1, tp_price=live_tp, sl_price=live_sl)
         if res.get('success'):
             with active_trades_lock:
@@ -833,19 +854,27 @@ pre {{ background: #1e293b; padding: 15px; border-radius: 8px; font-size: 15px; 
 def scan_now_endpoint():
     try:
         report_lines = []
-        scan_pool = fetch_dynamic_watchlist()
+        scan_pool = fetch_dynamic_watchlist(min_volume_usdt=2500000.0)
         for symbol in scan_pool:
             try:
-                time.sleep(0.04)
+                time.sleep(0.03)
                 m15_klines = fetch_klines(symbol, '15m', 100)
-                h1_klines = fetch_klines(symbol, '1h', 60)
                 if not m15_klines or len(m15_klines) < 20:
                     report_lines.append(f"{symbol:12s} | Error: Could not fetch candle data")
                     continue
                 cmp = m15_klines[-1][4]
-                daily_klines = fetch_klines(symbol, '1d', 2) or m15_klines
-                cpr = calculate_cpr(daily_klines[0][2], daily_klines[0][3], daily_klines[0][4])
                 st_dir, _ = calculate_supertrend(m15_klines)
+                is_st_green = (st_dir == 1)
+                
+                # Check 24h volume threshold (>= $2,500,000)
+                daily_klines = fetch_klines(symbol, '1d', 2) or m15_klines
+                vol_24h_quote = max(float(daily_klines[0][5]), float(daily_klines[-1][5])) * cmp if (daily_klines and len(daily_klines[0]) > 5) else 3000000.0
+                if vol_24h_quote < 2500000:
+                    report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | 🛑 Low 24h Volume Filtered (<$2.5M)")
+                    continue
+
+                h1_klines = fetch_klines(symbol, '1h', 60)
+                cpr = calculate_cpr(daily_klines[0][2], daily_klines[0][3], daily_klines[0][4])
                 close_prices = [k[4] for k in m15_klines]
                 rsi_val = calculate_rsi(close_prices)
                 vol_spike = calculate_volume_spike(m15_klines)
@@ -858,7 +887,6 @@ def scan_now_endpoint():
                     h1_ema50 = calculate_ema(h1_closes, 50)
                     h1_macro_bullish = (h1_st_dir == 1) and (cmp >= h1_ema50)
 
-                is_st_green = (st_dir == 1)
                 is_cpr_buy_zone = (cmp >= cpr['bc'] * 0.998)
                 score = 40
                 if is_cpr_buy_zone: score += 20
@@ -872,7 +900,7 @@ def scan_now_endpoint():
                 report_lines.append(f"{symbol:12s} | Error: {e}")
         
         now_str = get_ist_now().strftime("%d-%m-%Y %H:%M:%S (IST)")
-        html = f"<h2>⚡ LIVE DYNAMIC MARKET SCANNER AUDIT REPORT</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
+        html = f"<h2>⚡ LIVE COINDCX DYNAMIC MARKET SCANNER AUDIT REPORT (ALL 180+ PAIRS, VOL >= $2.5M)</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
         return html, 200
     except Exception as e:
         return f"<h3>⚠️ Scan Error:</h3><p>{e}</p>", 500
@@ -903,21 +931,17 @@ def catch_all(path):
 def run_scan():
     state = load_state()
     candidates = []
-    scan_pool = fetch_dynamic_watchlist()
+    # Dynamic: Scans all 180+ CoinDCX Pairs with 24h Volume >= $2,500,000 USDT
+    scan_pool = fetch_dynamic_watchlist(min_volume_usdt=2500000.0)
 
     for symbol in scan_pool:
         try:
-            time.sleep(0.04)
-            daily_klines = fetch_klines(symbol, '1d', 2)
+            time.sleep(0.03)
+            # Fetch 15M candles first for fast evaluation
             m15_klines = fetch_klines(symbol, '15m', 100)
-            h1_klines = fetch_klines(symbol, '1h', 60)
-            
             if not m15_klines or len(m15_klines) < 20:
                 continue
-            if not daily_klines or len(daily_klines) < 2:
-                daily_klines = m15_klines
-            
-            cpr = calculate_cpr(daily_klines[0][2], daily_klines[0][3], daily_klines[0][4])
+
             cmp = m15_klines[-1][4]
             st_dir, st_val = calculate_supertrend(m15_klines)
             is_st_green = (st_dir == 1)
@@ -926,6 +950,15 @@ def run_scan():
             if not is_st_green:
                 continue
 
+            # Fetch daily candles to verify 24h volume >= $2,500,000 USDT
+            daily_klines = fetch_klines(symbol, '1d', 2) or m15_klines
+            vol_24h_quote = max(float(daily_klines[0][5]), float(daily_klines[-1][5])) * cmp if (daily_klines and len(daily_klines[0]) > 5) else 5000000.0
+            if vol_24h_quote < 2500000:
+                continue
+
+            h1_klines = fetch_klines(symbol, '1h', 60)
+            cpr = calculate_cpr(daily_klines[0][2], daily_klines[0][3], daily_klines[0][4])
+
             close_prices = [k[4] for k in m15_klines]
             rsi_val = calculate_rsi(close_prices)
             vol_spike = calculate_volume_spike(m15_klines)
@@ -933,11 +966,6 @@ def run_scan():
             # Buy Volume Check: Confirmed Green Candle Volume Spike (Not Panic Dump)
             is_buy_volume = (m15_klines[-1][4] >= m15_klines[-1][1]) or (len(m15_klines) >= 2 and m15_klines[-2][4] >= m15_klines[-2][1])
             is_valid_vol_spike = (vol_spike >= 1.20) and is_buy_volume
-            
-            # 24h Volume Liquidity Filter (>= $10,000,000 USDT)
-            vol_24h_quote = max(float(daily_klines[0][5]), float(daily_klines[-1][5])) * cmp if (daily_klines and len(daily_klines[0]) > 5) else 15000000.0
-            if vol_24h_quote < 10000000:
-                continue
 
             ema20_15m = calculate_ema(close_prices, 20)
             ema50_15m = calculate_ema(close_prices, 50)
@@ -1038,10 +1066,10 @@ def run_scan():
             bc_val = cpr.get('bc', cmp * 0.995)
             prev_low_val = cpr.get('prev_low', sweep_low_val)
 
-            # Hard Stop Loss: Below Bottom Central (BC) / Previous Low, CAPPED AT -0.95% (-6.6% ROE max)
+            # Hard Stop Loss: CAPPED AT -4.0% ROE (-0.5714% Price Drop at 7x Leverage)
             support_floor = min(bc_val, sweep_low_val, prev_low_val)
             structural_sl = support_floor * 0.9985
-            hard_sl_cap = cmp * 0.9905
+            hard_sl_cap = cmp * (1.0 - (0.04 / 7.0))  # Exactly -4.0% ROE Max Loss Cap
             sl_raw = max(hard_sl_cap, structural_sl)
 
             # Target: Next Pivot Level (R1 or R2) or standard +3.2% move (+22.4% ROE / 1:2 R:R Ratio)
@@ -1108,7 +1136,7 @@ def run_scan():
                 f"• <b>Margin:</b> <code>₹{coin_margin:.0f} INR (Per Trade)</code>\n"
                 f"• <b>Live CMP:</b> <code>${cmp}</code>\n\n"
                 f"🔹 <b>Entry Range:</b> <code>{entry_min} - {entry_max}</code>\n"
-                f"🔹 <b>Stop Loss:</b> <code>${sl}</code> (Below BC / Prev Low, Max -0.95%)\n"
+                f"🔹 <b>Stop Loss:</b> <code>${sl}</code> (Max -4.0% ROE / -0.57% Price Drop)\n"
                 f"🎯 <b>Target:</b> <code>${tp1}</code> (Next Pivot R1/R2 or +3.2% Move)\n"
                 f"🛡️ <b>Breakeven Profit Lock:</b> <code>Trigger @ +6.0% ROE (+0.85% Move)</code>\n"
                 f"⏱️ <b>Time Stop:</b> <code>75 Minutes Max Stagnation Cut</code>\n"
@@ -1417,13 +1445,14 @@ def start_background_loop():
     threading.Thread(target=run_daily_midnight_report_loop, daemon=True).start()
 
     send_telegram_message(
-        "⚡ <b>RENDER BOT 10/10 GOLD STANDARD CPR SCANNER DEPLOYED!</b>\n\n"
-        "• <b>Strategy Engine:</b> CPR Breakout & Retest (TradingView CPR by KGS Pivot Levels)\n"
-        "• <b>Buy Zone:</b> Price holding above BC/Pivot & breaking out above Top Central (TC)\n"
-        "• <b>Direction:</b> 100% BUY / LONG ONLY (Zero Short Trade Rule STRICT ACTIVE)\n"
+        "⚡ <b>RENDER BOT EXPANDED SCANNER DEPLOYED!</b>\n\n"
+        "• <b>Market Universe:</b> ALL 180+ CoinDCX Futures Pairs (Dynamic Discovery)\n"
+        "• <b>24h Liquidity Floor:</b> Min $2,500,000 USDT ($2.5M)\n"
+        "• <b>Hard Stop Loss:</b> Capped at -4.0% ROE (-0.57% Price Drop at 7x Leverage)\n"
+        "• <b>Strategy Engine:</b> CPR Breakout & Retest (Pivot, TC, BC, R1-R2)\n"
+        "• <b>Direction:</b> 100% BUY / LONG ONLY (Zero Short Trade Rule ACTIVE)\n"
         "• <b>Supertrend Gate:</b> 15M Supertrend MUST BE GREEN\n"
         "• <b>Target Engine:</b> Next Pivot Level (R1/R2) or +3.2% move (+22.4% ROE)\n"
-        "• <b>Hard Stop Loss:</b> Capped at -0.95% Price Drop (-6.6% ROE max)\n"
         "• <b>Stagnation Guard:</b> 75-Minute Auto Time-Stop\n"
         "• <b>Breakeven Engine:</b> Escape Velocity @ +6.0% ROE (+0.85% move)\n"
         "• <b>Dynamic Trailing:</b> 3-Stage Runner Engine (+8.4% ROE & +12.6% ROE)\n"
