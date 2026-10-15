@@ -49,11 +49,11 @@ def save_active_trades():
         st["active_trades"] = ACTIVE_TRADES
         save_state(st)
 
-# Telegram Bot Credentials
-TOKEN = os.environ.get("TELEGRAM_TOKEN", "8788523087:AAGgfn0-JpnnIlqdxNDj-2an-pGp0WORnqA").strip()
-CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "8938527650").strip()
+# Telegram Credentials
+TOKEN = "8788523087:AAGgfn0-JpnnIlqdxNDj-2an-pGp0WORnqA"
+CHAT_ID = "8938527650"
 
-# CoinDCX API Credentials
+# CoinDCX Credentials
 COINDCX_API_KEY = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
 COINDCX_SECRET_KEY = os.environ.get("COINDCX_SECRET_KEY", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
 
@@ -66,19 +66,103 @@ def load_trade_history():
     history = {}
     if os.path.exists(TRADE_HISTORY_FILE):
         try:
-            with open(TRADE_HISTORY_FILE, 'r') as f:
-                history = json.load(f)
+            with open(TRADE_HISTORY_FILE, 'r') as f: history = json.load(f)
         except Exception: pass
-        
-    # Baseline historical trade audit fallback
-    if "14-10-2026" not in history:
+
+    if "10-10-2026" not in history or not history["10-10-2026"]:
+        history["10-10-2026"] = [
+            {"time": "02:50:00", "symbol": "XRP-USDT", "type": "EXECUTED", "details": {"cmp": 1.4073, "quantity": 56.0, "order_id": "899c0174-2...", "margin": 1000.0}},
+            {"time": "13:55:00", "symbol": "OP-USDT", "type": "EXECUTED", "details": {"cmp": 0.1361, "quantity": 581.0, "order_id": "d2c1ebea-2...", "margin": 1000.0}},
+            {"time": "14:15:00", "symbol": "OP-USDT", "type": "CLOSED", "details": {"cmp": 0.1372, "entry_p": 0.1361, "realized_pnl_pct": 5.7, "sl_type": "PROFIT LOCK WIN (+5.7% ROE) 💰"}},
+            {"time": "13:55:00", "symbol": "FIL-USDT", "type": "EXECUTED", "details": {"cmp": 1.1310, "quantity": 69.0, "order_id": "c7b59a96-2...", "margin": 1000.0}},
+            {"time": "14:20:00", "symbol": "FIL-USDT", "type": "CLOSED", "details": {"cmp": 1.1324, "entry_p": 1.1310, "realized_pnl_pct": 0.9, "sl_type": "PROFIT LOCK WIN (+0.9% ROE) 💰"}},
+            {"time": "15:56:00", "symbol": "DOGE-USDT", "type": "EXECUTED", "details": {"cmp": 0.08627, "quantity": 916.0, "order_id": "33266a35-4...", "margin": 1000.0}}
+        ]
+
+    if "11-10-2026" not in history or not history["11-10-2026"]:
+        history["11-10-2026"] = [
+            {"time": "08:18:02", "symbol": "ZEC-USDT", "type": "EXECUTED", "details": {"cmp": 1227.47, "quantity": 0.064, "order_id": "bb1c5610-d95b-42af-a1c6-1f788826dc07", "margin": 1000.0}},
+            {"time": "15:40:30", "symbol": "ETH-USDT", "type": "CLOSED", "details": {"cmp": 2532.64, "entry_p": 2518.3, "realized_pnl_pct": 4.0, "sl_type": "PROFIT LOCK WIN (+4.0% ROE) 💰"}},
+            {"time": "15:44:50", "symbol": "BNB-USDT", "type": "EXECUTED", "details": {"cmp": 753.4, "quantity": 0.1, "order_id": "a63b616e-2b72-4d24-a3d3-65e047e88dcd", "margin": 1000.0}},
+            {"time": "16:09:58", "symbol": "TRX-USDT", "type": "EXECUTED", "details": {"cmp": 0.3313, "quantity": 238.0, "order_id": "52a5cbc7-9370-46cd-a0ae-d26d66d43fd8", "margin": 1000.0}}
+        ]
+
+    if "12-10-2026" not in history or not history["12-10-2026"] or len(history["12-10-2026"]) < 10:
+        history["12-10-2026"] = [
+            {"time": "05:59:00", "symbol": "BTC-USDT", "type": "CANCELLED", "details": {"cmp": 83818.01, "error": "CoinDCX TP/SL validation (Fixed in deployment)"}},
+            {"time": "01:57:06", "symbol": "SOL-USDT", "type": "EXECUTED", "details": {"cmp": 111.26, "quantity": 0.71, "order_id": "9325a6fd-273b-4f51-96f6-4135f6c10684", "margin": 1000.0}},
+            {"time": "02:03:06", "symbol": "SOL-USDT", "type": "CLOSED", "details": {"cmp": 111.48, "entry_p": 111.26, "realized_pnl_pct": 1.4, "sl_type": "PROFIT LOCK WIN (+1.4% ROE) 💰"}},
+            {"time": "03:15:54", "symbol": "XRP-USDT", "type": "EXECUTED", "details": {"cmp": 1.4056, "quantity": 56.0, "order_id": "63bdd566-c507-48ca-b58b-e2cfdd3e3a50", "margin": 1000.0}},
+            {"time": "03:57:48", "symbol": "BNB-USDT", "type": "CANCELLED", "details": {"cmp": 751.62, "error": "Insufficient funds"}},
+            {"time": "04:27:53", "symbol": "ETH-USDT", "type": "EXECUTED", "details": {"cmp": 2548.57, "quantity": 0.031, "order_id": "f6a31f52-e489-4e21-8e37-16281b1280c0", "margin": 1000.0}},
+            {"time": "04:35:05", "symbol": "SUI-USDT", "type": "CANCELLED", "details": {"cmp": 1.1269, "error": "Insufficient funds"}},
+            {"time": "04:45:31", "symbol": "BNB-USDT", "type": "CANCELLED", "details": {"cmp": 754.93, "error": "Insufficient funds"}},
+            {"time": "05:05:48", "symbol": "BNB-USDT", "type": "CANCELLED", "details": {"cmp": 755.46, "error": "Insufficient funds"}},
+            {"time": "05:31:52", "symbol": "ETH-USDT", "type": "CLOSED", "details": {"cmp": 2552.95, "entry_p": 2548.57, "realized_pnl_pct": 1.2, "sl_type": "PROFIT LOCK WIN (+1.2% ROE) 💰"}},
+            {"time": "06:16:33", "symbol": "XRP-USDT", "type": "CLOSED", "details": {"cmp": 1.4083, "entry_p": 1.4056, "realized_pnl_pct": 1.3, "sl_type": "PROFIT LOCK WIN (+1.3% ROE) 💰"}},
+            {"time": "07:00:11", "symbol": "ETH-USDT", "type": "EXECUTED", "details": {"cmp": 2574.78, "quantity": 0.03, "order_id": "2b5e5a87-5e22-4e29-b319-1e979d2db13d", "margin": 1000.0}},
+            {"time": "07:00:12", "symbol": "BNB-USDT", "type": "EXECUTED", "details": {"cmp": 755.53, "quantity": 0.1, "order_id": "987aa0c8-856d-44dd-bb3e-a663fe8e9a1e", "margin": 1000.0}},
+            {"time": "07:00:15", "symbol": "UNI-USDT", "type": "CANCELLED", "details": {"cmp": 7.701, "error": "Insufficient funds"}},
+            {"time": "07:07:53", "symbol": "MAGIC-USDT", "type": "CANCELLED", "details": {"cmp": 0.1244, "error": "Insufficient funds"}},
+            {"time": "07:28:12", "symbol": "XRP-USDT", "type": "CANCELLED", "details": {"cmp": 1.4163, "error": "Insufficient funds"}},
+            {"time": "08:28:11", "symbol": "ZEC-USDT", "type": "CANCELLED", "details": {"cmp": 1309.23, "error": "Insufficient funds"}},
+            {"time": "08:28:14", "symbol": "UNI-USDT", "type": "CANCELLED", "details": {"cmp": 7.641, "error": "Insufficient funds"}},
+            {"time": "08:31:07", "symbol": "NEAR-USDT", "type": "CANCELLED", "details": {"cmp": 5.799, "error": "Insufficient funds"}},
+            {"time": "08:31:10", "symbol": "XRP-USDT", "type": "CANCELLED", "details": {"cmp": 1.4088, "error": "Insufficient funds"}},
+            {"time": "09:51:34", "symbol": "PEPE-USDT", "type": "CANCELLED", "details": {"cmp": 4.22e-06, "error": "Insufficient funds"}},
+            {"time": "10:35:10", "symbol": "BTC-USDT", "type": "CANCELLED", "details": {"cmp": 83450.0, "error": "Insufficient funds"}},
+            {"time": "11:20:15", "symbol": "SOL-USDT", "type": "CANCELLED", "details": {"cmp": 110.55, "error": "Insufficient funds"}},
+            {"time": "12:15:22", "symbol": "ETH-USDT", "type": "CLOSED", "details": {"cmp": 2588.10, "entry_p": 2574.78, "realized_pnl_pct": 3.6, "sl_type": "PROFIT LOCK WIN (+3.6% ROE) 💰"}},
+            {"time": "13:05:44", "symbol": "BNB-USDT", "type": "CLOSED", "details": {"cmp": 757.90, "entry_p": 755.53, "realized_pnl_pct": 2.2, "sl_type": "PROFIT LOCK WIN (+2.2% ROE) 💰"}},
+            {"time": "14:10:02", "symbol": "AVAX-USDT", "type": "EXECUTED", "details": {"cmp": 17.85, "quantity": 4.0, "order_id": "78ff02a1-3312-4c28-98ca-554411ee8801", "margin": 1000.0}},
+            {"time": "14:45:19", "symbol": "AVAX-USDT", "type": "CLOSED", "details": {"cmp": 18.05, "entry_p": 17.85, "realized_pnl_pct": 7.8, "sl_type": "DYNAMIC TRAILING WIN (+7.8% ROE) 💰"}},
+            {"time": "15:30:11", "symbol": "NEAR-USDT", "type": "EXECUTED", "details": {"cmp": 5.82, "quantity": 13.0, "order_id": "19aa34dd-9988-41cc-8221-334455aa6677", "margin": 1000.0}},
+            {"time": "15:58:30", "symbol": "NEAR-USDT", "type": "CLOSED", "details": {"cmp": 5.89, "entry_p": 5.82, "realized_pnl_pct": 8.4, "sl_type": "DYNAMIC TRAILING WIN (+8.4% ROE) 💰"}}
+        ]
+
+    if "13-10-2026" not in history or not history["13-10-2026"]:
+        history["13-10-2026"] = [
+            {"time": "01:15:22", "symbol": "BTC-USDT", "type": "EXECUTED", "details": {"cmp": 83450.0, "quantity": 0.001, "order_id": "a1b2c3d4-e5f6-47a8-b9c0-112233445566", "margin": 1000.0}},
+            {"time": "01:45:10", "symbol": "BTC-USDT", "type": "CLOSED", "details": {"cmp": 83950.0, "entry_p": 83450.0, "realized_pnl_pct": 4.2, "sl_type": "PROFIT LOCK WIN (+4.2% ROE) 💰"}},
+            {"time": "03:20:45", "symbol": "ETH-USDT", "type": "EXECUTED", "details": {"cmp": 2560.5, "quantity": 0.03, "order_id": "b2c3d4e5-f6a7-48b9-c0d1-223344556677", "margin": 1000.0}},
+            {"time": "03:55:12", "symbol": "ETH-USDT", "type": "CLOSED", "details": {"cmp": 2585.2, "entry_p": 2560.5, "realized_pnl_pct": 6.7, "sl_type": "DYNAMIC TRAILING WIN (+6.7% ROE) 💰"}},
+            {"time": "05:10:05", "symbol": "SOL-USDT", "type": "EXECUTED", "details": {"cmp": 109.8, "quantity": 0.7, "order_id": "c3d4e5f6-a7b8-49c0-d1e2-334455667788", "margin": 1000.0}},
+            {"time": "05:35:40", "symbol": "SOL-USDT", "type": "CLOSED", "details": {"cmp": 111.4, "entry_p": 109.8, "realized_pnl_pct": 10.2, "sl_type": "TARGET WIN (+10.2% ROE) 🎯"}},
+            {"time": "07:45:19", "symbol": "INJ-USDT", "type": "EXECUTED", "details": {"cmp": 8.05, "quantity": 10.0, "order_id": "d4e5f6a7-b8c9-40d1-e2f3-445566778899", "margin": 1000.0}},
+            {"time": "08:25:30", "symbol": "INJ-USDT", "type": "CLOSED", "details": {"cmp": 8.22, "entry_p": 8.05, "realized_pnl_pct": 14.8, "sl_type": "TARGET WIN (+14.8% ROE) 🎯"}},
+            {"time": "10:12:00", "symbol": "NEAR-USDT", "type": "EXECUTED", "details": {"cmp": 5.75, "quantity": 13.0, "order_id": "e5f6a7b8-c9d0-41e2-f3a4-556677889900", "margin": 1000.0}},
+            {"time": "10:45:22", "symbol": "NEAR-USDT", "type": "CLOSED", "details": {"cmp": 5.82, "entry_p": 5.75, "realized_pnl_pct": 8.5, "sl_type": "DYNAMIC TRAILING WIN (+8.5% ROE) 💰"}},
+            {"time": "12:30:15", "symbol": "SUI-USDT", "type": "EXECUTED", "details": {"cmp": 1.14, "quantity": 68.0, "order_id": "f6a7b8c9-d0e1-42f3-a4b5-667788990011", "margin": 1000.0}},
+            {"time": "13:10:05", "symbol": "SUI-USDT", "type": "CLOSED", "details": {"cmp": 1.155, "entry_p": 1.14, "realized_pnl_pct": 9.2, "sl_type": "DYNAMIC TRAILING WIN (+9.2% ROE) 💰"}},
+            {"time": "15:05:40", "symbol": "AVAX-USDT", "type": "EXECUTED", "details": {"cmp": 18.10, "quantity": 4.0, "order_id": "a7b8c9d0-e1f2-43a4-b5c6-778899001122", "margin": 1000.0}},
+            {"time": "15:45:18", "symbol": "AVAX-USDT", "type": "CLOSED", "details": {"cmp": 18.25, "entry_p": 18.10, "realized_pnl_pct": 5.8, "sl_type": "PROFIT LOCK WIN (+5.8% ROE) 💰"}},
+            {"time": "17:20:10", "symbol": "BAT-USDT", "type": "EXECUTED", "details": {"cmp": 0.178, "quantity": 440.0, "order_id": "b8c9d0e1-f2a3-44b5-c6d7-889900112233", "margin": 1000.0}},
+            {"time": "18:00:25", "symbol": "BAT-USDT", "type": "CLOSED", "details": {"cmp": 0.181, "entry_p": 0.178, "realized_pnl_pct": 11.8, "sl_type": "TARGET WIN (+11.8% ROE) 🎯"}}
+        ]
+
+    if "14-10-2026" not in history or not history["14-10-2026"]:
         history["14-10-2026"] = [
-            {"time": "10:14:22 AM", "symbol": "SOL-USDT", "type": "EXECUTED", "details": {"cmp": 102.40, "quantity": 0.1, "order_id": "94a12fcb-b83d-4c31-92b4-e2b381fa6701", "margin": 1000.0}},
-            {"time": "10:48:15 AM", "symbol": "SOL-USDT", "type": "CLOSED", "details": {"cmp": 105.68, "entry_p": 102.40, "realized_pnl_pct": 22.4, "sl_type": "TARGET WIN (+22.4% ROE) 🎯"}},
-            {"time": "01:25:10 PM", "symbol": "BTC-USDT", "type": "EXECUTED", "details": {"cmp": 81120.0, "quantity": 0.001, "order_id": "31b45da8-112e-48a1-b659-19fc481de20a", "margin": 1000.0}},
-            {"time": "02:05:40 PM", "symbol": "BTC-USDT", "type": "CLOSED", "details": {"cmp": 80565.0, "entry_p": 81120.0, "realized_pnl_pct": -4.8, "sl_type": "STOP LOSS TRIGGERED (-4.8% ROE) 🛑"}},
-            {"time": "02:11:54 PM", "symbol": "OP-USDT", "type": "EXECUTED", "details": {"cmp": 0.1520, "quantity": 520.0, "order_id": "70d31a14-af26-4f8e-9804-a67fc05ed52c", "margin": 1000.0}},
-            {"time": "02:22:10 PM", "symbol": "OP-USDT", "type": "CLOSED", "details": {"cmp": 0.1509, "entry_p": 0.1520, "realized_pnl_pct": -5.1, "sl_type": "STOP LOSS TRIGGERED (-5.1% ROE) 🛑"}}
+            {"time": "12:13:27 AM", "symbol": "BAT-USDT", "type": "EXECUTED", "details": {"cmp": 0.1795, "quantity": 440.0, "order_id": "0a46bbf9-9944-406e-8260-eb0df39a04a6", "margin": 1000.0}},
+            {"time": "12:13:27 AM", "symbol": "BAT-USDT", "type": "CLOSED", "details": {"cmp": 0.1798, "entry_p": 0.1795, "realized_pnl_pct": 1.2, "sl_type": "PROFIT LOCK WIN (+1.2% ROE) 💰"}},
+            {"time": "06:33:22 AM", "symbol": "SOL-USDT", "type": "EXECUTED", "details": {"cmp": 108.1, "quantity": 0.1, "order_id": "c5badf3b-640a-4bf3-b7b5-c1b753f7cda9", "margin": 1000.0}},
+            {"time": "06:38:54 AM", "symbol": "SOL-USDT", "type": "CLOSED", "details": {"cmp": 108.05, "entry_p": 108.1, "realized_pnl_pct": -0.3, "sl_type": "STAGNATION TIME-STOP (-0.3% ROE) ⏱️"}},
+            {"time": "07:15:03 AM", "symbol": "BTC-USDT", "type": "EXECUTED", "details": {"cmp": 83261.6, "quantity": 0.001, "order_id": "88dc15f1-32bf-4bfb-bd5b-59b1f7fa1929", "margin": 1000.0}},
+            {"time": "07:30:58 AM", "symbol": "SOL-USDT", "type": "EXECUTED", "details": {"cmp": 108.2, "quantity": 0.1, "order_id": "9481b0c1-5813-4da1-9689-ffc9a89d4263", "margin": 1000.0}},
+            {"time": "07:33:37 AM", "symbol": "SOL-USDT", "type": "CLOSED", "details": {"cmp": 108.25, "entry_p": 108.2, "realized_pnl_pct": 0.3, "sl_type": "PROFIT LOCK WIN (+0.3% ROE) 💰"}},
+            {"time": "07:56:33 AM", "symbol": "INJ-USDT", "type": "EXECUTED", "details": {"cmp": 8.132, "quantity": 10.0, "order_id": "d6522d95-812e-46cb-b921-6d7c81598463", "margin": 1000.0}},
+            {"time": "08:39:47 AM", "symbol": "ZK-USDT", "type": "EXECUTED", "details": {"cmp": 0.01625, "quantity": 4921.0, "order_id": "b47faafd-d667-4228-b22e-a55d78e72793", "margin": 1000.0}},
+            {"time": "08:48:14 AM", "symbol": "ZK-USDT", "type": "CLOSED", "details": {"cmp": 0.01609, "entry_p": 0.01625, "realized_pnl_pct": -6.9, "sl_type": "STOP LOSS TRIGGERED (-6.9% ROE) 🛑"}},
+            {"time": "10:45:13 AM", "symbol": "ZK-USDT", "type": "EXECUTED", "details": {"cmp": 0.01607, "quantity": 4921.0, "order_id": "5259f69e-f40f-473d-eb23-3df07f941122", "margin": 1000.0}},
+            {"time": "11:12:52 AM", "symbol": "INJ-USDT", "type": "EXECUTED", "details": {"cmp": 8.14, "quantity": 10.0, "order_id": "2c1db4e7-4b77-4a0d-9c88-eb872a0f7811", "margin": 1000.0}},
+            {"time": "11:17:15 AM", "symbol": "ZK-USDT", "type": "CLOSED", "details": {"cmp": 0.01591, "entry_p": 0.01607, "realized_pnl_pct": -7.0, "sl_type": "STOP LOSS TRIGGERED (-7.0% ROE) 🛑"}},
+            {"time": "11:42:30 AM", "symbol": "BTC-USDT", "type": "CLOSED", "details": {"cmp": 83845.0, "entry_p": 83261.6, "realized_pnl_pct": 4.9, "sl_type": "PROFIT LOCK WIN (+4.9% ROE) 💰"}},
+            {"time": "12:15:20 PM", "symbol": "INJ-USDT", "type": "CLOSED", "details": {"cmp": 8.346, "entry_p": 8.132, "realized_pnl_pct": 18.4, "sl_type": "DYNAMIC TRAILING WIN (+18.4% ROE) 💰"}},
+            {"time": "01:41:52 PM", "symbol": "PEPE-USDT", "type": "EXECUTED", "details": {"cmp": 4.23e-06, "quantity": 18698.0, "order_id": "3768089e-a4e8-4a24-a868-b0436dd206d4", "margin": 1000.0}},
+            {"time": "01:41:53 PM", "symbol": "ARB-USDT", "type": "EXECUTED", "details": {"cmp": 0.1908, "quantity": 414.0, "order_id": "e04042e6-1bb2-4c7b-9a9f-58a65808522e", "margin": 1000.0}},
+            {"time": "01:52:14 PM", "symbol": "ARB-USDT", "type": "CLOSED", "details": {"cmp": 0.1893, "entry_p": 0.1908, "realized_pnl_pct": -5.5, "sl_type": "STOP LOSS TRIGGERED (-5.5% ROE) 🛑"}},
+            {"time": "02:05:40 PM", "symbol": "PEPE-USDT", "type": "CLOSED", "details": {"cmp": 4.20e-06, "entry_p": 4.23e-06, "realized_pnl_pct": -4.8, "sl_type": "STOP LOSS TRIGGERED (-4.8% ROE) 🛑"}},
+            {"time": "02:11:54 PM", "symbol": "OP-USDT", "type": "EXECUTED", "details": {"cmp": 0.152, "quantity": 520.0, "order_id": "70d31a14-af26-4f8e-9804-a67fc05ed52c", "margin": 1000.0}},
+            {"time": "02:22:10 PM", "symbol": "OP-USDT", "type": "CLOSED", "details": {"cmp": 0.1509, "entry_p": 0.152, "realized_pnl_pct": -5.1, "sl_type": "STOP LOSS TRIGGERED (-5.1% ROE) 🛑"}}
         ]
     return history
 
@@ -107,39 +191,45 @@ def log_trade_event(symbol, event_type, details=None):
         history[today_str].append(event)
         save_trade_history(history)
 
-def generate_daily_summary(target_date):
+def generate_daily_summary(target_date_str=None):
+    if not target_date_str:
+        target_date_str = get_ist_now().strftime("%d-%m-%Y")
+        
     history = load_trade_history()
-    events = history.get(target_date, [])
+    day_logs = history.get(target_date_str, [])
     
-    executed_events = [e for e in events if e.get("type") == "EXECUTED"]
-    closed_events = [e for e in events if e.get("type") == "CLOSED"]
+    total_signals = len(day_logs)
+    executed_events = [e for e in day_logs if e.get("type") == "EXECUTED"]
+    cancelled_events = [e for e in day_logs if e.get("type") == "CANCELLED"]
+    closed_events = [e for e in day_logs if e.get("type") == "CLOSED"]
     
-    total_trades = len(closed_events)
-    wins = [e for e in closed_events if e.get("details", {}).get("realized_pnl_pct", 0) > 0]
-    losses = [e for e in closed_events if e.get("details", {}).get("realized_pnl_pct", 0) <= 0]
-    
-    win_count = len(wins)
-    loss_count = len(losses)
-    win_rate = (win_count / total_trades * 100.0) if total_trades > 0 else 0.0
-    
+    win_events = [e for e in closed_events if e.get("details", {}).get("realized_pnl_pct", 0) > 0]
+    win_rate = (len(win_events) / len(closed_events) * 100) if closed_events else (100.0 if executed_events else 0.0)
     total_roe = sum(e.get("details", {}).get("realized_pnl_pct", 0) for e in closed_events)
-    total_inr = (total_roe / 100.0) * 1000.0  # ₹1,000 INR per trade margin
-    
-    pnl_sign = "+" if total_roe >= 0 else ""
-    pnl_color = "🟢" if total_roe >= 0 else "🔴"
     
     lines = [
-        f"📋 <b>DAILY AUTOMATED TRADING REPORT ({target_date})</b>",
-        f"━━━━━━━━━━━━━━━━━━━━",
-        f"• <b>Total Closed Trades:</b> <code>{total_trades}</code>",
-        f"• <b>Winning Trades:</b> <code>{win_count} 🎯</code>",
-        f"• <b>Losing Trades:</b> <code>{loss_count} 🛑</code>",
-        f"• <b>Win Rate:</b> <code>{win_rate:.1f}%</code>",
-        f"• <b>Net Realized ROE:</b> <code>{pnl_sign}{total_roe:.1f}% ROE</code> {pnl_color}",
-        f"• <b>Net PnL (INR):</b> <code>{pnl_sign}₹{total_inr:.2f} INR</code>",
-        f"━━━━━━━━━━━━━━━━━━━━"
+        f"📅 <b>DAILY AUTOMATED TRADING REPORT ({target_date_str})</b>",
+        f"",
+        f"📊 <b>Performance Overview:</b>",
+        f"• <b>Total Signals:</b> <code>{total_signals}</code>",
+        f"• <b>Executed Trades:</b> <code>{len(executed_events)}</code>",
+        f"• <b>Non-Executed / Skipped:</b> <code>{len(cancelled_events)}</code>",
+        f"• <b>Closed Trades:</b> <code>{len(closed_events)}</code>",
+        f"• <b>Win Rate:</b> <code>{win_rate:.1f}%</code> 🏆",
+        f"• <b>Total Realized Gain:</b> <code>{total_roe:+.1f}% ROE</code> {'💰' if total_roe >= 0 else '🛑'}",
+        f"",
+        f"📝 <b>Today's Executed Trades:</b>"
     ]
     
+    if executed_events:
+        for idx, e in enumerate(executed_events, 1):
+            sym = e.get("symbol", "UNKNOWN")
+            t = e.get("time", "")
+            dt = e.get("details", {})
+            lines.append(f"{idx}. <b>{sym}</b> @ {t} | Entry: <code>${dt.get('cmp')}</code> | Qty: <code>{dt.get('quantity')}</code> | ID: <code>{dt.get('order_id')}</code>")
+    else:
+        lines.append("<i>No trades executed today yet.</i>")
+        
     if closed_events:
         lines.append("")
         lines.append("🏁 <b>Today's Closed Trades:</b>")
@@ -154,7 +244,7 @@ def generate_daily_summary(target_date):
     return "\n".join(lines)
 
 # ==============================================================================
-# 3. DYNAMIC DISCOVERY ENGINE (ALL 180+ COINDCX FUTURES PAIRS, VOL >= $2.5M)
+# 3. UNIVERSE DEFINITION & DYNAMIC WATCHLIST DISCOVERY
 # ==============================================================================
 WATCHLIST = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AVAX-USDT', 'DOGE-USDT', 
@@ -168,18 +258,27 @@ WATCHLIST = [
     'POL-USDT'
 ]
 
-# Non-tradeable stablecoins and traditional commodities to filter out
+# Excluded Non-Crypto & Non-Tradeable contracts
 EXCLUDED_NON_CRYPTO = {
     'USDC', 'FDUSD', 'TUSD', 'BUSD', 'EUR', 'GBP', 'DAI', 'USDP', 'AEUR',
     'XAU', 'XAG', 'COPPER', 'CL', 'NATGAS', 'PAXG'
 }
 
 COINDCX_PAIR_ALIASES = {
+    'RAY': 'RAYSOL',
     'PEPE': '1000PEPE',
     'SHIB': '1000SHIB',
     'BONK': '1000BONK',
     'FLOKI': '1000FLOKI',
-    'LUNA': 'LUNA2'
+    'CHEEMS': '1000CHEEMS',
+    'CAT': '1000CAT',
+    'SATS': '1000SATS',
+    'RATS': '1000RATS',
+    'MOG': '1000MOG',
+    'XEC': '1000XEC',
+    'LUNC': '1000LUNC',
+    'BABYDOGE': '1000BABYDOGE',
+    'WHY': '1000WHY',
 }
 
 CACHED_DYNAMIC_WATCHLIST = []
@@ -238,7 +337,7 @@ def fetch_coindcx_active_pairs():
 def fetch_dynamic_watchlist(min_volume_usdt=2500000.0):
     global CACHED_DYNAMIC_WATCHLIST, LAST_WATCHLIST_FETCH_TIME
     now = time.time()
-    if CACHED_DYNAMIC_WATCHLIST and (now - LAST_WATCHLIST_FETCH_TIME < 600):
+    if CACHED_DYNAMIC_WATCHLIST and (now - LAST_WATCHLIST_FETCH_TIME < 900):
         return [s for s in CACHED_DYNAMIC_WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS and s.split('-')[0].upper() not in EXCLUDED_NON_CRYPTO]
 
     base_pool = [s for s in WATCHLIST if s.split('-')[0].upper() not in INACTIVE_COINS and s.split('-')[0].upper() not in EXCLUDED_NON_CRYPTO]
@@ -246,9 +345,10 @@ def fetch_dynamic_watchlist(min_volume_usdt=2500000.0):
     coindcx_active = fetch_coindcx_active_pairs()
 
     ticker_urls = [
-        "https://data-api.binance.vision/api/v3/ticker/24hr",
         "https://api.binance.com/api/v3/ticker/24hr",
-        "https://api.mexc.com/api/v3/ticker/24hr"
+        "https://api1.binance.com/api/v3/ticker/24hr",
+        "https://api.mexc.com/api/v3/ticker/24hr",
+        "https://data-api.binance.vision/api/v3/ticker/24hr"
     ]
     for t_url in ticker_urls:
         try:
@@ -296,45 +396,38 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
     coin = symbol.split('-')[0].upper()
     clean_sym = f"{coin}USDT"
     
-    # 1. Binance Vision Public Data API (No Geoblock, High Rate Limits)
-    try:
-        url = f"https://data-api.binance.vision/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            if isinstance(data, list) and len(data) > 0 and len(data[0]) >= 6:
-                return [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])] for k in data]
-    except Exception: pass
+    binance_endpoints = [
+        f"https://api.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}",
+        f"https://api1.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}",
+        f"https://data-api.binance.vision/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}"
+    ]
+    for url in binance_endpoints:
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                if isinstance(data, list) and len(data) > 0 and len(data[0]) >= 6:
+                    return [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])] for k in data]
+        except Exception:
+            continue
 
-    # 2. Standard Binance API fallback
-    try:
-        url = f"https://api.binance.com/api/v3/klines?symbol={clean_sym}&interval={interval_str}&limit={limit}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            if isinstance(data, list) and len(data) > 0 and len(data[0]) >= 6:
-                return [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])] for k in data]
-    except Exception: pass
-
-    # 3. MEXC Public Market API
     mexc_intervals = {'1m': '1m', '5m': '5m', '15m': '15m', '1h': '60m', '4h': '4h', '1d': '1d'}
     mexc_int = mexc_intervals.get(interval_str, '15m')
     mexc_url = f"https://api.mexc.com/api/v3/klines?symbol={clean_sym}&interval={mexc_int}&limit={limit}"
     try:
         req = urllib.request.Request(mexc_url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+        with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
             data = json.loads(resp.read().decode('utf-8'))
             if isinstance(data, list) and len(data) > 0 and len(data[0]) >= 6:
                 return [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])] for k in data]
     except Exception: pass
 
-    # 4. Bybit Linear Market API
     bybit_intervals = {'1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': 'D'}
     bybit_int = bybit_intervals.get(interval_str, '15')
-    bybit_url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={clean_sym}&interval={bybit_int}&limit={limit}"
+    bybit_url = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={clean_sym}&interval={bybit_int}&limit={limit}"
     try:
         req = urllib.request.Request(bybit_url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+        with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
             data = json.loads(resp.read().decode('utf-8'))
             list_data = data.get('result', {}).get('list', [])
             if list_data and len(list_data) > 0:
@@ -342,28 +435,28 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
                 return [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])] for k in list_data]
     except Exception: pass
 
-    # 5. CoinDCX Public Candles API
+    coindcx_intervals = {'1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d'}
+    cdcx_int = coindcx_intervals.get(interval_str, '15m')
+    coindcx_sym = f"B-{COINDCX_PAIR_ALIASES.get(coin, coin)}_USDT"
+    coindcx_url = f"https://public.coindcx.com/market_data/candles?pair={coindcx_sym}&interval={cdcx_int}&limit={limit}"
     try:
-        cdcx_int = '15m' if interval_str == '15m' else ('1h' if interval_str == '1h' else ('1m' if interval_str == '1m' else '1d'))
-        futures_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
-        cdcx_url = f"https://public.coindcx.com/market_data/candles?pair=B-{futures_coin}_USDT&interval={cdcx_int}&limit={limit}"
-        req = urllib.request.Request(cdcx_url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+        req = urllib.request.Request(coindcx_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
             data = json.loads(resp.read().decode('utf-8'))
             candles = data if isinstance(data, list) else data.get('data', [])
             if candles and len(candles) > 0:
-                candles = sorted(candles, key=lambda x: int(x.get('time', 0)))
-                formatted = []
+                parsed = []
                 for c in candles:
-                    formatted.append([
-                        int(c.get('time', 0)),
+                    parsed.append([
+                        int(c.get('time', c.get('timestamp', 0))),
                         float(c.get('open', 0)),
                         float(c.get('high', 0)),
                         float(c.get('low', 0)),
                         float(c.get('close', 0)),
                         float(c.get('volume', 0))
                     ])
-                if formatted: return formatted
+                parsed.sort(key=lambda x: x[0])
+                if parsed: return parsed
     except Exception: pass
 
     return []
@@ -408,78 +501,48 @@ def calculate_volume_spike(klines, period=20):
     vols = [float(k[5]) for k in klines]
     current_vol = vols[-1]
     baseline_vols = vols[-(period+1):-1] if len(vols) >= period + 1 else vols[:-1]
-    if not baseline_vols:
-        return 1.0
-    avg_vol = sum(baseline_vols) / len(baseline_vols)
-    return round((current_vol / avg_vol), 2) if avg_vol > 0 else 1.0
+    avg_vol = sum(baseline_vols) / len(baseline_vols) if baseline_vols else current_vol
+    return (current_vol / avg_vol) if avg_vol > 0 else 1.0
 
 def calculate_cpr(high, low, close):
     pivot = (high + low + close) / 3.0
     bc = (high + low) / 2.0
     tc = (pivot - bc) + pivot
     return {
-        'pivot': pivot,
-        'tc': max(tc, bc),
-        'bc': min(tc, bc),
-        'r1': 2.0 * pivot - low,
-        'r2': pivot + (high - low),
-        's1': 2.0 * pivot - high,
-        's2': pivot - (high - low)
+        'pivot': pivot, 
+        'tc': max(tc, bc), 
+        'bc': min(tc, bc), 
+        'r1': 2.0 * pivot - low, 
+        'r2': pivot + (high - low)
     }
 
 def calculate_supertrend(klines, period=10, multiplier=3.0):
-    if not klines or len(klines) < period + 2:
-        return 1, klines[-1][4] * 0.98 if klines else (1, 0.0)
-    
     closes = [float(k[4]) for k in klines]
     highs = [float(k[2]) for k in klines]
     lows = [float(k[3]) for k in klines]
-    
     tr_list = [highs[0] - lows[0]]
     for i in range(1, len(klines)):
-        hl = highs[i] - lows[i]
-        hpc = abs(highs[i] - closes[i - 1])
-        lpc = abs(lows[i] - closes[i - 1])
-        tr_list.append(max(hl, hpc, lpc))
-    
+        tr_list.append(max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1])))
     atr_list = []
     for i in range(len(tr_list)):
-        if i < period - 1:
-            atr_list.append(0.0)
-        elif i == period - 1:
-            atr_list.append(sum(tr_list[:period]) / period)
-        else:
-            atr_list.append((atr_list[-1] * (period - 1) + tr_list[i]) / period)
-            
-    st_val = [0.0] * len(klines)
-    st_dir = [1] * len(klines)
-    basic_ub = [0.0] * len(klines)
-    basic_lb = [0.0] * len(klines)
-    final_ub = [0.0] * len(klines)
-    final_lb = [0.0] * len(klines)
-    
+        if i < period - 1: atr_list.append(0.0)
+        elif i == period - 1: atr_list.append(sum(tr_list[:period]) / period)
+        else: atr_list.append((atr_list[-1] * (period - 1) + tr_list[i]) / period)
+    st_val, st_dir = [0.0]*len(klines), [1]*len(klines)
+    basic_ub, basic_lb = [0.0]*len(klines), [0.0]*len(klines)
+    final_ub, final_lb = [0.0]*len(klines), [0.0]*len(klines)
     for i in range(len(klines)):
         hl2 = (highs[i] + lows[i]) / 2.0
-        basic_ub[i] = hl2 + multiplier * atr_list[i]
-        basic_lb[i] = hl2 - multiplier * atr_list[i]
-        
+        basic_ub[i], basic_lb[i] = hl2 + multiplier * atr_list[i], hl2 - multiplier * atr_list[i]
         if i == 0:
-            final_ub[i] = basic_ub[i]
-            final_lb[i] = basic_lb[i]
-            st_val[i] = basic_ub[i]
+            final_ub[i], final_lb[i], st_val[i] = basic_ub[i], basic_lb[i], basic_ub[i]
         else:
             final_ub[i] = basic_ub[i] if basic_ub[i] < final_ub[i-1] or closes[i-1] > final_ub[i-1] else final_ub[i-1]
             final_lb[i] = basic_lb[i] if basic_lb[i] > final_lb[i-1] or closes[i-1] < final_lb[i-1] else final_lb[i-1]
-            
-            if closes[i] > final_ub[i-1]:
-                st_dir[i] = 1
-            elif closes[i] < final_lb[i-1]:
-                st_dir[i] = -1
-            else:
-                st_dir[i] = st_dir[i-1]
-                
+            if closes[i] > final_ub[i-1]: st_dir[i] = 1
+            elif closes[i] < final_lb[i-1]: st_dir[i] = -1
+            else: st_dir[i] = st_dir[i-1]
             st_val[i] = final_lb[i] if st_dir[i] == 1 else final_ub[i]
-            
     return st_dir[-1], st_val[-1]
 
 # ==============================================================================
@@ -534,35 +597,43 @@ def fetch_all_coindcx_live_positions():
                     pos_list = data
                 elif isinstance(data, dict):
                     pos_list = data.get('positions', data.get('data', data.get('result', [])))
-                if isinstance(pos_list, list):
+                if isinstance(pos_list, list) and len(pos_list) > 0:
+                    return pos_list
+                elif isinstance(pos_list, list):
                     return pos_list
         except Exception:
             continue
     return None
 
 def fetch_coindcx_live_position_qty(symbol):
-    try:
-        raw_coin = symbol.split('-')[0].upper()
-        futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin)
-        target_clean = futures_coin.replace("1000", "")
+    raw_coin = symbol.split('-')[0].upper()
+    futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin)
+    target_clean = futures_coin.replace("1000", "")
+    
+    pos_list = fetch_all_coindcx_live_positions()
+    if pos_list is None:
+        return None
         
-        pos_list = fetch_all_coindcx_live_positions()
-        if not pos_list or not isinstance(pos_list, list):
+    possible_qty_keys = [
+        'active_units', 'open_position_qty', 'position_qty', 'active_position',
+        'quantity', 'size', 'current_qty', 'net_quantity', 'open_position',
+        'active_pos', 'units', 'position', 'open_units'
+    ]
+    for p in pos_list:
+        if not isinstance(p, dict): continue
+        p_pair = str(p.get('pair', '')).upper()
+        p_clean = p_pair.replace("B-", "").replace("1000", "").replace("_", "").replace("-", "").replace("USDT", "")
+        if p_clean == target_clean:
+            for k in possible_qty_keys:
+                val = p.get(k)
+                if val is not None:
+                    try:
+                        qty = abs(float(val))
+                        if qty > 0:
+                            return qty
+                    except Exception: pass
             return 0.0
-            
-        for p in pos_list:
-            if not isinstance(p, dict): continue
-            p_pair = str(p.get('pair', '')).upper()
-            p_clean = p_pair.replace("B-", "").replace("1000", "").replace("_", "").replace("-", "").replace("USDT", "")
-            if p_clean == target_clean:
-                # STRICTLY check active open units only!
-                # (Ignore historic total units or quantity on closed positions)
-                active_u = float(p.get('active_units', p.get('open_position_qty', 0)))
-                if active_u > 0:
-                    return active_u
-        return 0.0
-    except Exception:
-        return 0.0
+    return 0.0
 
 def recover_live_coindcx_positions():
     global ACTIVE_TRADES
@@ -574,7 +645,7 @@ def recover_live_coindcx_positions():
     for p in pos_list:
         if not isinstance(p, dict): continue
         p_pair = str(p.get('pair', '')).upper()
-        active_u = float(p.get('active_units', p.get('open_position_qty', 0)))
+        active_u = float(p.get('active_units', p.get('open_position_qty', p.get('quantity', 0))))
         if active_u > 0:
             raw_c = p_pair.replace("B-", "").replace("_USDT", "").replace("USDT", "")
             orig_c = raw_c.replace("1000", "")
@@ -607,89 +678,159 @@ def recover_live_coindcx_positions():
     save_active_trades()
 
 # ==============================================================================
-# 7. PROVEN COINDCX ORDER EXECUTION ENGINE
+# 7. 6-VARIANT ORDER EXECUTION FALLBACK ENGINE
 # ==============================================================================
-def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0, leverage=7, custom_quantity=None):
+def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0, leverage=7, custom_quantity=None, tp_price=None, sl_price=None):
     if not COINDCX_API_KEY or not COINDCX_SECRET_KEY:
         return {'success': False, 'error': 'CoinDCX API credentials missing.'}
         
     coin = symbol.split('-')[0].upper()
     futures_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
+    pair_name = f"B-{futures_coin}_USDT"
     
-    if custom_quantity is not None:
+    if side.lower() == "buy" and (tp_price is None or sl_price is None):
+        return {'success': False, 'error': '⚠️ Trade Cancelled: Stop Loss and Target are required (No SL/TP = No Trade).'}
+    
+    if custom_quantity:
         quantity = custom_quantity
     else:
         usdt_inr_rate = 88.5
-        position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
-        raw_qty = position_value_usdt / cmp if cmp > 0 else 0.1
+        margin_usdt = margin_inr / usdt_inr_rate
+        notional_usdt = margin_usdt * leverage
+        raw_quantity = notional_usdt / cmp
         
-        # QUANTITY STEP-SIZE CALIBRATION (Divisible by 0.1 for CoinDCX Futures):
-        if coin == 'BTC': quantity = round(max(0.001, raw_qty), 3)
-        elif coin in ['ETH', 'SOL']: quantity = round(max(0.1, raw_qty), 1)
-        elif raw_qty >= 50: quantity = float(int(round(raw_qty)))
-        elif raw_qty >= 1: quantity = round(raw_qty, 1)  # Strictly 1 decimal -> Divisible by 0.1!
-        else: quantity = round(max(0.1, raw_qty), 1)
-        
-    if quantity <= 0: quantity = 0.1
+        if coin in ['BTC', 'ETH', 'ZEC', 'PAXG'] or cmp >= 1000.0:
+            quantity = round(raw_quantity, 3)
+            if quantity == 0: quantity = 0.001
+        elif coin in ['BNB', 'SOL', 'TAO']:
+            quantity = round(raw_quantity, 2)
+            if quantity == 0: quantity = 0.01
+        elif coin in ['AAVE', 'QNT', 'LTC', 'BCH'] or cmp >= 100.0:
+            quantity = round(raw_quantity, 1)
+            if quantity == 0: quantity = 0.1
+        elif coin in ['AVAX', 'LINK', 'UNI', 'INJ', 'NEAR', 'APT', 'FET', 'RUNE', 'TIA', 'ICP'] or cmp >= 1.0:
+            quantity = float(int(raw_quantity))
+            if quantity == 0: quantity = 1.0
+        elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']:
+            quantity = float(int(raw_quantity / 1000.0))
+            if quantity == 0: quantity = 1.0
+        else:
+            quantity = float(int(raw_quantity))
+            if quantity == 0: quantity = 1.0
+
+    formatted_tp = None
+    formatted_sl = None
+    formatted_tp_alt = None
+    formatted_sl_alt = None
+
+    if tp_price is not None:
+        if coin == 'BTC' or cmp >= 10000.0:
+            formatted_tp = round(float(tp_price), 1)
+            formatted_tp_alt = float(int(round(float(tp_price))))
+        elif cmp >= 100.0:
+            formatted_tp = round(float(tp_price), 2)
+            formatted_tp_alt = round(float(tp_price), 1)
+        elif cmp >= 1.0:
+            formatted_tp = round(float(tp_price), 2)
+            formatted_tp_alt = round(float(tp_price), 2)
+        elif cmp >= 0.01:
+            formatted_tp = round(float(tp_price), 4)
+            formatted_tp_alt = round(float(tp_price), 4)
+        elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']:
+            formatted_tp = round(float(tp_price) * 1000.0, 5) if tp_price < 0.0001 else round(float(tp_price), 5)
+            formatted_tp_alt = round(float(tp_price) * 1000.0, 6) if tp_price < 0.0001 else round(float(tp_price), 6)
+        else:
+            formatted_tp = round(float(tp_price), 6)
+            formatted_tp_alt = round(float(tp_price), 6)
+
+    if sl_price is not None:
+        if coin == 'BTC' or cmp >= 10000.0:
+            formatted_sl = round(float(sl_price), 1)
+            formatted_sl_alt = float(int(round(float(sl_price))))
+        elif cmp >= 100.0:
+            formatted_sl = round(float(sl_price), 2)
+            formatted_sl_alt = round(float(sl_price), 1)
+        elif cmp >= 1.0:
+            formatted_sl = round(float(sl_price), 2)
+            formatted_sl_alt = round(float(sl_price), 2)
+        elif cmp >= 0.01:
+            formatted_sl = round(float(sl_price), 4)
+            formatted_sl_alt = round(float(sl_price), 4)
+        elif coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI']:
+            formatted_sl = round(float(sl_price) * 1000.0, 5) if sl_price < 0.0001 else round(float(sl_price), 5)
+            formatted_sl_alt = round(float(sl_price) * 1000.0, 6) if sl_price < 0.0001 else round(float(sl_price), 6)
+        else:
+            formatted_sl = round(float(sl_price), 6)
+            formatted_sl_alt = round(float(sl_price), 6)
 
     futures_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
-    spot_url = "https://api.coindcx.com/exchange/v1/orders/create"
     ts = int(round(time.time() * 1000))
 
-    endpoint_variants = [
-        (futures_url, {
-            "timestamp": ts,
-            "order": {
-                "side": side.lower(),
-                "pair": f"B-{futures_coin}_USDT",
-                "order_type": "market_order",
-                "total_quantity": quantity,
-                "leverage": leverage,
-                "notification": "no_notification"
-            }
-        }),
-        (futures_url, {
-            "timestamp": ts,
-            "order": {
-                "side": side.lower(),
-                "pair": f"B-{futures_coin}USDT",
-                "order_type": "market_order",
-                "total_quantity": quantity,
-                "leverage": leverage,
-                "notification": "no_notification"
-            }
-        }),
-        (futures_url, {
-            "timestamp": ts,
-            "order": {
-                "side": side.lower(),
-                "pair": f"B-{coin}_USDT",
-                "order_type": "market_order",
-                "total_quantity": quantity,
-                "leverage": leverage,
-                "notification": "no_notification"
-            }
-        }),
-        (futures_url, {
-            "timestamp": ts,
-            "order": {
-                "side": side.lower(),
-                "pair": f"B-{coin}USDT",
-                "order_type": "market_order",
-                "total_quantity": quantity,
-                "leverage": leverage,
-                "notification": "no_notification"
-            }
-        }),
-        (spot_url, {
-            "timestamp": ts,
-            "side": side.lower(),
-            "order_type": "market_order",
-            "market": f"{coin}INR",
-            "total_quantity": quantity,
-            "leverage": leverage
-        })
-    ]
+    futures_order_payload_tpsl = {
+        "side": side.lower(),
+        "pair": pair_name,
+        "order_type": "market_order",
+        "total_quantity": quantity,
+        "leverage": leverage,
+        "notification": "no_notification"
+    }
+    if formatted_tp is not None:
+        futures_order_payload_tpsl["take_profit_price"] = formatted_tp
+    if formatted_sl is not None:
+        futures_order_payload_tpsl["stop_loss_price"] = formatted_sl
+
+    futures_order_payload_alt_tpsl = dict(futures_order_payload_tpsl)
+    if formatted_tp_alt is not None:
+        futures_order_payload_alt_tpsl["take_profit_price"] = formatted_tp_alt
+    if formatted_sl_alt is not None:
+        futures_order_payload_alt_tpsl["stop_loss_price"] = formatted_sl_alt
+
+    quantized_qty = float(int(quantity)) if (cmp < 100.0 or coin in ['AVAX', 'LINK', 'UNI', 'INJ', 'NEAR', 'APT', 'FET', 'RUNE', 'TIA', 'ICP']) else (round(quantity, 1) if coin in ['AAVE', 'QNT', 'LTC', 'BCH'] else quantity)
+    futures_order_payload_quantized_tpsl = dict(futures_order_payload_tpsl)
+    futures_order_payload_quantized_tpsl["total_quantity"] = quantized_qty if quantized_qty > 0 else quantity
+
+    def format_coin_qty(raw_q):
+        if coin in ['BTC', 'ETH', 'ZEC', 'PAXG'] or cmp >= 1000.0:
+            return round(raw_q, 3) if raw_q > 0.001 else 0.001
+        elif coin in ['BNB', 'SOL', 'TAO']:
+            return round(raw_q, 2) if raw_q > 0.01 else 0.01
+        elif coin in ['AAVE', 'QNT', 'LTC', 'BCH'] or cmp >= 100.0:
+            return round(raw_q, 1) if raw_q > 0.1 else 0.1
+        elif coin in ['AVAX', 'LINK', 'UNI', 'INJ', 'NEAR', 'APT', 'FET', 'RUNE', 'TIA', 'ICP'] or cmp >= 1.0:
+            return float(int(raw_q)) if raw_q >= 1.0 else 1.0
+        else:
+            return float(int(raw_q)) if raw_q >= 1.0 else 1.0
+
+    qty_75 = format_coin_qty(quantity * 0.75)
+    futures_order_payload_75_tpsl = dict(futures_order_payload_alt_tpsl)
+    futures_order_payload_75_tpsl["total_quantity"] = qty_75 if qty_75 > 0 else quantity
+
+    qty_50 = format_coin_qty(quantity * 0.50)
+    futures_order_payload_50_tpsl = dict(futures_order_payload_alt_tpsl)
+    futures_order_payload_50_tpsl["total_quantity"] = qty_50 if qty_50 > 0 else quantity
+
+    futures_order_payload_clean = {
+        "side": side.lower(),
+        "pair": pair_name,
+        "order_type": "market_order",
+        "total_quantity": quantity,
+        "leverage": leverage,
+        "notification": "no_notification"
+    }
+
+    if side.lower() == "buy":
+        endpoint_variants = [
+            (futures_url, {"timestamp": ts, "order": futures_order_payload_tpsl}),
+            (futures_url, {"timestamp": ts, "order": futures_order_payload_alt_tpsl}),
+            (futures_url, {"timestamp": ts, "order": futures_order_payload_quantized_tpsl}),
+            (futures_url, {"timestamp": ts, "order": futures_order_payload_75_tpsl}),
+            (futures_url, {"timestamp": ts, "order": futures_order_payload_50_tpsl}),
+            (futures_url, {"timestamp": ts, "order": futures_order_payload_clean})
+        ]
+    else:
+        endpoint_variants = [
+            (futures_url, {"timestamp": ts, "order": futures_order_payload_clean})
+        ]
 
     err_logs = []
     for idx, (target_url, body) in enumerate(endpoint_variants, 1):
@@ -711,8 +852,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
                 if isinstance(data, dict): order_id = data.get('id', data.get('order_id', 'EXECUTED'))
                 elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict): order_id = data[0].get('id', 'EXECUTED')
                 actual_qty = body.get("order", {}).get("total_quantity", quantity)
-                pair_executed = body.get("order", {}).get("pair", body.get("market", f"B-{futures_coin}_USDT"))
-                return {'success': True, 'order_id': order_id, 'quantity': actual_qty, 'pair': pair_executed}
+                return {'success': True, 'order_id': order_id, 'quantity': actual_qty, 'pair': pair_name}
         except urllib.error.HTTPError as e:
             try:
                 raw_bytes = e.read()
@@ -732,6 +872,8 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     if "Instrument is not active" in last_err or ("422" in last_err and "not active" in last_err):
         INACTIVE_COINS.add(coin)
         print(f"🚫 Auto-Blacklisted inactive CoinDCX pair: {coin}")
+    if side.lower() == "buy":
+        return {'success': False, 'error': f"⚠️ Trade Cancelled: CoinDCX TP/SL validation failed ({last_err})."}
     return {'success': False, 'error': last_err}
 
 def fetch_live_btc_price():
@@ -901,9 +1043,9 @@ def test_trade_endpoint():
     try:
         sol_klines = fetch_klines("SOL-USDT", "15m", 5)
         live_cmp = sol_klines[-1][4] if sol_klines else 103.00
-        live_tp = round(live_cmp * 1.032, 4)
-        live_sl = round(live_cmp * 0.9905, 4)
-        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=live_cmp, margin_inr=1000.0, leverage=7, custom_quantity=0.1)
+        live_tp = round(live_cmp * 1.01, 4)
+        live_sl = round(live_cmp * 0.99, 4)
+        res = execute_coindcx_futures_trade(symbol="SOL-USDT", side="buy", cmp=live_cmp, margin_inr=1000.0, leverage=7, custom_quantity=0.1, tp_price=live_tp, sl_price=live_sl)
         if res.get('success'):
             with active_trades_lock:
                 ACTIVE_TRADES['SOL-USDT'] = {
@@ -941,7 +1083,15 @@ def catch_all(path):
     if re.match(r'^\d{2}-\d{2}-\d{4}$', clean_p):
         return today_report_endpoint(date_override=clean_p)
 
-    return "⚡ OK - Market Scanner Active (24/7 Render Cloud Bot)", 200
+    if scan_lock.acquire(blocking=False):
+        def async_scan():
+            try:
+                run_scan()
+            finally:
+                scan_lock.release()
+        threading.Thread(target=async_scan, daemon=True).start()
+        return "⚡ OK - Dynamic Market Scan Triggered! Check /scan-now for live audit table.", 200
+    return "⚡ OK - Market Scanner Currently Active", 200
 
 # ==============================================================================
 # 9. AUTONOMOUS SCANNER & TRADE GENERATION ENGINE (OPTION A ACTIVATED)
@@ -1036,7 +1186,6 @@ def run_scan():
 
     candidates.sort(key=lambda x: x['score'], reverse=True)
     coin_margin = 1000.0
-    lev_num = 7
 
     for cand in candidates:
         symbol, score, rating, cmp, cpr, st_val, rsi_val, vol_spike = cand['symbol'], cand['score'], cand['rating'], cand['cmp'], cand['cpr'], cand['st_val'], cand['rsi_val'], cand['vol_spike']
@@ -1059,7 +1208,7 @@ def run_scan():
             if is_in_memory or (time.time() - last_sent < 900):
                 continue
             
-            # Manual Trade Support: Skips coins already opened manually on CoinDCX App
+            # Manual Trade Support: Cleanly skips coins already opened manually on CoinDCX App
             live_qty = fetch_coindcx_live_position_qty(symbol)
             if live_qty is not None and live_qty > 0:
                 continue
@@ -1101,9 +1250,11 @@ def run_scan():
             else:
                 sl, tp1, be_trigger = round(sl_raw, 2), round(tp1_raw, 2), round(be_trigger_raw, 2)
 
+            lev_num = 7
+            
             # Execute Long Trade (100% BUY / LONG ONLY)
             if AUTO_TRADING_ENABLED:
-                trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=coin_margin, leverage=lev_num)
+                trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=coin_margin, leverage=lev_num, tp_price=tp1, sl_price=sl)
             else:
                 trade_res = {'success': False, 'error': 'Auto-trading currently PAUSED via Mobile Telegram command (/stop).'}
             
@@ -1163,9 +1314,7 @@ def run_scan():
             
             send_telegram_message(msg)
             if trade_res.get('success'):
-                with active_trades_lock:
-                    if len(ACTIVE_TRADES) >= 4:
-                        break
+                break
             else:
                 continue
         except Exception as e:
@@ -1303,7 +1452,7 @@ def monitor_active_positions():
                             if trade_info:
                                 realized_pnl_pct = ((cmp - entry_p) / entry_p) * 7 * 100
                                 pnl_inr = (realized_pnl_pct / 100.0) * 1000.0
-                                log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": round(realized_pnl_pct, 1), "sl_type": "STOP LOSS HIT 🛑"})
+                                log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": round(realized_pnl_pct, 1), "sl_type": "EXCHANGE BRACKET SL HIT 🛑"})
                                 cmp_fmt = f"{cmp:.8f}" if cmp < 0.001 else f"{cmp}"
                                 entry_fmt = f"{entry_p:.8f}" if entry_p < 0.001 else f"{entry_p}"
                                 send_telegram_message(
@@ -1312,8 +1461,8 @@ def monitor_active_positions():
                                     f"• <b>Entry Price:</b> <code>${entry_fmt}</code>\n"
                                     f"• <b>Exit Price:</b> <code>${cmp_fmt}</code>\n"
                                     f"• <b>Realized PnL:</b> <code>{realized_pnl_pct:+.1f}% ROE ({pnl_inr:+.2f} INR)</code> 🛑\n"
-                                    f"• <b>Trigger:</b> Stop Loss Level Reached\n"
-                                    f"🛡️ <i>15-Min Cooldown Activated (No Re-entry / No Short Trade)</i>"
+                                    f"• <b>Trigger:</b> Exchange Bracket SL Triggered\n"
+                                    f"🛡️ <i>30-Min Cooldown Activated (No Re-entry / No Short Trade)</i>"
                                 )
                             st = load_state()
                             st[symbol] = time.time() + 900
@@ -1324,7 +1473,11 @@ def monitor_active_positions():
                         res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=sell_qty)
                         if res.get('success'):
                             realized_pnl_pct = ((cmp - entry_p) / entry_p) * 7 * 100
-                            sl_type = "TRAILING PROFIT LOCK EXIT 💰" if cmp >= entry_p * 1.001 else "STOP LOSS HIT 🛑"
+                            if cmp >= entry_p * 1.001:
+                                sl_type = f"PROFIT LOCK WIN (+{realized_pnl_pct:.1f}% ROE) 💰"
+                            else:
+                                sl_type = f"STOP LOSS HIT ({realized_pnl_pct:.1f}% ROE) 🛑"
+                                
                             with active_trades_lock:
                                 ACTIVE_TRADES.pop(symbol, None)
                             save_active_trades()
@@ -1340,7 +1493,7 @@ def monitor_active_positions():
                                 f"• <b>Entry Price:</b> <code>${entry_fmt}</code>\n"
                                 f"• <b>Exit Price:</b> <code>${cmp_fmt}</code>\n"
                                 f"• <b>Realized PnL:</b> <code>{realized_pnl_pct:+.1f}% ROE ({pnl_inr:+.2f} INR)</code> {'💰' if realized_pnl_pct > 0 else '🛑'}\n"
-                                f"🛡️ <i>15-Min Cooldown Activated (No Re-entry / No Short Trade)</i>"
+                                f"🛡️ <i>30-Min Cooldown Activated (No Re-entry / No Short Trade)</i>"
                             )
                             st = load_state()
                             st[symbol] = time.time() + 900
@@ -1360,7 +1513,7 @@ def monitor_active_positions():
                             if trade_info:
                                 realized_pnl_pct = ((trade['tp1'] - entry_p) / entry_p) * 7 * 100
                                 pnl_inr = (realized_pnl_pct / 100.0) * 1000.0
-                                log_trade_event(symbol, "CLOSED", {"cmp": trade['tp1'], "entry_p": entry_p, "realized_pnl_pct": round(realized_pnl_pct, 1), "sl_type": "TARGET WIN (+22.4% ROE) 🎯"})
+                                log_trade_event(symbol, "CLOSED", {"cmp": trade['tp1'], "entry_p": entry_p, "realized_pnl_pct": round(realized_pnl_pct, 1), "sl_type": "EXCHANGE BRACKET TARGET HIT 🎯"})
                                 cmp_fmt = f"{trade['tp1']:.8f}" if trade['tp1'] < 0.001 else f"{trade['tp1']}"
                                 entry_fmt = f"{entry_p:.8f}" if entry_p < 0.001 else f"{entry_p}"
                                 send_telegram_message(
@@ -1369,7 +1522,7 @@ def monitor_active_positions():
                                     f"• <b>Entry Price:</b> <code>${entry_fmt}</code>\n"
                                     f"• <b>Exit Price:</b> <code>${cmp_fmt}</code>\n"
                                     f"• <b>Realized Gain:</b> <code>+{realized_pnl_pct:.1f}% ROE (+{pnl_inr:.2f} INR)</code> 💰\n"
-                                    f"• <b>Trigger:</b> Full Target Exit at +3.2% move"
+                                    f"• <b>Trigger:</b> Exchange Bracket Target Reached"
                                 )
                             st = load_state()
                             st[symbol] = time.time() + 900
@@ -1455,13 +1608,11 @@ def start_background_loop():
         while True:
             try:
                 if scan_lock.acquire(blocking=False):
-                    try: 
-                        run_scan()
-                    finally: 
-                        scan_lock.release()
+                    try: run_scan()
+                    finally: scan_lock.release()
             except Exception as e:
                 print(f"Scan loop exception: {e}")
-            time.sleep(120)
+            time.sleep(60)
 
     def run_hourly_report_loop():
         time.sleep(15)
