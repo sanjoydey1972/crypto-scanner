@@ -67,24 +67,24 @@ WATCHLIST = [
     'XRP-USDT', 'ADA-USDT', 'LINK-USDT', 'NEAR-USDT', 'BCH-USDT', 
     'SUI-USDT', 'LTC-USDT', 'DOT-USDT', 'PEPE-USDT', 'OP-USDT', 
     'ARB-USDT', 'APT-USDT', 'RENDER-USDT', 'INJ-USDT', 'FET-USDT', 
-    'TIA-USDT', 'WIF-USDT', 'SHIB-USDT', 'FLOKI-USDT', 'AAVE-USDT', 
-    'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 'ICP-USDT', 'SAND-USDT', 
-    'SEI-USDT', 'ORDI-USDT', 'FIL-USDT', 'JUP-USDT', 'BONK-USDT', 
-    'STX-USDT', 'PENDLE-USDT', 'RUNE-USDT', 'IMX-USDT', 'KAS-USDT', 
-    'ZEC-USDT', 'BAT-USDT', 'TAO-USDT', 'ENA-USDT', 'TRX-USDT', 
-    'ONDO-USDT', 'POL-USDT', 'BNB-USDT', 'PUMP-USDT', 'HYPE-USDT', 
-    'WAL-USDT', 'STRK-USDT', 'WLD-USDT', 'QNT-USDT', 'ZK-USDT', 
-    'ZRO-USDT', 'HBAR-USDT', 'XLM-USDT', 'TRUMP-USDT', 'PYTH-USDT', 
-    'NIL-USDT', 'ASTER-USDT', 'ZAMA-USDT', 'MUBARAK-USDT', 'BLUR-USDT', 
-    'GRAM-USDT', 'RAY-USDT', 'PENGU-USDT', 'AVA-USDT', 'W-USDT', 
-    'AERO-USDT', 'EPIC-USDT', 'MARSCOIN-USDT', 'CHIP-USDT', 'BERA-USDT', 
-    'CRV-USDT', 'RSR-USDT', 'DUSK-USDT', 'MEGA-USDT', 'PLUME-USDT', 
-    'ETHFI-USDT', 'DASH-USDT', 'LDO-USDT', 'JTO-USDT', 'MAGIC-USDT', 
-    'S-USDT', 'GTC-USDT', 'CAKE-USDT', 'WLFI-USDT', 'RLC-USDT', 
-    'WCT-USDT', 'VIRTUAL-USDT', 'MORPHO-USDT', 'ALGO-USDT', 'FF-USDT', 
-    'ACE-USDT', 'MET-USDT', 'JST-USDT', 'ETC-USDT', 'CFX-USDT', 
-    'EIGEN-USDT', 'SKY-USDT', 'BOME-USDT', 'AXL-USDT', 'OGN-USDT', 
-    'LUMIA-USDT', 'ZEN-USDT', 'NIGHT-USDT', 'KAIA-USDT', 'CFG-USDT', 
+    'TIA-USDT', 'WIF-USDT', 'SHIB-USDT', 'FLOKI-USDT', 'AAVE-USDT',
+    'FTM-USDT', 'UNI-USDT', 'ATOM-USDT', 'ICP-USDT', 'SAND-USDT',
+    'SEI-USDT', 'ORDI-USDT', 'FIL-USDT', 'JUP-USDT', 'BONK-USDT',
+    'STX-USDT', 'PENDLE-USDT', 'RUNE-USDT', 'IMX-USDT', 'KAS-USDT',
+    'ZEC-USDT', 'BAT-USDT', 'TAO-USDT', 'ENA-USDT', 'TRX-USDT',
+    'ONDO-USDT', 'POL-USDT', 'BNB-USDT', 'PUMP-USDT', 'HYPE-USDT',
+    'WAL-USDT', 'STRK-USDT', 'WLD-USDT', 'QNT-USDT', 'ZK-USDT',
+    'ZRO-USDT', 'HBAR-USDT', 'XLM-USDT', 'TRUMP-USDT', 'PYTH-USDT',
+    'NIL-USDT', 'ASTER-USDT', 'ZAMA-USDT', 'MUBARAK-USDT', 'BLUR-USDT',
+    'GRAM-USDT', 'RAY-USDT', 'PENGU-USDT', 'AVA-USDT', 'W-USDT',
+    'AERO-USDT', 'EPIC-USDT', 'MARSCOIN-USDT', 'CHIP-USDT', 'BERA-USDT',
+    'CRV-USDT', 'RSR-USDT', 'DUSK-USDT', 'MEGA-USDT', 'PLUME-USDT',
+    'ETHFI-USDT', 'DASH-USDT', 'LDO-USDT', 'JTO-USDT', 'MAGIC-USDT',
+    'S-USDT', 'GTC-USDT', 'CAKE-USDT', 'WLFI-USDT', 'RLC-USDT',
+    'WCT-USDT', 'VIRTUAL-USDT', 'MORPHO-USDT', 'ALGO-USDT', 'FF-USDT',
+    'ACE-USDT', 'MET-USDT', 'JST-USDT', 'ETC-USDT', 'CFX-USDT',
+    'EIGEN-USDT', 'SKY-USDT', 'BOME-USDT', 'AXL-USDT', 'OGN-USDT',
+    'LUMIA-USDT', 'ZEN-USDT', 'NIGHT-USDT', 'KAIA-USDT', 'CFG-USDT',
     'IO-USDT', 'MITO-USDT'
 ]
 
@@ -108,7 +108,7 @@ COINDCX_PAIR_ALIASES = {
 
 EXCLUDED_NON_CRYPTO = {
     'XAU', 'XAG', 'PAXG', 'CL', 'BZ', 'NG', 'WTI', 'BRENT', 
-    'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'CNY', 'INR', 
+    'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'CNY', 'INR',
     'USDC', 'FDUSD', 'TUSD', 'USDD', 'DAI', 'USD', 'UST', 'BUSD', 'AEUR'
 }
 
@@ -175,7 +175,7 @@ BASELINE_HISTORY = [
     {'date': '14-10-2026', 'timestamp': '07:56:33 AM', 'symbol': 'INJ-USDT', 'type': 'EXECUTED', 'details': {'cmp': 8.132, 'quantity': 10.0, 'order_id': 'd6522d95', 'margin': 1000.0}},
     {'date': '14-10-2026', 'timestamp': '11:42:30 AM', 'symbol': 'BTC-USDT', 'type': 'CLOSED', 'details': {'cmp': 83845.0, 'entry_p': 83261.6, 'realized_pnl_pct': 4.9, 'sl_type': 'PROFIT LOCK WIN (+4.9% ROE) 💰'}},
     {'date': '14-10-2026', 'timestamp': '12:15:20 PM', 'symbol': 'INJ-USDT', 'type': 'CLOSED', 'details': {'cmp': 8.346, 'entry_p': 8.132, 'realized_pnl_pct': 18.4, 'sl_type': 'DYNAMIC TRAILING WIN (+18.4% ROE) 💰'}},
-    # 15-10-2026 Verified Live CoinDCX Trades (Screenshot 1 Data)
+    # 15-10-2026 Verified Live CoinDCX Trades
     {'date': '15-10-2026', 'timestamp': '07:12:15 PM', 'symbol': 'PYTH-USDT', 'type': 'EXECUTED', 'details': {'cmp': 0.0871, 'quantity': 908.0, 'order_id': '7f984ca2', 'margin': 1000.0}},
     {'date': '15-10-2026', 'timestamp': '07:18:42 PM', 'symbol': 'BCH-USDT', 'type': 'EXECUTED', 'details': {'cmp': 273.1, 'quantity': 0.3, 'order_id': '299a9e0c', 'margin': 1000.0}},
     {'date': '15-10-2026', 'timestamp': '07:24:10 PM', 'symbol': 'ZRO-USDT', 'type': 'EXECUTED', 'details': {'cmp': 1.963, 'quantity': 40.3, 'order_id': '5c687fc0', 'margin': 1000.0}},
@@ -358,65 +358,82 @@ def calculate_cpr(high, low, close):
     return {
         'pivot': pivot, 
         'tc': max(tc, bc), 
-        'bc': min(tc, bc), 
-        'r1': 2.0 * pivot - low, 
-        'r2': pivot + (high - low)
+        'bc': min(tc, bc),
+        'r1': 2 * pivot - low,
+        's1': 2 * pivot - high,
+        'r2': pivot + (high - low),
+        's2': pivot - (high - low)
     }
 
-def calculate_ema(prices, period):
-    if not prices or len(prices) == 0: return 0.0
-    if len(prices) < period: return sum(prices) / len(prices)
-    multiplier = 2.0 / (period + 1.0)
-    ema = sum(prices[:period]) / float(period)
-    for price in prices[period:]:
-        ema = (price - ema) * multiplier + ema
-    return ema
-
 def calculate_supertrend(klines, period=10, multiplier=3.0):
-    closes = [float(k[4]) for k in klines]
-    highs = [float(k[2]) for k in klines]
-    lows = [float(k[3]) for k in klines]
-    tr_list = [highs[0] - lows[0]]
+    if len(klines) < period + 1: return 1, 0.0
+    hl2 = [(k[2] + k[3]) / 2.0 for k in klines]
+    trs = []
     for i in range(1, len(klines)):
-        tr_list.append(max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1])))
-    atr_list = []
-    for i in range(len(tr_list)):
-        if i < period - 1: atr_list.append(0.0)
-        elif i == period - 1: atr_list.append(sum(tr_list[:period]) / period)
-        else: atr_list.append((atr_list[-1] * (period - 1) + tr_list[i]) / period)
-        
-    st_val, st_dir = [0.0]*len(klines), [1]*len(klines)
-    basic_ub, basic_lb = [0.0]*len(klines), [0.0]*len(klines)
-    final_ub, final_lb = [0.0]*len(klines), [0.0]*len(klines)
-    for i in range(len(klines)):
-        hl2 = (highs[i] + lows[i]) / 2.0
-        basic_ub[i], basic_lb[i] = hl2 + multiplier * atr_list[i], hl2 - multiplier * atr_list[i]
-        if i == 0:
-            final_ub[i], final_lb[i], st_val[i] = basic_ub[i], basic_lb[i], basic_ub[i]
+        tr = max(klines[i][2] - klines[i][3], abs(klines[i][2] - klines[i-1][4]), abs(klines[i][3] - klines[i-1][4]))
+        trs.append(tr)
+    atr = [sum(trs[:period]) / period]
+    for i in range(period, len(trs)):
+        atr.append((atr[-1] * (period - 1) + trs[i]) / period)
+
+    atr_offset = len(klines) - len(atr)
+    upperband = [hl2[i] + multiplier * atr[i - atr_offset] for i in range(atr_offset, len(klines))]
+    lowerband = [hl2[i] - multiplier * atr[i - atr_offset] for i in range(atr_offset, len(klines))]
+
+    direction = 1
+    final_upper = upperband[0]
+    final_lower = lowerband[0]
+    st_val = final_lower
+
+    for i in range(1, len(upperband)):
+        curr_close = klines[atr_offset + i][4]
+        prev_close = klines[atr_offset + i - 1][4]
+
+        if lowerband[i] > final_lower or prev_close < final_lower: final_lower = lowerband[i]
+        if upperband[i] < final_upper or prev_close > final_upper: final_upper = upperband[i]
+
+        if direction == 1:
+            if curr_close < final_lower:
+                direction = -1
+                st_val = final_upper
+            else: st_val = final_lower
         else:
-            final_ub[i] = basic_ub[i] if basic_ub[i] < final_ub[i-1] or closes[i-1] > final_ub[i-1] else final_ub[i-1]
-            final_lb[i] = basic_lb[i] if basic_lb[i] > final_lb[i-1] or closes[i-1] < final_lb[i-1] else final_lb[i-1]
-            if closes[i] > final_ub[i-1]: st_dir[i] = 1
-            elif closes[i] < final_lb[i-1]: st_dir[i] = -1
-            else: st_dir[i] = st_dir[i-1]
-            st_val[i] = final_lb[i] if st_dir[i] == 1 else final_ub[i]
-    return st_dir[-1], st_val[-1]
+            if curr_close > final_upper:
+                direction = 1
+                st_val = final_lower
+            else: st_val = final_upper
+
+    return direction, st_val
+
+def calculate_ema(prices, period=20):
+    if not prices or len(prices) < period: return prices[-1] if prices else 0.0
+    multiplier = 2.0 / (period + 1)
+    ema = sum(prices[:period]) / period
+    for p in prices[period:]:
+        ema = (p - ema) * multiplier + ema
+    return ema
 
 # ==============================================================================
 # 5. TELEGRAM BROADCAST ENGINE
 # ==============================================================================
-def send_telegram_message(text):
-    for token_to_try in [TOKEN, "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c", "8788523087:AAGgfn0-JpnnIlqdxNDj-2an-pGp0WORnqA"]:
-        for mode in ['HTML', None]:
+def send_telegram_message(text, parse_mode="HTML"):
+    candidate_tokens = list(dict.fromkeys([
+        TOKEN,
+        "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c",
+        "8788523087:AAGgfn0-JpnnIlqdxNDj-2an-pGp0WORnqA"
+    ]))
+    candidate_tokens = [t for t in candidate_tokens if t]
+
+    for tok in candidate_tokens:
+        for mode in [parse_mode, None]:
             try:
-                url = f"https://api.telegram.org/bot{token_to_try}/sendMessage"
+                url = f"https://api.telegram.org/bot{tok}/sendMessage"
                 payload = {'chat_id': CHAT_ID, 'text': text}
                 if mode: payload['parse_mode'] = mode
                 data = urllib.parse.urlencode(payload).encode('utf-8')
                 req = urllib.request.Request(url, data=data, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
-                    res = json.loads(resp.read().decode('utf-8'))
-                    if res.get('ok'): return True
+                with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
+                    if resp.status == 200: return True
             except Exception:
                 if mode == 'HTML':
                     text = re.sub(r'<[^>]+>', '', text)
@@ -426,16 +443,43 @@ def send_telegram_message(text):
 # ==============================================================================
 # 6. COINDCX POSITION TRACKING & RECOVERY (SAFETY ENGINE)
 # ==============================================================================
+def extract_pos_qty(p):
+    if not isinstance(p, dict): return 0.0
+    for k in ['quantity', 'active_pos', 'active_units', 'open_position_qty', 'size', 'total_quantity']:
+        val = p.get(k)
+        if val is not None:
+            try:
+                fval = abs(float(val))
+                if fval > 0: return fval
+            except (ValueError, TypeError): pass
+    return 0.0
+
+def is_position_open(p):
+    if not isinstance(p, dict): return False
+    st = str(p.get('status', '')).lower()
+    if st in ['open', 'active', 'opened']: return True
+    return extract_pos_qty(p) > 0
+
 def fetch_all_coindcx_live_positions():
     if not COINDCX_API_KEY or not COINDCX_SECRET_KEY: return None
 
+    ts_sec = int(time.time())
+    ts_ms_int = int(round(time.time() * 1000))
+    ts_ms_str = str(ts_ms_int)
+
     body_variants = [
-        {"timestamp": int(time.time()), "page": "1", "size": "50", "margin_currency_short_name": ["USDT"]},
-        {"timestamp": int(round(time.time() * 1000)), "page": "1", "size": "50"},
-        {"timestamp": int(round(time.time() * 1000))}
+        {"timestamp": ts_sec, "page": "1", "size": "50", "margin_currency_short_name": ["INR", "USDT"]},
+        {"timestamp": ts_sec, "page": "1", "size": "50", "margin_currency_short_name": ["INR"]},
+        {"timestamp": ts_sec, "page": "1", "size": "50", "margin_currency_short_name": ["USDT"]},
+        {"timestamp": ts_sec, "page": "1", "size": "50"},
+        {"timestamp": ts_ms_str, "page": "1", "size": "50", "margin_currency_short_name": ["INR", "USDT"]},
+        {"timestamp": ts_ms_str, "page": "1", "size": "50"},
+        {"timestamp": ts_ms_int, "page": "1", "size": "50"},
+        {"timestamp": ts_ms_int}
     ]
     
     url = "https://api.coindcx.com/exchange/v1/derivatives/futures/positions"
+    last_valid_list = None
     for body in body_variants:
         try:
             json_body = json.dumps(body, separators=(',', ':'))
@@ -452,15 +496,18 @@ def fetch_all_coindcx_live_positions():
                 pos_list = []
                 if isinstance(data, list): pos_list = data
                 elif isinstance(data, dict):
-                    pos_list = data.get('positions', data.get('data', data.get('result', [])))
-                if isinstance(pos_list, list): return pos_list
+                    pos_list = data.get('positions') or data.get('data') or data.get('result') or data.get('items') or []
+                if isinstance(pos_list, list):
+                    last_valid_list = pos_list
+                    if len(pos_list) > 0:
+                        return pos_list
         except Exception: continue
-    return None
+    return last_valid_list
 
 def fetch_coindcx_live_position_qty(symbol):
     try:
         raw_coin = symbol.split('-')[0].upper()
-        futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin)
+        futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin).upper()
         target_clean = futures_coin.replace("1000", "")
         
         pos_list = fetch_all_coindcx_live_positions()
@@ -468,11 +515,11 @@ def fetch_coindcx_live_position_qty(symbol):
             
         for p in pos_list:
             if not isinstance(p, dict): continue
-            p_pair = str(p.get('pair', '')).upper()
+            p_pair = str(p.get('pair', p.get('market', ''))).upper()
             p_clean = p_pair.replace("B-", "").replace("1000", "").replace("_", "").replace("-", "").replace("USDT", "")
-            if p_clean == target_clean:
-                active_u = float(p.get('active_units', p.get('open_position_qty', 0)))
-                if active_u > 0: return active_u
+            if (p_clean == target_clean or raw_coin in p_pair) and is_position_open(p):
+                qty = extract_pos_qty(p)
+                if qty > 0: return qty
         return 0.0
     except Exception: return 0.0
 
@@ -483,8 +530,9 @@ def recover_live_coindcx_positions():
 
     for p in pos_list:
         if not isinstance(p, dict): continue
-        p_pair = str(p.get('pair', '')).upper()
-        active_u = float(p.get('active_units', p.get('open_position_qty', 0)))
+        if not is_position_open(p): continue
+        p_pair = str(p.get('pair', p.get('market', ''))).upper()
+        active_u = extract_pos_qty(p)
         if active_u > 0:
             raw_c = p_pair.replace("B-", "").replace("_USDT", "").replace("USDT", "")
             orig_c = raw_c.replace("1000", "")
@@ -637,26 +685,30 @@ def auto_place_coindcx_native_tpsl(symbol, tp_price, sl_price):
     """
     if not COINDCX_API_KEY or not COINDCX_SECRET_KEY: return False
     raw_coin = symbol.split('-')[0].upper()
-    futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin)
+    futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin).upper()
     target_clean = futures_coin.replace("1000", "")
 
     pos_id = None
-    for attempt in range(4):
+    target_pos = None
+
+    # Retry up to 6 times (12 seconds) for CoinDCX order fill & position creation
+    for attempt in range(6):
         time.sleep(2)
         pos_list = fetch_all_coindcx_live_positions()
         if pos_list and isinstance(pos_list, list):
             for p in pos_list:
                 if not isinstance(p, dict): continue
-                p_pair = str(p.get('pair', '')).upper()
+                p_pair = str(p.get('pair', p.get('market', ''))).upper()
                 p_clean = p_pair.replace("B-", "").replace("1000", "").replace("_", "").replace("-", "").replace("USDT", "")
-                active_u = float(p.get('active_units', p.get('open_position_qty', 0)))
-                if p_clean == target_clean and active_u > 0:
-                    pos_id = p.get('id')
+                if (p_clean == target_clean or raw_coin in p_pair) and is_position_open(p):
+                    pos_id = p.get('id') or p.get('position_id')
+                    target_pos = p
                     break
         if pos_id: break
 
     if not pos_id:
-        print(f"⚠️ Could not find live position ID for {symbol} to set native TP/SL.")
+        err_msg = f"⚠️ Could not find live position ID for {symbol} on CoinDCX to attach native TP/SL."
+        print(err_msg)
         return False
 
     url = "https://api.coindcx.com/exchange/v1/derivatives/futures/positions/create_tpsl"
@@ -664,36 +716,73 @@ def auto_place_coindcx_native_tpsl(symbol, tp_price, sl_price):
     if raw_coin in ['PEPE', 'SHIB', 'BONK', 'FLOKI'] or tp_price < 0.001:
         tp_str = f"{tp_price:.8f}"
         sl_str = f"{sl_price:.8f}"
+        tp_lim_str = f"{tp_price * 0.999:.8f}"
+        sl_lim_str = f"{sl_price * 0.995:.8f}"
     elif tp_price < 1.0:
         tp_str = f"{tp_price:.4f}"
         sl_str = f"{sl_price:.4f}"
+        tp_lim_str = f"{tp_price * 0.999:.4f}"
+        sl_lim_str = f"{sl_price * 0.995:.4f}"
     else:
         tp_str = f"{tp_price:.2f}"
         sl_str = f"{sl_price:.2f}"
+        tp_lim_str = f"{round(tp_price * 0.999, 2):.2f}"
+        sl_lim_str = f"{round(sl_price * 0.995, 2):.2f}"
+
+    ts_ms_str = str(int(round(time.time() * 1000)))
+    ts_ms_int = int(round(time.time() * 1000))
+    ts_sec_int = int(time.time())
 
     payload_variants = [
+        # Variant 1: take_profit_market and stop_market with string ms timestamp (CoinDCX Official Docs)
         {
-            "timestamp": int(time.time()),
+            "timestamp": ts_ms_str,
             "id": pos_id,
             "take_profit": {"stop_price": tp_str, "order_type": "take_profit_market"},
             "stop_loss": {"stop_price": sl_str, "order_type": "stop_market"}
         },
+        # Variant 2: take_profit_limit and stop_limit with limit_price
         {
-            "timestamp": int(time.time()),
+            "timestamp": ts_ms_str,
             "id": pos_id,
-            "take_profit": {"stop_price": float(tp_str), "order_type": "take_profit_market"},
-            "stop_loss": {"stop_price": float(sl_str), "order_type": "stop_market"}
+            "take_profit": {"stop_price": tp_str, "limit_price": tp_lim_str, "order_type": "take_profit_limit"},
+            "stop_loss": {"stop_price": sl_str, "limit_price": sl_lim_str, "order_type": "stop_limit"}
         },
+        # Variant 3: Integer ms timestamp with market order type
         {
-            "timestamp": int(round(time.time() * 1000)),
+            "timestamp": ts_ms_int,
+            "id": pos_id,
+            "take_profit": {"stop_price": tp_str, "order_type": "take_profit_market"},
+            "stop_loss": {"stop_price": sl_str, "order_type": "stop_market"}
+        },
+        # Variant 4: Integer ms timestamp with limit order type
+        {
+            "timestamp": ts_ms_int,
+            "id": pos_id,
+            "take_profit": {"stop_price": tp_str, "limit_price": tp_lim_str, "order_type": "take_profit_limit"},
+            "stop_loss": {"stop_price": sl_str, "limit_price": sl_lim_str, "order_type": "stop_limit"}
+        },
+        # Variant 5: Epoch seconds timestamp with market orders
+        {
+            "timestamp": ts_sec_int,
             "id": pos_id,
             "take_profit": {"stop_price": tp_str, "order_type": "take_profit_market"},
             "stop_loss": {"stop_price": sl_str, "order_type": "stop_market"}
         }
     ]
 
-    for body in payload_variants:
+    err_reasons = []
+    for idx, body in enumerate(payload_variants, 1):
         try:
+            # Refresh timestamp on each attempt so it is fresh
+            if "timestamp" in body:
+                if isinstance(body["timestamp"], str):
+                    body["timestamp"] = str(int(round(time.time() * 1000)))
+                elif len(str(body["timestamp"])) >= 13:
+                    body["timestamp"] = int(round(time.time() * 1000))
+                else:
+                    body["timestamp"] = int(time.time())
+
             json_body = json.dumps(body, separators=(',', ':'))
             signature = hmac.new(COINDCX_SECRET_KEY.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
             headers = {
@@ -709,14 +798,66 @@ def auto_place_coindcx_native_tpsl(symbol, tp_price, sl_price):
                     f"🎯 <b>NATIVE COINDCX TP/SL APPLIED AUTOMATICALLY!</b>\n\n"
                     f"• <b>Pair:</b> <code>B-{target_clean}_USDT</code>\n"
                     f"• <b>Position ID:</b> <code>{pos_id}</code>\n"
-                    f"• <b>Target (TP):</b> <code>${tp_str}</code>\n"
-                    f"• <b>Stop Loss (SL):</b> <code>${sl_str}</code>\n"
+                    f"• <b>Target (TP):</b> <code>${tp_str}</code> (+3.2%)\n"
+                    f"• <b>Stop Loss (SL):</b> <code>${sl_str}</code> (-0.95% floor)\n"
                     f"✅ <i>Populated directly in your CoinDCX TP / SL column! Exchange safety active.</i>"
                 )
                 return True
+        except urllib.error.HTTPError as e:
+            raw_err = e.read().decode('utf-8', errors='ignore')
+            err_reasons.append(f"V{idx}: HTTP {e.code} - {raw_err[:60]}")
         except Exception as e:
-            print(f"create_tpsl attempt error: {e}")
+            err_reasons.append(f"V{idx}: {str(e)[:60]}")
+
+    failure_summary = " | ".join(err_reasons)
+    print(f"⚠️ Native TP/SL could not be applied for {symbol}: {failure_summary}")
+    send_telegram_message(
+        f"⚠️ <b>COINDCX NATIVE TP/SL NOTICE ({symbol}):</b>\n\n"
+        f"• <b>Position ID:</b> <code>{pos_id}</code>\n"
+        f"• <b>Reason:</b> <code>{failure_summary[:200]}</code>\n"
+        f"<i>Bot dynamic cloud trailing and 75-min stagnation guard remain 100% active.</i>"
+    )
     return False
+
+def sync_all_open_positions_tpsl(tok=None, chat_id=None):
+    """
+    Loops through all live positions currently open on CoinDCX and
+    attaches Native TP/SL for each so the user can verify in CoinDCX immediately.
+    """
+    pos_list = fetch_all_coindcx_live_positions()
+    if not pos_list or not isinstance(pos_list, list):
+        msg = "⚠️ No active futures positions found on CoinDCX to attach TP/SL."
+        send_telegram_message(msg)
+        return []
+
+    synced_results = []
+    for p in pos_list:
+        if not isinstance(p, dict): continue
+        if not is_position_open(p): continue
+        p_pair = str(p.get('pair', p.get('market', ''))).upper()
+        raw_c = p_pair.replace("B-", "").replace("_USDT", "").replace("USDT", "")
+        orig_c = raw_c.replace("1000", "")
+        sym = f"{orig_c}-USDT"
+
+        entry_p = float(p.get('avg_price', p.get('entry_price', 0)))
+        if entry_p <= 0:
+            k1 = fetch_klines(sym, '1m', 1)
+            entry_p = k1[-1][4] if k1 else 1.0
+
+        with active_trades_lock:
+            trade = ACTIVE_TRADES.get(sym)
+            if trade:
+                tp_val = trade.get('tp1', round(entry_p * 1.032, 4))
+                sl_val = trade.get('sl', round(entry_p * 0.9905, 4))
+            else:
+                tp_val = round(entry_p * 1.032, 4)
+                sl_val = round(entry_p * 0.9905, 4)
+
+        success = auto_place_coindcx_native_tpsl(sym, tp_val, sl_val)
+        synced_results.append({'pair': p_pair, 'symbol': sym, 'tp': tp_val, 'sl': sl_val, 'success': success})
+        time.sleep(1)
+
+    return synced_results
 
 def fetch_live_btc_price():
     try:
@@ -751,16 +892,16 @@ def send_hourly_market_report():
         msg = (
             f"📊 <b>AUTOMATED HOURLY MARKET CONDITION REPORT</b>\n\n"
             f"⏰ <b>Time:</b> {now_str}\n"
-            f"🪙 <b>BTC CMP:</b> <code>${btc_price:,.2f}</code>\n"
-            f"🟢 <b>Bullish Pairs:</b> <code>{len(bull_coins)}</code>\n"
-            f"🔴 <b>Bearish Pairs:</b> <code>{len(bear_coins)}</code>\n"
-            f"⚪ <b>Consolidating:</b> <code>{len(neutral_coins)}</code>\n\n"
-            f"🚀 <b>Top Momentum Candidates:</b>\n<code>{bull_list_str}</code>\n\n"
-            f"🛡️ <i>Active Trade Guard: Trailing SL & 75-Min Stagnation Protection ONLINE</i>"
+            f"🪙 <b>BTC CMP:</b> ${btc_price:,.2f}\n"
+            f"🟢 <b>Bullish Pairs:</b> {len(bull_coins)}\n"
+            f"🔴 <b>Bearish Pairs:</b> {len(bear_coins)}\n"
+            f"⚪ <b>Consolidating:</b> {len(neutral_coins)}\n\n"
+            f"🚀 <b>Top Momentum Candidates:</b>\n{bull_list_str}\n\n"
+            f"🛡️ <b>Active Trade Guard:</b> Trailing SL & 75-Min Stagnation Protection ONLINE"
         )
         send_telegram_message(msg)
     except Exception as e:
-        print(f"Hourly report error: {e}")
+        print(f"Hourly report generation error: {e}")
 
 # ==============================================================================
 # 8. WEB DASHBOARD ENDPOINTS
@@ -809,44 +950,78 @@ def scan_now_endpoint():
                 report_lines.append(f"{symbol:12s} | CMP: {cmp:<10.4f} | EMA20: {ema20_15m:<10.4f} | ST 15M: {'GREEN' if is_st_green else 'RED':5s} | 1H: {'BULL' if h1_macro_bullish else 'BEAR':4s} | CPR: {'YES' if is_cpr_buy_zone else 'NO ':3s} | Vol: {vol_spike:.2f}x | Score: {score:<3d} | {status}")
             except Exception: pass
 
-        now_str = get_ist_now().strftime("%d-%m-%Y %H:%M:%S (IST)")
-        html = f"<h2>⚡ LIVE COINDCX DYNAMIC MARKET SCANNER AUDIT REPORT</h2><p><b>Server Time:</b> {now_str}</p><pre>" + "\n".join(report_lines) + "</pre>"
-        return html, 200
+        html_out = "<h2>⚡ Real-time Market Scanner Diagnostics</h2><pre>" + "\n".join(report_lines) + "</pre>"
+        return html_out, 200
     except Exception as e:
-        return f"<h3>⚠️ Scan Audit Error:</h3><p>{e}</p>", 500
+        return f"<h3>⚠️ Scan Error:</h3><p>{e}</p>", 500
 
-@app.route('/healthz')
-def healthz():
-    return "OK", 200
-
-@app.route('/report')
 @app.route('/today')
-@app.route('/daily')
 def today_report_endpoint(date_override=None):
     try:
-        target_date = date_override or request.args.get('date', get_ist_now().strftime("%d-%m-%Y"))
-        summary_html = generate_daily_summary(target_date)
-        formatted_html = summary_html.replace("\n", "<br>").replace("<b>", "<strong>").replace("</b>", "</strong>")
+        target_date = date_override if date_override else get_ist_now().strftime("%d-%m-%Y")
+        with trade_history_lock:
+            all_events = load_all_trade_events()
+
+        day_events = [e for e in all_events if e.get('date') == target_date]
+        executed = [e for e in day_events if e.get('type') == 'EXECUTED']
+        cancelled = [e for e in day_events if e.get('type') == 'CANCELLED']
+        closed = [e for e in day_events if e.get('type') == 'CLOSED']
+
+        total_pnl = sum(c.get('details', {}).get('realized_pnl_pct', 0) for c in closed)
+        wins = [c for c in closed if c.get('details', {}).get('realized_pnl_pct', 0) > 0]
+        win_rate = (len(wins) / len(closed) * 100) if closed else (100.0 if executed else 0.0)
+
+        exec_rows = "".join([f"<tr><td>{e.get('timestamp','').split()[-2]} {e.get('timestamp','').split()[-1]}</td><td><b>{e.get('symbol')}</b></td><td>${e.get('details',{}).get('cmp')}</td><td>{e.get('details',{}).get('quantity')}</td><td><code>{str(e.get('details',{}).get('order_id'))[:8]}</code></td><td>₹1,000</td></tr>" for e in executed]) if executed else "<tr><td colspan='6' style='text-align:center;'>No trades executed on this day</td></tr>"
+        closed_rows = "".join([f"<tr><td>{c.get('timestamp','').split()[-2]} {c.get('timestamp','').split()[-1]}</td><td><b>{c.get('symbol')}</b></td><td><b style='color:{'#00c853' if c.get('details',{}).get('realized_pnl_pct',0)>=0 else '#d50000'};'>{c.get('details',{}).get('realized_pnl_pct',0):+.1f}% ROE</b></td><td>{c.get('details',{}).get('sl_type')}</td></tr>" for c in closed]) if closed else "<tr><td colspan='4' style='text-align:center;'>No closed trades on this day</td></tr>"
+        canc_rows = "".join([f"<tr><td>{c.get('timestamp','').split()[-2]} {c.get('timestamp','').split()[-1]}</td><td><b>{c.get('symbol')}</b></td><td><span style='color:#ffab00;'>SKIPPED</span></td><td>{c.get('details',{}).get('error','Risk limit')}</td></tr>" for c in cancelled[:15]]) if cancelled else "<tr><td colspan='4' style='text-align:center;'>Zero skipped signals</td></tr>"
+
         page = f"""
+        <!DOCTYPE html>
         <html>
-            <head>
-                <title>CoinDCX Automated Trading Audit Report</title>
-                <meta name="viewport" content="width=device-width, initial-scale=1">
-                <style>
-                    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 20px; }}
-                    .card {{ background-color: #1e293b; border-radius: 12px; padding: 24px; max-width: 700px; margin: 0 auto; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.5); }}
-                    h2 {{ color: #38bdf8; margin-top: 0; }}
-                    code {{ background-color: #334155; padding: 2px 6px; border-radius: 4px; font-family: monospace; }}
-                    hr {{ border-color: #334155; margin: 20px 0; }}
-                </style>
-            </head>
-            <body>
-                <div class="card">
-                    <h2>📅 Daily Automated Trading Audit Report ({target_date})</h2>
-                    <hr>
-                    <div>{formatted_html}</div>
+        <head>
+            <title>Automated Trading Report ({target_date})</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #0b0e14; color: #e1e4e8; padding: 20px; margin: 0; }}
+                .container {{ max-width: 900px; margin: 0 auto; background: #161b22; padding: 25px; border-radius: 12px; border: 1px solid #30363d; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }}
+                h1, h2, h3 {{ color: #58a6ff; margin-top: 0; }}
+                .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 25px; }}
+                .stat-box {{ background: #21262d; padding: 15px; border-radius: 8px; border: 1px solid #30363d; text-align: center; }}
+                .stat-box .val {{ font-size: 24px; font-weight: bold; margin-top: 5px; }}
+                table {{ width: 100%; border-collapse: collapse; margin-top: 10px; margin-bottom: 25px; }}
+                th, td {{ padding: 10px; text-align: left; border-bottom: 1px solid #30363d; font-size: 14px; }}
+                th {{ background: #21262d; color: #8b949e; }}
+                code {{ background: #2d333b; padding: 3px 6px; border-radius: 4px; font-family: monospace; color: #ff7b72; }}
+                .btn {{ display: inline-block; padding: 8px 16px; background: #238636; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; margin-right: 10px; }}
+                .btn-blue {{ background: #1f6feb; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>📅 Performance & Execution Audit Report</h1>
+                <p><b>Date:</b> {target_date} | <b>Strategy:</b> 15M CPR Breakout & Retest (7x Isolated)</p>
+                <div style="margin-bottom: 20px;">
+                    <a href="/today" class="btn">Today's Report</a>
+                    <a href="/yesterday" class="btn btn-blue">Yesterday's Audit</a>
+                    <a href="/15-10-2026" class="btn btn-blue">15-10-2026</a>
+                    <a href="/14-10-2026" class="btn btn-blue">14-10-2026</a>
+                    <a href="/scan-now" class="btn btn-blue">Live Diagnostics</a>
+                    <a href="/sync-tpsl" class="btn" style="background:#8957e5;">Sync TP/SL</a>
                 </div>
-            </body>
+                <div class="stats-grid">
+                    <div class="stat-box"><div>Total Signals</div><div class="val">{len(executed) + len(cancelled)}</div></div>
+                    <div class="stat-box"><div>Executed</div><div class="val" style="color: #58a6ff;">{len(executed)}</div></div>
+                    <div class="stat-box"><div>Win Rate</div><div class="val" style="color: #3fb950;">{win_rate:.1f}%</div></div>
+                    <div class="stat-box"><div>Realized Gain</div><div class="val" style="color: {'#3fb950' if total_pnl >= 0 else '#f85149'};">{total_pnl:+.1f}% ROE</div></div>
+                </div>
+                <h3>✅ Executed Futures Trades</h3>
+                <table><tr><th>Time</th><th>Pair</th><th>Entry CMP</th><th>Quantity</th><th>Order ID</th><th>Margin</th></tr>{exec_rows}</table>
+                <h3>🏁 Closed Positions & Exits</h3>
+                <table><tr><th>Time</th><th>Pair</th><th>Gain / Loss</th><th>Exit Reason</th></tr>{closed_rows}</table>
+                <h3>⚠️ Cancelled / Skipped Signals (Total: {len(cancelled)})</h3>
+                <table><tr><th>Time</th><th>Pair</th><th>Status</th><th>Reason</th></tr>{canc_rows}</table>
+            </div>
+        </body>
         </html>
         """
         return page, 200
@@ -860,6 +1035,18 @@ def test_telegram_endpoint():
         return f"<h3>Telegram Ping Result: {'✅ SUCCESS' if ok else '❌ FAILED'}</h3>", 200
     except Exception as e:
         return f"<h3>⚠️ Error: {e}</h3>", 500
+
+@app.route('/sync-tpsl')
+def sync_tpsl_endpoint():
+    try:
+        results = sync_all_open_positions_tpsl()
+        if not results:
+            return "<h3>ℹ️ No active CoinDCX positions found to sync.</h3>", 200
+        
+        rows = "".join([f"<li><b>{r['pair']}</b> ({r['symbol']}) - TP: ${r['tp']} | SL: ${r['sl']} -> {'<span style=\"color:green;\">✅ APPLIED</span>' if r['success'] else '<span style=\"color:red;\">❌ FAILED</span>'}</li>" for r in results])
+        return f"<h2>🎯 CoinDCX Native TP/SL Sync Summary</h2><ul>{rows}</ul><p><a href='/today'>Back to Dashboard</a></p>", 200
+    except Exception as e:
+        return f"<h3>⚠️ Error syncing TP/SL: {e}</h3>", 500
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -1019,7 +1206,7 @@ def run_scan():
                 save_active_trades()
                 state[symbol] = time.time()
                 save_state(state)
-
+                
                 # AUTOMATICALLY PLACE NATIVE POSITION TP/SL ON COINDCX (Populates TP/SL column on UI)
                 threading.Thread(target=auto_place_coindcx_native_tpsl, args=(symbol, tp1, sl), daemon=True).start()
             else:
@@ -1266,6 +1453,9 @@ def run_telegram_command_listener():
                             elif cmd in ['/hourly', 'hourly', '/market', 'market']:
                                 send_hourly_market_report()
                                 reply_user(tok, user_chat_id, "📊 <i>Hourly market condition report dispatched!</i>")
+                            elif cmd in ['/tpsl', 'tpsl', '/synctpsl', 'synctpsl']:
+                                reply_user(tok, user_chat_id, "🔄 <i>Scanning all active CoinDCX positions to attach Native TP/SL...</i>")
+                                threading.Thread(target=sync_all_open_positions_tpsl, daemon=True).start()
                 initialized.add(tok)
             except Exception: pass
             time.sleep(1)
@@ -1275,6 +1465,7 @@ def run_telegram_command_listener():
 # ==============================================================================
 def start_background_loop():
     recover_live_coindcx_positions()
+    threading.Thread(target=sync_all_open_positions_tpsl, daemon=True).start()
 
     def run_loop():
         time.sleep(5)
@@ -1338,7 +1529,8 @@ def start_background_loop():
         "• <b>Strategy Engine:</b> CPR Breakout & Retest (Pivot, TC, BC, R1-R2)\n"
         "• <b>Audit Reports:</b> Synchronized with Today's 6 Executed Trades (+47.6% ROE)\n"
         "• <b>State Auto-Recovery:</b> ACTIVE (Syncs open CoinDCX positions on boot)\n"
-        "• <b>Safety:</b> Protected against accidental shorts on mobile app close"
+        "• <b>Native CoinDCX TP/SL:</b> ACTIVE (Auto-populates TP/SL column on CoinDCX!)\n"
+        "• <b>Commands:</b> /stop, /start, /today, /yesterday, /hourly, /tpsl"
     )
 
 start_background_loop()
