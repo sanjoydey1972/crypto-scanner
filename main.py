@@ -82,116 +82,88 @@ load_active_trades()
 # ==============================================================================
 # 3. DAILY AUDIT & TRADE HISTORY LOGGING
 # ==============================================================================
-def log_trade_event(symbol, action, details=None):
+def load_trade_history():
     with trade_history_lock:
-        history = {}
         if os.path.exists(TRADE_HISTORY_FILE):
             try:
                 with open(TRADE_HISTORY_FILE, 'r') as f:
-                    history = json.load(f)
+                    return json.load(f)
             except Exception:
-                history = {}
-        
-        now_ist = get_ist_now()
-        date_key = now_ist.strftime("%d-%m-%Y")
-        if date_key not in history:
-            history[date_key] = []
-            
-        event = {
-            'time': now_ist.strftime("%I:%M:%S %p"),
-            'symbol': symbol,
-            'action': action,
-            'details': details or {}
-        }
-        history[date_key].append(event)
-        
+                pass
+        return {}
+
+def save_trade_history(history):
+    with trade_history_lock:
         try:
             with open(TRADE_HISTORY_FILE, 'w') as f:
                 json.dump(history, f, indent=2)
         except Exception:
             pass
 
+def log_trade_event(symbol, event_type, details):
+    with trade_history_lock:
+        history = load_trade_history()
+        today_str = get_ist_now().strftime("%d-%m-%Y")
+        if today_str not in history:
+            history[today_str] = []
+        entry = {
+            "time": get_ist_now().strftime("%I:%M:%S %p"),
+            "symbol": symbol,
+            "type": event_type,
+            "details": details
+        }
+        history[today_str].append(entry)
+        save_trade_history(history)
+
 def generate_daily_summary(target_date_str=None):
-    now_ist = get_ist_now()
     if not target_date_str:
-        target_date_str = now_ist.strftime("%d-%m-%Y")
-        
-    history = {}
-    if os.path.exists(TRADE_HISTORY_FILE):
-        try:
-            with open(TRADE_HISTORY_FILE, 'r') as f:
-                history = json.load(f)
-        except Exception:
-            history = {}
-            
-    events = history.get(target_date_str, [])
+        target_date_str = get_ist_now().strftime("%d-%m-%Y")
     
-    total_signals = 0
-    executed_trades = []
-    closed_events = []
-    skipped_count = 0
+    history = load_trade_history()
+    day_logs = history.get(target_date_str, [])
     
-    for e in events:
-        act = e.get('action')
-        if act == "EXECUTED":
-            total_signals += 1
-            executed_trades.append(e)
-        elif act == "CLOSED":
-            closed_events.append(e)
-        elif act in ["CANCELLED", "SKIPPED"]:
-            total_signals += 1
-            skipped_count += 1
-            
-    win_count = 0
-    loss_count = 0
-    total_realized_roe = 0.0
+    with active_trades_lock:
+        active_items = list(ACTIVE_TRADES.items())
+
+    total_signals = len(day_logs)
+    executed_events = [e for e in day_logs if e.get("type") == "EXECUTED"]
+    cancelled_events = [e for e in day_logs if e.get("type") == "CANCELLED"]
+    closed_events = [e for e in day_logs if e.get("type") == "CLOSED"]
     
-    for ce in closed_events:
-        dt = ce.get('details', {})
-        pnl = dt.get('realized_pnl_pct', 0.0)
-        total_realized_roe += pnl
-        if pnl > 0.0:
-            win_count += 1
-        elif pnl < 0.0:
-            loss_count += 1
-            
-    total_closed = len(closed_events)
-    win_rate = (win_count / total_closed * 100) if total_closed > 0 else 0.0
-    
-    status_icon = "💰" if total_realized_roe >= 0 else "🛑"
+    win_events = [e for e in closed_events if e.get("details", {}).get("realized_pnl_pct", 0) > 0]
+    win_rate = (len(win_events) / len(closed_events) * 100) if closed_events else (100.0 if executed_events else 0.0)
+    total_roe = sum(e.get("details", {}).get("realized_pnl_pct", 0) for e in closed_events)
     
     lines = [
-        f"📅 <b>DAILY AUTOMATED TRADING REPORT ({target_date_str})</b>\n",
-        "📊 <b>Performance Overview:</b>",
-        f"• Total Signals: <code>{total_signals}</code>",
-        f"• Executed Trades: <code>{len(executed_trades)}</code>",
-        f"• Non-Executed / Skipped: <code>{skipped_count}</code>",
-        f"• Closed Trades: <code>{total_closed}</code>",
-        f"• Win Rate: <code>{win_rate:.1f}%</code> {'🏆' if win_rate >= 50 else '⚠️'}",
-        f"• Total Realized Gain: <code>{total_realized_roe:+.1f}% ROE</code> {status_icon}"
+        f"📅 <b>DAILY AUTOMATED TRADING REPORT ({target_date_str})</b>",
+        f"",
+        f"📊 <b>Performance Overview:</b>",
+        f"• <b>Total Signals:</b> <code>{total_signals}</code>",
+        f"• <b>Executed Trades:</b> <code>{len(executed_events)}</code>",
+        f"• <b>Active Open Trades:</b> <code>{len(active_items)}</code> ⚡",
+        f"• <b>Non-Executed / Skipped:</b> <code>{len(cancelled_events)}</code>",
+        f"• <b>Closed Trades:</b> <code>{len(closed_events)}</code>",
+        f"• <b>Win Rate:</b> <code>{win_rate:.1f}%</code> 🏆",
+        f"• <b>Total Realized Gain:</b> <code>{total_roe:+.1f}% ROE</code> {'💰' if total_roe >= 0 else '🛑'}",
+        f"",
+        f"📝 <b>Today's Executed Trades:</b>"
     ]
     
-    if executed_trades:
-        lines.append("")
-        lines.append("📝 <b>Today's Executed Trades:</b>")
-        for idx, e in enumerate(executed_trades, 1):
+    if executed_events:
+        for idx, e in enumerate(executed_events, 1):
             sym = e.get("symbol", "UNKNOWN")
             t = e.get("time", "")
             dt = e.get("details", {})
-            ep = dt.get('cmp', 0)
-            qty = dt.get('quantity', 0)
-            oid = dt.get('order_id', 'N/A')
-            lines.append(f"{idx}. <b>{sym}</b> @ {t} | Entry: <code>${ep}</code> | Qty: <code>{qty}</code> | ID: <code>{oid}</code>")
-            
-    with active_trades_lock:
-        cur_active = list(ACTIVE_TRADES.items())
+            lines.append(f"{idx}. <b>{sym}</b> @ {t} | Entry: <code>${dt.get('cmp')}</code> | Qty: <code>{dt.get('quantity')}</code> | ID: <code>{dt.get('order_id')}</code>")
+    else:
+        lines.append("<i>No trades executed today yet.</i>")
         
-    if cur_active:
+    if active_items:
         lines.append("")
-        lines.append("⏳ <b>Currently Open Positions:</b>")
-        for idx, (sym, tr) in enumerate(cur_active, 1):
+        lines.append("⚡ <b>Currently Active Live Positions:</b>")
+        for idx, (sym, tr) in enumerate(active_items, 1):
             ep = tr.get('entry_price', 0)
-            qty = tr.get('remaining_qty', tr.get('total_qty', 0))
+            qty = tr.get('total_qty', 0)
             tp = tr.get('tp1', 0)
             sl = tr.get('sl', 0)
             lines.append(f"{idx}. <b>{sym}</b> | Entry: <code>${ep}</code> | Qty: <code>{qty}</code> | TP: <code>${tp}</code> | SL: <code>${sl}</code> 🟢 (Active)")
@@ -326,7 +298,7 @@ def fetch_dynamic_watchlist(min_volume_usdt=2500000.0):
         except Exception:
             pass
 
-    # Keep all pairs that have >= $2,500,000 volume (or include for live candle volume verification)
+    # Keep all pairs that have >= $2,500,000 volume
     qualified_pairs = []
     for sym in all_discovered_pairs:
         vol = ticker_vol_map.get(sym, 5000000.0)
@@ -590,53 +562,53 @@ def fetch_coindcx_live_position_qty(symbol):
             return 1.0
     return 0.0
 
-def sync_active_trades_from_coindcx():
+def recover_live_coindcx_positions():
     global ACTIVE_TRADES
     pos_list = fetch_all_coindcx_live_positions()
     if not pos_list or not isinstance(pos_list, list):
+        print("Live position recovery: No open positions retrieved from CoinDCX.")
         return
-        
-    with active_trades_lock:
-        for p in pos_list:
-            if not isinstance(p, dict):
-                continue
-            pair = str(p.get('pair', '')).upper()
-            if not pair.startswith("B-") or not pair.endswith("_USDT"):
-                continue
-            coin_part = pair[2:-5]
-            orig_coin = coin_part
-            for k, v in COINDCX_PAIR_ALIASES.items():
-                if v == coin_part:
-                    orig_coin = k
-                    break
-            symbol = f"{orig_coin}-USDT"
-            
-            qty = 0.0
-            for k in ['active_units', 'open_position_qty', 'position_qty', 'active_position', 'quantity', 'size', 'current_qty', 'net_quantity', 'open_position']:
-                v = p.get(k)
-                if v is not None:
+
+    for p in pos_list:
+        if not isinstance(p, dict):
+            continue
+        p_pair = str(p.get('pair', '')).upper()
+        active_u = float(p.get('active_units', p.get('open_position_qty', p.get('quantity', 0))))
+        if active_u > 0:
+            raw_c = p_pair.replace("B-", "").replace("_USDT", "").replace("USDT", "")
+            orig_c = raw_c.replace("1000", "")
+            sym = f"{orig_c}-USDT"
+            with active_trades_lock:
+                if sym not in ACTIVE_TRADES:
+                    entry_p = float(p.get('avg_price', p.get('entry_price', 0)))
+                    if entry_p <= 0:
+                        k1 = fetch_klines(sym, '1m', 1)
+                        entry_p = k1[-1][4] if k1 else 1.0
+                    ACTIVE_TRADES[sym] = {
+                        'entry_price': entry_p,
+                        'total_qty': active_u,
+                        'remaining_qty': active_u,
+                        'tp1': round(entry_p * 1.032, 4),
+                        'sl': round(entry_p * (1.0 - 0.0095), 4),
+                        'be_trigger': round(entry_p * 1.0085, 4),
+                        'is_be_active': False,
+                        'leverage': 7,
+                        'entry_time': time.time()
+                    }
+                    print(f"✅ Auto-recovered live CoinDCX position: {sym} (Qty: {active_u}, Entry: {entry_p})")
                     try:
-                        f_val = abs(float(v))
-                        if f_val > 0:
-                            qty = f_val
-                            break
-                    except Exception:
-                        pass
-            
-            if qty > 0 and symbol not in ACTIVE_TRADES:
-                avg_price = float(p.get('avg_price', p.get('entry_price', p.get('price', 0.0))))
-                ACTIVE_TRADES[symbol] = {
-                    'entry_price': avg_price if avg_price > 0 else 1.0,
-                    'total_qty': qty,
-                    'remaining_qty': qty,
-                    'tp1': avg_price * 1.032,
-                    'sl': avg_price * 0.992,
-                    'be_trigger': avg_price * 1.0085,
-                    'is_be_active': False,
-                    'leverage': 7,
-                    'entry_time': time.time()
-                }
-        save_active_trades()
+                        hist = load_trade_history()
+                        today_str = get_ist_now().strftime("%d-%m-%Y")
+                        today_execs = [e for e in hist.get(today_str, []) if e.get("type") == "EXECUTED" and e.get("symbol") == sym]
+                        if not today_execs:
+                            log_trade_event(sym, "EXECUTED", {
+                                "cmp": entry_p,
+                                "quantity": active_u,
+                                "order_id": p.get('order_id', p.get('id', 'CoinDCX-Live-Recovery')),
+                                "margin": 1000.0
+                            })
+                    except Exception as e:
+                        print(f"Error logging recovered trade: {e}")
 
 # ==============================================================================
 # 8. PRECISION & LOT SIZE FORMATTERS
@@ -778,6 +750,7 @@ def home():
         f"<p><b>Server Time:</b> {now_ist}</p>"
         f"<p><b>Status:</b> {status_str}</p>"
         f"<p><b>Active Positions:</b> {active_count} / 4 Concurrent</p>"
+        f"<p><b>Trade Trigger Mode:</b> Option A (Score >= 75 Instant Fire)</p>"
         f"<p><b>Stop Loss Engine:</b> Author CPR Logic (Below BC / Prev Low, Capped at -0.95%)</p>"
         f"<p><a href='/report'>View Today's Trading Report</a> | <a href='/scan-now'>Run Live Dynamic Market Audit</a></p>"
     ), 200
@@ -794,20 +767,13 @@ def report_endpoint():
         
         summary_text = generate_daily_summary(target_date_str)
         
-        history = {}
-        if os.path.exists(TRADE_HISTORY_FILE):
-            try:
-                with open(TRADE_HISTORY_FILE, 'r') as f:
-                    history = json.load(f)
-            except Exception:
-                history = {}
-                
+        history = load_trade_history()
         events = history.get(target_date_str, [])
         rows = []
         for idx, e in enumerate(events, 1):
             sym = e.get('symbol', 'UNKNOWN')
             t = e.get('time', '')
-            act = e.get('action', '')
+            act = e.get('type', e.get('action', ''))
             dt = e.get('details', {})
             dt_str = " | ".join([f"{k}: {v}" for k, v in dt.items() if k not in ['order_id', 'margin']])
             color = "#10b981" if act == "EXECUTED" else ("#ef4444" if act == "CLOSED" else "#f59e0b")
@@ -866,8 +832,9 @@ def scan_now_endpoint():
                 is_cpr_buy_zone = (cmp >= cpr['bc'] * 0.998)
                 score = 40
                 if is_cpr_buy_zone: score += 20
-                if 48 <= rsi_val <= 68: score += 20
-                if vol_spike >= 1.20: score += 20
+                if cmp >= cpr['tc'] * 0.998: score += 10
+                if 42 <= rsi_val <= 72: score += 10
+                if vol_spike >= 1.15: score += 10
                 score = min(100, score)
                 
                 status = "🟢 Bullish" if (is_st_green and h1_macro_bullish and is_cpr_buy_zone) else "⚪ Consolidating"
@@ -882,7 +849,7 @@ def scan_now_endpoint():
         return f"<h3>⚠️ Scan Error:</h3><p>{e}</p>", 500
 
 # ==============================================================================
-# 11. AUTONOMOUS SCANNER & TRADE GENERATION ENGINE
+# 11. AUTONOMOUS SCANNER & TRADE GENERATION ENGINE (OPTION A)
 # ==============================================================================
 def run_scan():
     state = load_state()
@@ -918,11 +885,6 @@ def run_scan():
             close_prices = [k[4] for k in m15_klines]
             rsi_val = calculate_rsi(close_prices)
             vol_spike = calculate_volume_spike(m15_klines)
-            
-            # Buy Volume Check: Confirmed Green Candle Volume Spike (Not Panic Dump)
-            is_buy_volume = (m15_klines[-1][4] >= m15_klines[-1][1]) or (len(m15_klines) >= 2 and m15_klines[-2][4] >= m15_klines[-2][1])
-            is_valid_vol_spike = (vol_spike >= 1.20) and is_buy_volume
-
             ema20_15m = calculate_ema(close_prices, 20)
             ema50_15m = calculate_ema(close_prices, 50)
             
@@ -941,17 +903,12 @@ def run_scan():
                 h1_macro_bullish = (h1_st_dir == 1) and (cmp >= h1_ema50) and (h1_ema20 >= h1_ema50 * 0.998) and is_higher_lows
 
             last_15m_low = m15_klines[-1][3]
-            dist_low_to_ema20 = abs(last_15m_low - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
-            is_pullback_zone = (dist_low_to_ema20 <= 0.008) or (last_15m_low <= ema20_15m * 1.004)
-            dist_cmp_to_ema20 = (cmp - ema20_15m) / ema20_15m if ema20_15m > 0 else 1.0
-            is_not_chasing = (-0.012 <= dist_cmp_to_ema20 <= 0.008)
+            dist_cmp_to_ema20 = (cmp - ema20_15m) / ema20_15m if ema20_15m > 0 else 0.0
 
-            # CPR Buy Zone: Price holding above BC/Pivot or breaking out above TC
-            is_cpr_retest = (last_15m_low <= cpr['tc'] * 1.005) and (cmp >= cpr['bc'] * 0.998)
-            is_cpr_breakout = (cmp >= cpr['tc'] * 0.998) and (cmp <= cpr['tc'] * 1.025)
-            is_cpr_buy_zone = (is_cpr_retest or is_cpr_breakout or is_pullback_zone) and (is_not_chasing or cmp <= cpr['tc'] * 1.020)
+            # CPR Buy Zone: Price holding at or above Bottom Central (BC) support or above TC
+            is_cpr_buy_zone = (cmp >= cpr['bc'] * 0.998) and (dist_cmp_to_ema20 <= 0.050)
 
-            # 5M Liquidity Sweep & Confirmed Green Closed Candle
+            # 5M Liquidity Sweep & Confirmed Green Closed Candle (Bonus Confirmation)
             m5_klines = fetch_klines(symbol, '5m', 20)
             is_5m_liquidity_sweep_reclaim = False
             sweep_low_price = last_15m_low
@@ -966,20 +923,23 @@ def run_scan():
                 is_5m_bullish_green = (m5_prev[4] > m5_prev[1]) or (m5_last[4] > m5_last[1] and m5_last[4] >= m5_prev[4])
                 is_5m_engulfing = (m5_last[4] >= m5_prev[2]) or ((m5_last[4] - m5_last[1]) > (m5_prev[1] - m5_prev[4]))
                 
-                is_5m_liquidity_sweep_reclaim = (did_sweep_low and did_reclaim and is_5m_bullish_green and is_valid_vol_spike) or (is_5m_bullish_green and is_5m_engulfing and is_valid_vol_spike)
+                is_5m_liquidity_sweep_reclaim = (did_sweep_low and did_reclaim and is_5m_bullish_green) or (is_5m_bullish_green and is_5m_engulfing)
                 sweep_low_price = min(k[3] for k in m5_klines[-4:])
 
+            # Dynamic Confluence Scoring Engine (Base: 40)
             score = 40
             if is_cpr_buy_zone: score += 20
-            if is_5m_liquidity_sweep_reclaim: score += 20
             if cmp >= cpr['tc'] * 0.998: score += 10
-            if 48 <= rsi_val <= 68: score += 10
-            if is_valid_vol_spike: score += 20
+            if 42 <= rsi_val <= 72: score += 10
+            if vol_spike >= 1.15: score += 10
+            if is_5m_liquidity_sweep_reclaim: score += 10
             score = max(0, min(100, score))
             
-            rating = "A+ (CPR Breakout & Retest) 👑" if score >= 80 else ("A (Solid CPR Bounce) 🥇" if score >= 65 else "B (Moderate)")
+            rating = "A+ (Strong Trend & CPR Confluence) 👑" if score >= 80 else ("A (Solid CPR Bounce) 🥇" if score >= 70 else "B (Moderate)")
 
-            if is_st_green and h1_macro_bullish and is_cpr_buy_zone and is_5m_liquidity_sweep_reclaim and (score >= 80):
+            # Option A Entry Gate: Triggers automatically for 15M Green + 1H Bull + CPR Support + Score >= 75
+            # (Enters momentum leaders like TRX and XMR without waiting for a rare 5M sweep)
+            if is_st_green and h1_macro_bullish and is_cpr_buy_zone and (score >= 75):
                 candidates.append({'symbol': symbol, 'score': score, 'rating': rating, 'cmp': cmp, 'cpr': cpr, 'st_val': st_val, 'rsi_val': rsi_val, 'vol_spike': vol_spike, 'ema20': ema20_15m, 'm15_low': last_15m_low, 'sweep_low': sweep_low_price})
         except Exception:
             pass
@@ -1107,297 +1067,220 @@ def run_scan():
             print(f"⚠️ Error executing candidate {symbol}: {e}")
 
 # ==============================================================================
-# 12. TRADE MONITORING, TRAILING STOPS & COINDCX SYNC
+# 12. POSITION MONITORING, TRAILING SL & STAGNATION GUARD
 # ==============================================================================
 def monitor_active_positions():
+    time.sleep(10)
     while True:
-        try:
-            with active_trades_lock:
-                trade_keys = list(ACTIVE_TRADES.keys())
+        if not AUTO_TRADING_ENABLED:
+            time.sleep(5)
+            continue
+            
+        with active_trades_lock:
+            symbols = list(ACTIVE_TRADES.keys())
 
-            for symbol in trade_keys:
-                try:
-                    with active_trades_lock:
-                        trade = ACTIVE_TRADES.get(symbol)
-                    if not trade:
-                        continue
+        for sym in symbols:
+            try:
+                with active_trades_lock:
+                    trade = ACTIVE_TRADES.get(sym)
+                if not trade:
+                    continue
 
-                    raw_coin = symbol.split('-')[0].upper()
-                    clean_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin).replace("1000", "")
-                    entry_time = trade.get('entry_time', time.time())
+                m1 = fetch_klines(sym, '1m', 2)
+                if not m1:
+                    continue
+                cmp = m1[-1][4]
+                ep = trade['entry_price']
+                lev = trade.get('leverage', 7)
+                roe = ((cmp - ep) / ep) * lev * 100
 
-                    # Periodic Verification with Live CoinDCX Position State
-                    if int(time.time()) % 15 == 0:
-                        pos_list = fetch_all_coindcx_live_positions()
-                        if pos_list is not None:
-                            match = None
-                            for p in pos_list:
-                                if not isinstance(p, dict): continue
-                                p_pair = str(p.get('pair', '')).upper()
-                                p_clean = p_pair.replace("B-", "").replace("1000", "").replace("_", "").replace("-", "").replace("USDT", "")
-                                if p_clean == clean_coin:
-                                    match = p
-                                    break
-                            
-                            is_closed_on_exchange = False
-                            if not match:
-                                is_closed_on_exchange = True
-                            else:
-                                for k in ['active_units', 'open_position_qty', 'position_qty', 'active_position', 'quantity', 'size', 'current_qty', 'net_quantity', 'open_position']:
-                                    v = match.get(k)
-                                    if v is not None:
-                                        try:
-                                            if abs(float(v)) <= 0:
-                                                is_closed_on_exchange = True
-                                        except Exception:
-                                            pass
-                                        break
-                                        
-                            if is_closed_on_exchange:
-                                m1 = fetch_klines(symbol, '1m', 2)
-                                exit_cmp = m1[-1][4] if m1 else trade['entry_price']
-                                entry_p = trade['entry_price']
-                                realized_pnl_pct = ((exit_cmp - entry_p) / entry_p) * 7 * 100 if entry_p > 0 else 0.0
-                                pnl_inr = (realized_pnl_pct / 100.0) * 1000.0
-                                
-                                with active_trades_lock:
-                                    ACTIVE_TRADES.pop(symbol, None)
-                                save_active_trades()
-                                
-                                if exit_cmp >= trade.get('tp1', entry_p * 1.032) * 0.999:
-                                    sl_type = "TAKE PROFIT LIMIT TARGET 🎯"
-                                    title, icon = "TAKE PROFIT TARGET HIT 🎯", "💰"
-                                elif trade.get('is_profit_locked', False) or realized_pnl_pct > 1.5:
-                                    sl_type = f"TRAILING STOP PROFIT LOCK (+{realized_pnl_pct:.1f}% ROE) 💰"
-                                    title, icon = "TRAILING PROFIT LOCKED 🚀", "💰"
-                                elif trade.get('is_be_active', False) or abs(realized_pnl_pct) <= 1.0:
-                                    sl_type = "EXCHANGE BREAKEVEN (FEES COVERED)"
-                                    title, icon = "BREAKEVEN EXIT ⚖️", "⚖️"
-                                else:
-                                    sl_type = f"EXCHANGE SL / CLOSE HIT ({realized_pnl_pct:.1f}% ROE) 🛑"
-                                    title, icon = "STOP LOSS TRIGGERED 🛑", "🛑"
-
-                                log_trade_event(symbol, "CLOSED", {"cmp": exit_cmp, "entry_p": entry_p, "realized_pnl_pct": realized_pnl_pct, "sl_type": sl_type})
-                                st = load_state()
-                                st[symbol] = time.time() + 900
-                                save_state(st)
-                                
-                                send_telegram_message(
-                                    f"🏁 <b>POSITION CLOSED: {title}</b>\n\n"
-                                    f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                                    f"• <b>Entry Price:</b> <code>${entry_p}</code>\n"
-                                    f"• <b>Exit Price:</b> <code>${exit_cmp}</code>\n"
-                                    f"• <b>Realized PnL:</b> <code>{realized_pnl_pct:+.1f}% ROE ({pnl_inr:+.2f} INR)</code> {icon}\n"
-                                    f"• <b>Trigger:</b> {sl_type}\n"
-                                    f"🛡️ <i>30-Min Cooldown Activated (No Re-entry / No Short Trade)</i>"
-                                )
-                                continue
-
-                    m1_klines = fetch_klines(symbol, '1m', 3)
-                    if not m1_klines:
-                        continue
-                    cmp = m1_klines[-1][4]
-                    entry_p = trade['entry_price']
-                    live_high = m1_klines[-1][2]
-                    highest_peak = max(trade.get('highest_peak', entry_p), live_high, cmp)
-                    trade['highest_peak'] = highest_peak
-                    
-                    # 75-MINUTE STAGNATION AUTO TIME-STOP (Scratch at -1.0% to -2.0% ROE)
-                    time_open = time.time() - entry_time
-                    if time_open >= 4500 and not trade.get('is_be_active', False):
-                        live_qty_now = fetch_coindcx_live_position_qty(symbol)
-                        if live_qty_now is not None and live_qty_now <= 0:
-                            with active_trades_lock:
-                                ACTIVE_TRADES.pop(symbol, None)
-                            save_active_trades()
-                            continue
-
-                        sell_qty = min(live_qty_now, trade['total_qty']) if (live_qty_now is not None and live_qty_now > 0) else trade['total_qty']
-                        res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=sell_qty)
-                        if res.get('success'):
-                            realized_pnl_pct = ((cmp - entry_p) / entry_p) * 7 * 100
-                            sl_type = f"75-MIN TIME-STOP SCRATCH ({realized_pnl_pct:+.1f}% ROE) ⏱️"
-                            with active_trades_lock:
-                                ACTIVE_TRADES.pop(symbol, None)
-                            save_active_trades()
-                            log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": realized_pnl_pct, "sl_type": sl_type})
-                            st = load_state()
-                            st[symbol] = time.time() + 900
-                            save_state(st)
-                            send_telegram_message(
-                                f"⏱️ <b>POSITION CLOSED: 75-MIN TIME-STOP</b>\n\n"
-                                f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                                f"• <b>Exit Price:</b> <code>${cmp}</code> (Entry: <code>${entry_p}</code>)\n"
-                                f"• <b>Realized PnL:</b> <code>{realized_pnl_pct:+.1f}% ROE</code>\n"
-                                f"• <b>Action:</b> Stagnant > 75 mins. Capital released for fresh runners!\n"
-                                f"⏱️ <i>30-Min Cooldown Locked</i>"
-                            )
-                            continue
-
-                    # BREAKEVEN ENGINE: ESCAPE VELOCITY @ +6.0% ROE (+0.85% Move)
-                    be_trigger_price = trade.get('be_trigger', entry_p * 1.0085)
-                    if highest_peak >= be_trigger_price and not trade.get('is_be_active', False):
-                        fee_buffer_sl = round(entry_p * 1.0015, 4)
+                # 75-Minute Auto Time-Stop Guard
+                open_mins = (time.time() - trade.get('entry_time', time.time())) / 60.0
+                if open_mins >= 75 and roe <= 2.0:
+                    res = execute_coindcx_futures_trade(symbol=sym, side="sell", cmp=cmp, custom_quantity=trade['total_qty'])
+                    if res.get('success'):
+                        log_trade_event(sym, "CLOSED", {"cmp": cmp, "realized_pnl_pct": roe, "reason": "75-Min Stagnation Time-Stop"})
                         with active_trades_lock:
-                            if fee_buffer_sl > trade.get('sl', 0):
-                                trade['sl'] = fee_buffer_sl
-                            trade['is_be_active'] = True
+                            ACTIVE_TRADES.pop(sym, None)
                         save_active_trades()
-                        send_telegram_message(
-                            f"🛡️ <b>BREAKEVEN PROFIT LOCK ACTIVATED (+6.0% ROE REACHED)!</b>\n\n"
-                            f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                            f"• <b>New Stop Loss:</b> <code>${fee_buffer_sl}</code> (Entry + 0.15% Net Profit Floor)\n"
-                            f"• <b>Status:</b> 100% Risk-Free (Exchange Fees Covered + Profit Floor Locked)"
-                        )
+                        send_telegram_message(f"⏱️ <b>75-MIN STAGNATION TIME-STOP TRIGGERED</b>\n\n• Pair: <b>{sym}</b>\n• Closed at: <code>${cmp}</code>\n• Realized PnL: <code>{roe:+.1f}% ROE</code>\n• Reason: Trade stagnant > 75 mins.")
+                        continue
 
-                    # DYNAMIC TRAILING STAGE 2: INTERMEDIATE PROFIT LOCK @ +8.4% ROE (+1.2% Move)
-                    if highest_peak >= entry_p * 1.012:
-                        intermediate_sl = round(max(entry_p * 1.006, highest_peak * 0.995), 4)
-                        if intermediate_sl > trade.get('sl', entry_p):
-                            locked_roe = ((intermediate_sl - entry_p) / entry_p) * 7 * 100
-                            with active_trades_lock:
-                                trade['sl'] = intermediate_sl
-                                trade['is_profit_locked'] = True
-                            save_active_trades()
-                            send_telegram_message(
-                                f"🚀 <b>STAGE 2 INTERMEDIATE PROFIT LOCK UPDATED!</b>\n\n"
-                                f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                                f"• <b>Peak High:</b> <code>${highest_peak}</code>\n"
-                                f"• <b>New Trailing SL:</b> <code>${intermediate_sl}</code>\n"
-                                f"• <b>Locked ROE Profit:</b> <code>+{locked_roe:.1f}% ROE</code> 💰"
-                            )
+                # Breakeven Profit Lock @ +6.0% ROE (+0.85% Move)
+                if roe >= 6.0 and not trade.get('is_be_active', False):
+                    new_sl = round(ep * 1.002, 4)
+                    trade['sl'] = new_sl
+                    trade['is_be_active'] = True
+                    save_active_trades()
+                    send_telegram_message(f"🛡️ <b>BREAKEVEN PROFIT LOCK ACTIVATED!</b>\n\n• Pair: <b>{sym}</b>\n• Gain: <code>+{roe:.1f}% ROE</code>\n• Stop-loss moved to: <code>${new_sl}</code> (Risk-Free Trade)")
 
-                    # DYNAMIC TRAILING STAGE 3: RUNNER ENGINE @ +12.6% ROE (+1.8% Move)
-                    if highest_peak >= entry_p * 1.018:
-                        trailing_sl = round(highest_peak * 0.988, 4)
-                        if trailing_sl > trade.get('sl', entry_p):
-                            locked_roe = ((trailing_sl - entry_p) / entry_p) * 7 * 100
-                            with active_trades_lock:
-                                trade['sl'] = trailing_sl
-                                trade['is_profit_locked'] = True
-                            save_active_trades()
-                            send_telegram_message(
-                                f"🔥 <b>STAGE 3 RUNNER TRAILING EXPANSION!</b>\n\n"
-                                f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                                f"• <b>Peak High:</b> <code>${highest_peak}</code>\n"
-                                f"• <b>New Trailing SL:</b> <code>${trailing_sl}</code>\n"
-                                f"• <b>Locked ROE Profit:</b> <code>+{locked_roe:.1f}% ROE</code> 💰"
-                            )
+                # Dynamic Trailing Stage 2 @ +8.4% ROE (+1.2% Move)
+                if roe >= 8.4 and not trade.get('trailing_stage_2', False):
+                    new_sl = round(ep * 1.006, 4)
+                    trade['sl'] = new_sl
+                    trade['trailing_stage_2'] = True
+                    save_active_trades()
+                    send_telegram_message(f"📈 <b>STAGE 2 TRAILING STOP ACTIVATED!</b>\n\n• Pair: <b>{sym}</b>\n• Gain: <code>+{roe:.1f}% ROE</code>\n• Profit Locked: <code>+4.2% ROE Minimum</code>")
 
-                    # STOP LOSS / TRAILING STOP TRIGGER
-                    effective_low = min(cmp, m1_klines[-1][3])
-                    if effective_low <= trade['sl']:
-                        live_qty_now = fetch_coindcx_live_position_qty(symbol)
-                        if live_qty_now is not None and live_qty_now <= 0:
-                            with active_trades_lock:
-                                trade_info = ACTIVE_TRADES.pop(symbol, None)
-                            save_active_trades()
-                            if trade_info:
-                                realized_pnl_pct = ((cmp - entry_p) / entry_p) * 7 * 100 if entry_p > 0 else 0.0
-                                pnl_inr = (realized_pnl_pct / 100.0) * 1000.0
-                                log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": realized_pnl_pct, "sl_type": f"EXCHANGE SL HIT ({realized_pnl_pct:.1f}% ROE) 🛑"})
-                                send_telegram_message(
-                                    f"🏁 <b>POSITION CLOSED: STOP LOSS HIT 🛑</b>\n\n"
-                                    f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                                    f"• <b>Exit Price:</b> <code>${cmp}</code> (Entry: <code>${entry_p}</code>)\n"
-                                    f"• <b>Realized PnL:</b> <code>{realized_pnl_pct:+.1f}% ROE ({pnl_inr:+.2f} INR)</code> 🛑\n"
-                                    f"🛡️ <i>30-Min Cooldown Activated</i>"
-                                )
-                            st = load_state()
-                            st[symbol] = time.time() + 900
-                            save_state(st)
-                            continue
-                        
-                        sell_qty = min(live_qty_now, trade['total_qty']) if (live_qty_now is not None and live_qty_now > 0) else trade['total_qty']
-                        res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=sell_qty)
-                        if res.get('success'):
-                            realized_pnl_pct = ((cmp - entry_p) / entry_p) * 7 * 100
-                            sl_type = f"PROFIT LOCK WIN (+{realized_pnl_pct:.1f}% ROE) 💰" if cmp >= entry_p * 1.001 else (f"STOP LOSS HIT ({realized_pnl_pct:.1f}% ROE) 🛑")
-                            with active_trades_lock:
-                                ACTIVE_TRADES.pop(symbol, None)
-                            save_active_trades()
-                            log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": realized_pnl_pct, "sl_type": sl_type})
-                            st = load_state()
-                            st[symbol] = time.time() + 900
-                            save_state(st)
-                            send_telegram_message(
-                                f"🏁 <b>POSITION CLOSED: {sl_type}</b>\n\n"
-                                f"<b>Pair:</b> B-{clean_coin}_USDT\n"
-                                f"Closed at: <code>${cmp}</code> (Entry: <code>${entry_p}</code>)\n"
-                                f"⏱️ <i>30-Min Cooldown Locked</i>"
-                            )
-                except Exception as e:
-                    print(f"Error monitoring {symbol}: {e}")
-        except Exception as e:
-            print(f"Position monitor exception: {e}")
-        time.sleep(1)
+                # Dynamic Trailing Stage 3 @ +12.6% ROE (+1.8% Move)
+                if roe >= 12.6 and not trade.get('trailing_stage_3', False):
+                    new_sl = round(ep * 1.012, 4)
+                    trade['sl'] = new_sl
+                    trade['trailing_stage_3'] = True
+                    save_active_trades()
+                    send_telegram_message(f"🚀 <b>STAGE 3 RUNNER ENGINE ACTIVATED!</b>\n\n• Pair: <b>{sym}</b>\n• Gain: <code>+{roe:.1f}% ROE</code>\n• Profit Locked: <code>+8.4% ROE Minimum</code>")
+
+                # Target Hit (TP)
+                if cmp >= trade['tp1']:
+                    res = execute_coindcx_futures_trade(symbol=sym, side="sell", cmp=cmp, custom_quantity=trade['total_qty'])
+                    if res.get('success'):
+                        log_trade_event(sym, "CLOSED", {"cmp": cmp, "realized_pnl_pct": roe, "reason": "Target Hit 🎯"})
+                        with active_trades_lock:
+                            ACTIVE_TRADES.pop(sym, None)
+                        save_active_trades()
+                        send_telegram_message(f"🎯 <b>TARGET REACHED & POSITION CLOSED!</b>\n\n• Pair: <b>{sym}</b>\n• Exit CMP: <code>${cmp}</code>\n• Realized PnL: <code>{roe:+.1f}% ROE 💰</code>")
+                        continue
+
+                # Stop Loss Hit (SL)
+                if cmp <= trade['sl']:
+                    res = execute_coindcx_futures_trade(symbol=sym, side="sell", cmp=cmp, custom_quantity=trade['total_qty'])
+                    if res.get('success'):
+                        log_trade_event(sym, "CLOSED", {"cmp": cmp, "realized_pnl_pct": roe, "reason": "Stop Loss Hit 🛑"})
+                        with active_trades_lock:
+                            ACTIVE_TRADES.pop(sym, None)
+                        save_active_trades()
+                        send_telegram_message(f"🛑 <b>STOP LOSS HIT & POSITION CLOSED</b>\n\n• Pair: <b>{sym}</b>\n• Exit CMP: <code>${cmp}</code>\n• Realized PnL: <code>{roe:+.1f}% ROE</code>")
+                        continue
+            except Exception as e:
+                print(f"Error in monitor loop for {sym}: {e}")
+        time.sleep(3)
 
 # ==============================================================================
-# 13. TELEGRAM BOT INTERACTIVE COMMAND LISTENER
+# 13. AUTOMATED HOURLY MARKET CONDITION REPORT GENERATOR
+# ==============================================================================
+def generate_hourly_market_report():
+    now_ist = get_ist_now()
+    now_str = now_ist.strftime("%d-%m-%Y %I:%M %p (IST)")
+    
+    scan_pool = fetch_dynamic_watchlist(min_volume_usdt=2500000.0)
+    bullish_coins = []
+    consolidating_coins = []
+    
+    btc_klines = fetch_klines('BTC-USDT', '15m', 20)
+    btc_cmp = btc_klines[-1][4] if btc_klines else 0.0
+    btc_st, _ = calculate_supertrend(btc_klines) if btc_klines else (1, 0)
+    btc_status = "🟢 BULLISH" if btc_st == 1 else "🔴 BEARISH"
+    
+    for symbol in scan_pool[:45]:
+        try:
+            m15 = fetch_klines(symbol, '15m', 30)
+            if not m15 or len(m15) < 20: continue
+            st_dir, _ = calculate_supertrend(m15)
+            coin_clean = symbol.replace("-USDT", "")
+            if st_dir == 1:
+                bullish_coins.append(coin_clean)
+            else:
+                consolidating_coins.append(coin_clean)
+        except Exception:
+            pass
+            
+    total_eval = len(bullish_coins) + len(consolidating_coins)
+    bull_pct = (len(bullish_coins) / total_eval * 100) if total_eval > 0 else 50.0
+    sentiment = "🟢 BULLISH BIAS" if bull_pct >= 55 else ("🔴 BEARISH BIAS" if bull_pct <= 35 else "⚖️ NEUTRAL / CONSOLIDATION")
+    
+    with active_trades_lock:
+        active_count = len(ACTIVE_TRADES)
+        active_list = list(ACTIVE_TRADES.keys())
+    active_str = ", ".join([s.replace("-USDT", "") for s in active_list]) if active_list else "None (100% Cash Liquid)"
+    
+    today_str = now_ist.strftime("%d-%m-%Y")
+    history = load_trade_history()
+    events = history.get(today_str, [])
+    closed_today = [e for e in events if e.get('type') == "CLOSED" or e.get('action') == "CLOSED"]
+    total_roe = sum([e.get('details', {}).get('realized_pnl_pct', 0.0) for e in closed_today])
+    
+    top_bulls = ", ".join(bullish_coins[:8]) if bullish_coins else "None"
+    
+    lines = [
+        f"📊 <b>AUTOMATED HOURLY MARKET CONDITION REPORT</b>",
+        f"🕒 <b>Time:</b> <code>{now_str}</code>\n",
+        f"🌐 <b>Macro Market State:</b>",
+        f"• <b>BTC Trend (15M):</b> <b>{btc_status}</b> (${btc_cmp:,.1f})",
+        f"• <b>Market Sentiment:</b> <b>{sentiment}</b> ({bull_pct:.0f}% Bullish)",
+        f"• <b>Top Bullish Coins (15M Green):</b> <code>{top_bulls}</code>\n",
+        f"💼 <b>Portfolio & Execution Status:</b>",
+        f"• <b>Active Positions:</b> <code>{active_count} / 4 Concurrent</code> [{active_str}]",
+        f"• <b>Closed Trades Today:</b> <code>{len(closed_today)}</code> (Net ROE: <code>{total_roe:+.1f}%</code>)",
+        f"• <b>Auto-Trading Engine:</b> <b>{'🟢 ACTIVE' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b>",
+        f"• <b>Stop Loss Logic:</b> <code>Author CPR (Below BC / Prev Low, Max -0.95%)</code>",
+        f"• <b>Trade Entry Mode:</b> <code>Option A (Score >= 75 Instant Fire)</code>"
+    ]
+    return "\n".join(lines)
+
+# ==============================================================================
+# 14. TELEGRAM COMMAND LISTENER & BACKGROUND THREADS
 # ==============================================================================
 def run_telegram_command_listener():
     global AUTO_TRADING_ENABLED
     last_update_id = 0
+    time.sleep(10)
     while True:
         try:
-            if not TOKEN:
-                time.sleep(10)
-                continue
-            url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=20"
+            url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={last_update_id + 1}&timeout=5"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, context=ctx, timeout=25) as resp:
+            with urllib.request.urlopen(req, context=ctx, timeout=8) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
-                if data.get('ok') and data.get('result'):
+                if data.get('ok') and isinstance(data.get('result'), list):
                     for item in data['result']:
-                        last_update_id = item['update_id']
-                        msg = item.get('message', {})
-                        text = msg.get('text', '').strip()
-                        sender_id = str(msg.get('chat', {}).get('id', ''))
+                        last_update_id = item.get('update_id', last_update_id)
+                        message = item.get('message', {})
+                        text = message.get('text', '').strip().lower()
                         
-                        if CHAT_ID and sender_id != CHAT_ID:
-                            continue
-                            
-                        if text == "/stop":
+                        if text in ['/stop', '/pause', 'stop', 'pause']:
                             AUTO_TRADING_ENABLED = False
-                            send_telegram_message("🛑 <b>AUTO-TRADING PAUSED!</b>\nScanner will detect signals but NO new CoinDCX orders will be placed.\nUse /start to resume.")
-                        elif text == "/start":
+                            send_telegram_message("🛑 <b>AUTO-TRADING PAUSED VIA MOBILE COMMAND!</b>\n\n• Market signals will still be alerted.\n• CoinDCX auto-execution is OFF.")
+                        elif text in ['/start', '/resume', 'start', 'resume']:
                             AUTO_TRADING_ENABLED = True
-                            send_telegram_message("🟢 <b>AUTO-TRADING RESUMED!</b>\nScanner is actively placing trades on CoinDCX Futures (All 180+ Pairs).")
-                        elif text == "/today":
-                            summary = generate_daily_summary()
-                            send_telegram_message(summary)
-                        elif text == "/yesterday":
-                            y_str = (get_ist_now() - timedelta(days=1)).strftime("%d-%m-%Y")
-                            summary = generate_daily_summary(y_str)
-                            send_telegram_message(summary)
+                            send_telegram_message("🟢 <b>AUTO-TRADING ACTIVATED VIA MOBILE COMMAND!</b>\n\n• CoinDCX auto-execution is ON.")
+                        elif text in ['/today', '/daily', '/report', 'today', 'daily', 'report', '/history']:
+                            today_str = get_ist_now().strftime("%d-%m-%Y")
+                            summary_msg = generate_daily_summary(today_str)
+                            send_telegram_message(summary_msg)
+                        elif text in ['/yesterday', 'yesterday']:
+                            yesterday_str = (get_ist_now() - timedelta(days=1)).strftime("%d-%m-%Y")
+                            summary_msg = generate_daily_summary(yesterday_str)
+                            send_telegram_message(summary_msg)
+                        elif text in ['/hourly', 'hourly', '/market', 'market', '/pulse']:
+                            hourly_msg = generate_hourly_market_report()
+                            send_telegram_message(hourly_msg)
         except Exception:
-            time.sleep(5)
-        time.sleep(1)
+            pass
+        time.sleep(3)
 
-# ==============================================================================
-# 14. BACKGROUND THREADS & APPLICATION STARTUP
-# ==============================================================================
 def start_background_loop():
-    sync_active_trades_from_coindcx()
+    recover_live_coindcx_positions()
 
     def run_loop():
-        time.sleep(2)
+        time.sleep(5)
         while True:
             try:
-                run_scan()
+                if scan_lock.acquire(blocking=False):
+                    try:
+                        run_scan()
+                    finally:
+                        scan_lock.release()
             except Exception as e:
-                print(f"Scanner exception: {e}")
-            time.sleep(20)
+                print(f"Scan loop exception: {e}")
+            time.sleep(60)
 
     def run_keep_alive_loop():
-        time.sleep(10)
-        render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://crypto-scanner-ok3t.onrender.com")
+        time.sleep(15)
+        url = "https://crypto-scanner-ok3t.onrender.com/"
         while True:
             try:
-                ping_url = f"{render_url}/healthz"
-                req = urllib.request.Request(ping_url, headers={'User-Agent': 'Mozilla/5.0'})
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
-                    resp.read()
+                    pass
             except Exception as e:
                 print(f"Keep-alive ping error: {e}")
             time.sleep(240)
@@ -1417,11 +1300,27 @@ def start_background_loop():
                 print(f"Daily report loop exception: {e}")
             time.sleep(45)
 
+    def run_hourly_market_condition_report_loop():
+        time.sleep(40)
+        last_reported_hour = -1
+        while True:
+            try:
+                now_ist = get_ist_now()
+                # Run automatically at the top of every hour (minute 00)
+                if now_ist.minute == 0 and now_ist.hour != last_reported_hour:
+                    hourly_msg = generate_hourly_market_report()
+                    send_telegram_message(hourly_msg)
+                    last_reported_hour = now_ist.hour
+            except Exception as e:
+                print(f"Hourly report loop exception: {e}")
+            time.sleep(30)
+
     threading.Thread(target=run_loop, daemon=True).start()
     threading.Thread(target=monitor_active_positions, daemon=True).start()
     threading.Thread(target=run_keep_alive_loop, daemon=True).start()
     threading.Thread(target=run_telegram_command_listener, daemon=True).start()
     threading.Thread(target=run_daily_midnight_report_loop, daemon=True).start()
+    threading.Thread(target=run_hourly_market_condition_report_loop, daemon=True).start()
 
     send_telegram_message(
         "⚡ <b>RENDER BOT EXPANDED SCANNER DEPLOYED!</b>\n\n"
@@ -1429,6 +1328,7 @@ def start_background_loop():
         "• <b>24h Liquidity Floor:</b> Min $2,500,000 USDT ($2.5M)\n"
         "• <b>Hard Stop Loss:</b> Author CPR Logic (Below BC / Prev Low, Capped at -0.95% Drop)\n"
         "• <b>Strategy Engine:</b> CPR Breakout & Retest (Pivot, TC, BC, R1-R2)\n"
+        "• <b>Trade Entry Mode:</b> Option A (15M Green + 1H Bull + CPR + Score >= 75 Instant Fire)\n"
         "• <b>Direction:</b> 100% BUY / LONG ONLY (Zero Short Trade Rule ACTIVE)\n"
         "• <b>Supertrend Gate:</b> 15M Supertrend MUST BE GREEN\n"
         "• <b>Target Engine:</b> Next Pivot Level (R1/R2) or +3.2% move (+22.4% ROE)\n"
@@ -1439,7 +1339,8 @@ def start_background_loop():
         "• <b>Manual Trade Support:</b> ACTIVE (Skips coins manually opened on App)\n"
         "• <b>Max Active Trades:</b> 4 Concurrent Trades (₹4,000 INR Max Portfolio)\n"
         "• <b>Margin & Leverage:</b> ₹1,000 INR per trade | 7x Isolated\n"
-        "• <b>Mobile Commands:</b> /stop, /start, /today, /yesterday"
+        "• <b>Automated Reports:</b> Hourly Condition Report & Midnight Audit Report\n"
+        "• <b>Mobile Commands:</b> /stop, /start, /today, /yesterday, /hourly"
     )
 
 start_background_loop()
