@@ -251,101 +251,88 @@ def fetch_klines(symbol, interval_str="15m", limit=100):
                 return [[int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])] for k in data]
     except Exception: pass
 
-    # CoinDCX Public Candles
+    # CoinDCX Public Candlesticks Fallback
     try:
-        futures_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
-        cdcx_int = '15m' if interval_str == '15m' else ('1h' if interval_str == '1h' else ('1m' if interval_str == '1m' else '1d'))
-        url = f"https://public.coindcx.com/market_data/candles/?pair=B-{futures_coin}_USDT&interval={cdcx_int}"
+        coindcx_pair = f"B-{clean_sym}"
+        url = f"https://public.coindcx.com/market_data/candles?pair={coindcx_pair}&interval={interval_str}&limit={limit}"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-            raw = json.loads(resp.read().decode('utf-8'))
-            if isinstance(raw, list) and len(raw) > 0:
-                raw_sorted = sorted(raw, key=lambda x: x.get('time', 0))
-                return [[int(c.get('time', 0)), float(c.get('open', 0)), float(c.get('high', 0)), float(c.get('low', 0)), float(c.get('close', 0)), float(c.get('volume', 0))] for c in raw_sorted[-limit:]]
+            data = json.loads(resp.read().decode('utf-8'))
+            if isinstance(data, list) and len(data) > 0:
+                candles = []
+                for c in data:
+                    candles.append([
+                        int(c.get('time', 0)),
+                        float(c.get('open', 0)),
+                        float(c.get('high', 0)),
+                        float(c.get('low', 0)),
+                        float(c.get('close', 0)),
+                        float(c.get('volume', 0))
+                    ])
+                candles.reverse()
+                return candles
     except Exception: pass
 
-    return []
+    return None
 
-def calculate_rsi(prices, period=14):
-    if len(prices) < period + 1: return 50.0
-    deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
-    gains = [d if d > 0 else 0 for d in deltas]
-    losses = [-d if d < 0 else 0 for d in deltas]
+def calculate_ema(closes, period=20):
+    if len(closes) < period: return closes[-1] if closes else 0.0
+    multiplier = 2.0 / (period + 1.0)
+    ema = sum(closes[:period]) / period
+    for price in closes[period:]:
+        ema = (price - ema) * multiplier + ema
+    return ema
+
+def calculate_rsi(closes, period=14):
+    if len(closes) < period + 1: return 50.0
+    gains, losses = [], []
+    for i in range(1, len(closes)):
+        diff = closes[i] - closes[i - 1]
+        gains.append(max(diff, 0.0))
+        losses.append(max(-diff, 0.0))
     avg_gain = sum(gains[:period]) / period
     avg_loss = sum(losses[:period]) / period
-    for i in range(period, len(deltas)):
-        avg_gain = (avg_gain * 13 + gains[i]) / 14
-        avg_loss = (avg_loss * 13 + losses[i]) / 14
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
     if avg_loss == 0: return 100.0
     rs = avg_gain / avg_loss
     return 100.0 - (100.0 / (1.0 + rs))
 
-def calculate_volume_spike(klines, period=20):
-    volumes = [float(k[5]) for k in klines]
-    current_vol = volumes[-1]
-    avg_vol = sum(volumes[-period-1:-1]) / period if len(volumes) > period else sum(volumes) / max(1, len(volumes))
-    return (current_vol / avg_vol) if avg_vol > 0 else 1.0
-
-def calculate_ema(prices, period):
-    if not prices: return 0.0
-    if len(prices) < period: return sum(prices) / len(prices)
-    multiplier = 2.0 / (period + 1.0)
-    ema = sum(prices[:period]) / float(period)
-    for price in prices[period:]:
-        ema = (price - ema) * multiplier + ema
-    return ema
-
 def calculate_supertrend(klines, period=10, multiplier=3.0):
     if len(klines) < period + 1: return 1, 0.0
-    closes = [float(k[4]) for k in klines]
-    highs = [float(k[2]) for k in klines]
-    lows = [float(k[3]) for k in klines]
-    tr_list = [highs[0] - lows[0]]
+    trs = []
     for i in range(1, len(klines)):
-        tr_list.append(max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1])))
-    atr_list = []
-    for i in range(len(tr_list)):
-        if i < period - 1: atr_list.append(0.0)
-        elif i == period - 1: atr_list.append(sum(tr_list[:period]) / period)
-        else: atr_list.append((atr_list[-1] * (period - 1) + tr_list[i]) / period)
-        
-    st_val, st_dir = [0.0]*len(klines), [1]*len(klines)
-    basic_ub, basic_lb = [0.0]*len(klines), [0.0]*len(klines)
-    final_ub, final_lb = [0.0]*len(klines), [0.0]*len(klines)
-    for i in range(len(klines)):
-        hl2 = (highs[i] + lows[i]) / 2.0
-        basic_ub[i], basic_lb[i] = hl2 + multiplier * atr_list[i], hl2 - multiplier * atr_list[i]
-        if i == 0:
-            final_ub[i], final_lb[i], st_val[i] = basic_ub[i], basic_lb[i], basic_ub[i]
-        else:
-            final_ub[i] = basic_ub[i] if basic_ub[i] < final_ub[i-1] or closes[i-1] > final_ub[i-1] else final_ub[i-1]
-            final_lb[i] = basic_lb[i] if basic_lb[i] > final_lb[i-1] or closes[i-1] < final_lb[i-1] else final_lb[i-1]
-            if closes[i] > final_ub[i-1]: st_dir[i] = 1
-            elif closes[i] < final_lb[i-1]: st_dir[i] = -1
-            else: st_dir[i] = st_dir[i-1]
-            st_val[i] = final_lb[i] if st_dir[i] == 1 else final_ub[i]
-    return st_dir[-1], st_val[-1]
+        h, l, prev_c = klines[i][2], klines[i][3], klines[i-1][4]
+        trs.append(max(h - l, abs(h - prev_c), abs(l - prev_c)))
+    atr = sum(trs[:period]) / period
+    for i in range(period, len(trs)):
+        atr = (atr * (period - 1) + trs[i]) / period
+
+    hl2 = (klines[-1][2] + klines[-1][3]) / 2.0
+    upper = hl2 + (multiplier * atr)
+    lower = hl2 - (multiplier * atr)
+    close = klines[-1][4]
+
+    direction = 1 if close > lower else -1
+    return direction, (lower if direction == 1 else upper)
+
+def calculate_volume_spike(klines, lookback=20):
+    if len(klines) < lookback + 1: return 1.0
+    vols = [k[5] for k in klines[:-1]]
+    avg_v = sum(vols[-lookback:]) / lookback if lookback > 0 else 1.0
+    curr_v = klines[-1][5]
+    return (curr_v / avg_v) if avg_v > 0 else 1.0
 
 # ==============================================================================
-# 5. CENTRAL PIVOT RANGE (CPR) CALCULATION ENGINE
+# 5. CPR (CENTRAL PIVOT RANGE) & PIVOT MATHEMATICS
 # ==============================================================================
 def calculate_cpr_levels(daily_klines):
-    """
-    Computes Central Pivot Range (Pivot, Bottom Central, Top Central) and Pivot Levels:
-    - Pivot = (High + Low + Close) / 3
-    - BC = (High + Low) / 2
-    - TC = (Pivot - BC) + Pivot
-    - Narrow CPR: Width <= 0.40%
-    - Ascending CPR: Today's CPR > Yesterday's CPR
-    - Inside CPR: Today's CPR within Yesterday's CPR
-    """
-    if not daily_klines or len(daily_klines) < 2:
-        return None
-
-    prev_day = daily_klines[-2]
-    y_high = float(prev_day[2])
-    y_low = float(prev_day[3])
-    y_close = float(prev_day[4])
+    if len(daily_klines) < 2: return None
+    y_day = daily_klines[-2]
+    y_high = float(y_day[2])
+    y_low = float(y_day[3])
+    y_close = float(y_day[4])
 
     pivot = (y_high + y_low + y_close) / 3.0
     bc = (y_high + y_low) / 2.0
@@ -424,7 +411,7 @@ def clear_telegram_webhooks():
     for tok in candidate_tokens:
         if not tok: continue
         try:
-            url = f"https://api.telegram.org/bot{tok}/deleteWebhook?drop_pending_updates=false"
+            url = f"https://api.telegram.org/bot{tok}/deleteWebhook?drop_pending_updates=true"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, context=ctx, timeout=5) as resp: pass
         except Exception: pass
@@ -454,257 +441,305 @@ def send_telegram_message(text, parse_mode="HTML"):
     return False
 
 # ==============================================================================
-# 7. COINDCX POSITION TRACKING & RECOVERY (NON-BLOCKING)
+# 7. COINDCX FUTURES EXECUTION ENGINE & POSITION SYNC
 # ==============================================================================
-def extract_pos_qty(p):
-    if not isinstance(p, dict): return 0.0
-    for k in ['quantity', 'active_pos', 'active_units', 'open_position_qty', 'size', 'total_quantity']:
-        val = p.get(k)
-        if val is not None:
-            try:
-                fval = abs(float(val))
-                if fval > 0: return fval
-            except (ValueError, TypeError): pass
-    return 0.0
-
-def is_position_open(p):
-    if not isinstance(p, dict): return False
-    st = str(p.get('status', '')).lower()
-    if st in ['open', 'active', 'opened']: return True
-    return extract_pos_qty(p) > 0
-
-def fetch_all_coindcx_live_positions():
-    if not COINDCX_API_KEY or not COINDCX_SECRET_KEY: return []
-
-    ts_sec = int(time.time())
-    body = {"timestamp": ts_sec, "page": "1", "size": "50", "margin_currency_short_name": ["INR", "USDT"]}
-    url = "https://api.coindcx.com/exchange/v1/derivatives/futures/positions"
-    try:
-        json_body = json.dumps(body, separators=(',', ':'))
-        signature = hmac.new(COINDCX_SECRET_KEY.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
-        headers = {
-            'Content-Type': 'application/json',
-            'X-AUTH-APIKEY': COINDCX_API_KEY,
-            'X-AUTH-SIGNATURE': signature,
-            'User-Agent': 'Mozilla/5.0'
-        }
-        req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers, method='POST')
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            if isinstance(data, list): return data
-            elif isinstance(data, dict):
-                return data.get('positions') or data.get('data') or data.get('result') or []
-    except Exception: pass
-    return []
+def normalize_coindcx_symbol(symbol):
+    coin = symbol.split('-')[0].upper()
+    mapped_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
+    return f"B-{mapped_coin}_USDT"
 
 def fetch_coindcx_live_position_qty(symbol):
-    try:
-        raw_coin = symbol.split('-')[0].upper()
-        futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin).upper()
-        target_clean = futures_coin.replace("1000", "")
-        
-        pos_list = fetch_all_coindcx_live_positions()
-        for p in pos_list:
-            if not isinstance(p, dict): continue
-            p_pair = str(p.get('pair', p.get('market', ''))).upper()
-            p_clean = p_pair.replace("B-", "").replace("1000", "").replace("_", "").replace("-", "").replace("USDT", "")
-            if (p_clean == target_clean or raw_coin in p_pair) and is_position_open(p):
-                qty = extract_pos_qty(p)
-                if qty > 0: return qty
-        return 0.0
-    except Exception: return 0.0
+    if not COINDCX_API_KEY or not COINDCX_SECRET_KEY: return 0.0
+    target_pair = normalize_coindcx_symbol(symbol)
+    endpoints = [
+        "https://api.coindcx.com/exchange/v1/derivatives/futures/positions",
+        "https://api.coindcx.com/exchange/v1/derivatives/futures/positions/active"
+    ]
+    for url in endpoints:
+        try:
+            ts = int(time.time() * 1000)
+            body = {"timestamp": ts}
+            json_body = json.dumps(body, separators=(',', ':'))
+            signature = hmac.new(COINDCX_SECRET_KEY.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
+            headers = {
+                'Content-Type': 'application/json',
+                'X-AUTH-APIKEY': COINDCX_API_KEY,
+                'X-AUTH-SIGNATURE': signature,
+                'User-Agent': 'Mozilla/5.0'
+            }
+            req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers)
+            with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                pos_list = data if isinstance(data, list) else data.get('positions', [])
+                for p in pos_list:
+                    p_pair = p.get('pair') or p.get('symbol') or ''
+                    if p_pair.upper() == target_pair.upper() or p_pair.replace('_', '-').upper() == target_pair.replace('_', '-').upper():
+                        return abs(float(p.get('active_units', 0) or p.get('size', 0) or p.get('quantity', 0)))
+        except Exception: pass
+    return 0.0
 
-def recover_live_coindcx_positions():
-    global ACTIVE_TRADES
-    pos_list = fetch_all_coindcx_live_positions()
-    if not pos_list or not isinstance(pos_list, list): return
+def fetch_coindcx_position_details(symbol):
+    if not COINDCX_API_KEY or not COINDCX_SECRET_KEY: return None
+    target_pair = normalize_coindcx_symbol(symbol)
+    endpoints = [
+        "https://api.coindcx.com/exchange/v1/derivatives/futures/positions",
+        "https://api.coindcx.com/exchange/v1/derivatives/futures/positions/active"
+    ]
+    for url in endpoints:
+        try:
+            ts = int(time.time() * 1000)
+            body = {"timestamp": ts}
+            json_body = json.dumps(body, separators=(',', ':'))
+            signature = hmac.new(COINDCX_SECRET_KEY.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
+            headers = {
+                'Content-Type': 'application/json',
+                'X-AUTH-APIKEY': COINDCX_API_KEY,
+                'X-AUTH-SIGNATURE': signature,
+                'User-Agent': 'Mozilla/5.0'
+            }
+            req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers)
+            with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                pos_list = data if isinstance(data, list) else data.get('positions', [])
+                for p in pos_list:
+                    p_pair = p.get('pair') or p.get('symbol') or ''
+                    if p_pair.upper() == target_pair.upper() or p_pair.replace('_', '-').upper() == target_pair.replace('_', '-').upper():
+                        qty = abs(float(p.get('active_units', 0) or p.get('size', 0) or p.get('quantity', 0)))
+                        if qty > 0:
+                            pos_id = p.get('id') or p.get('position_id') or p.get('positionId') or p.get('id_')
+                            entry_p = float(p.get('avg_price', 0) or p.get('entry_price', 0) or p.get('price', 0))
+                            return {
+                                'pair': target_pair,
+                                'position_id': str(pos_id) if pos_id else None,
+                                'quantity': qty,
+                                'entry_price': entry_p,
+                                'raw': p
+                            }
+        except Exception: pass
+    return None
 
-    for p in pos_list:
-        if not isinstance(p, dict) or not is_position_open(p): continue
-        p_pair = str(p.get('pair', p.get('market', ''))).upper()
-        active_u = extract_pos_qty(p)
-        if active_u > 0:
-            raw_c = p_pair.replace("B-", "").replace("_USDT", "").replace("USDT", "").replace("1000", "")
-            sym = f"{raw_c}-USDT"
-            with active_trades_lock:
-                if sym not in ACTIVE_TRADES:
-                    entry_p = float(p.get('avg_price', p.get('entry_price', 0)))
-                    if entry_p <= 0:
-                        k1 = fetch_klines(sym, '1m', 1)
-                        entry_p = k1[-1][4] if k1 else 1.0
-                    ACTIVE_TRADES[sym] = {
-                        'entry_price': entry_p,
-                        'total_qty': active_u,
-                        'remaining_qty': active_u,
-                        'tp1': round(entry_p * 1.032, 4),
-                        'sl': round(entry_p * 0.9880, 4),
-                        'be_trigger': round(entry_p * 1.0085, 4),
-                        'is_be_active': False,
-                        'leverage': 7,
-                        'entry_time': time.time()
-                    }
-                    send_telegram_message(
-                        f"🔄 <b>AUTO-RECOVERED ACTIVE POSITION:</b>\n\n"
-                        f"• <b>Pair:</b> <code>{p_pair}</code> ({sym})\n"
-                        f"• <b>Quantity:</b> <code>{active_u}</code>\n"
-                        f"• <b>Entry Price:</b> <code>${entry_p}</code>\n"
-                        f"• <b>Status:</b> Dynamic trailing & 75m stagnation guard ACTIVE!"
-                    )
-    save_active_trades()
-
-# ==============================================================================
-# 8. ORDER EXECUTION & NATIVE COINDCX TP/SL
-# ==============================================================================
-def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0, leverage=7, custom_quantity=None):
-    if not COINDCX_API_KEY or not COINDCX_SECRET_KEY:
-        return {'success': False, 'error': 'CoinDCX API credentials missing.'}
-        
-    raw_coin = symbol.split('-')[0].upper()
-    futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin)
-    
-    if custom_quantity is not None:
-        quantity = custom_quantity
-    else:
-        usdt_inr_rate = 88.5
-        position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
-        raw_qty = position_value_usdt / cmp if cmp > 0 else 0.1
-        
-        if raw_coin == 'BTC': quantity = round(max(0.001, raw_qty), 3)
-        elif raw_coin in ['ETH', 'SOL']: quantity = round(max(0.1, raw_qty), 1)
-        elif raw_qty >= 50: quantity = float(int(round(raw_qty)))
-        elif raw_qty >= 1: quantity = round(raw_qty, 1)
-        else: quantity = round(max(0.1, raw_qty), 1)
-        
-    if quantity <= 0: quantity = 0.1
-
-    futures_url = "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create"
-    ts = int(round(time.time() * 1000))
-
-    body = {
-        "timestamp": ts,
-        "order": {
-            "side": side.lower(),
-            "pair": f"B-{futures_coin}_USDT",
-            "order_type": "market_order",
-            "total_quantity": quantity,
-            "leverage": leverage,
-            "notification": "no_notification"
-        }
-    }
-
-    try:
-        json_body = json.dumps(body, separators=(',', ':'))
-        signature = hmac.new(COINDCX_SECRET_KEY.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
-        headers = {
-            'Content-Type': 'application/json',
-            'X-AUTH-APIKEY': COINDCX_API_KEY,
-            'X-AUTH-SIGNATURE': signature,
-            'User-Agent': 'Mozilla/5.0'
-        }
-        req = urllib.request.Request(futures_url, data=json_body.encode('utf-8'), headers=headers, method='POST')
-        with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            order_id = "EXECUTED"
-            if isinstance(data, dict): order_id = data.get('id', data.get('order_id', 'EXECUTED'))
-            return {'success': True, 'order_id': order_id, 'quantity': quantity, 'pair': f"B-{futures_coin}_USDT"}
-    except urllib.error.HTTPError as e:
-        raw_err = e.read().decode('utf-8', errors='ignore')
-        return {'success': False, 'error': f"HTTP {e.code}: {raw_err[:120]}"}
-    except Exception as e:
-        return {'success': False, 'error': str(e)}
-
-def auto_place_coindcx_native_tpsl(symbol, tp_price, sl_price):
+def apply_coindcx_native_tpsl(pair, position_id, target_price, stop_loss_price):
     if not COINDCX_API_KEY or not COINDCX_SECRET_KEY: return False
-    raw_coin = symbol.split('-')[0].upper()
-    futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin).upper()
-    target_clean = futures_coin.replace("1000", "")
-
-    pos_id = None
-    for _ in range(5):
-        time.sleep(2)
-        pos_list = fetch_all_coindcx_live_positions()
-        for p in pos_list:
-            if not isinstance(p, dict): continue
-            p_pair = str(p.get('pair', p.get('market', ''))).upper()
-            p_clean = p_pair.replace("B-", "").replace("1000", "").replace("_", "").replace("-", "").replace("USDT", "")
-            if (p_clean == target_clean or raw_coin in p_pair) and is_position_open(p):
-                pos_id = p.get('id') or p.get('position_id')
-                break
-        if pos_id: break
-
-    if not pos_id: return False
-
     url = "https://api.coindcx.com/exchange/v1/derivatives/futures/positions/create_tpsl"
-    tp_str = f"{tp_price:.4f}" if tp_price < 1.0 else f"{tp_price:.2f}"
-    sl_str = f"{sl_price:.4f}" if sl_price < 1.0 else f"{sl_price:.2f}"
-
-    body = {
-        "timestamp": str(int(round(time.time() * 1000))),
-        "id": pos_id,
-        "take_profit": {"stop_price": tp_str, "order_type": "take_profit_market"},
-        "stop_loss": {"stop_price": sl_str, "order_type": "stop_market"}
-    }
-
-    try:
-        json_body = json.dumps(body, separators=(',', ':'))
-        signature = hmac.new(COINDCX_SECRET_KEY.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
-        headers = {
-            'Content-Type': 'application/json',
-            'X-AUTH-APIKEY': COINDCX_API_KEY,
-            'X-AUTH-SIGNATURE': signature,
-            'User-Agent': 'Mozilla/5.0'
-        }
-        req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers, method='POST')
-        with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
-            send_telegram_message(
-                f"🎯 <b>NATIVE COINDCX TP/SL APPLIED AUTOMATICALLY!</b>\n\n"
-                f"• <b>Pair:</b> <code>B-{target_clean}_USDT</code>\n"
-                f"• <b>Position ID:</b> <code>{pos_id}</code>\n"
-                f"• <b>Target (TP):</b> <code>${tp_str}</code> (+3.2%)\n"
-                f"• <b>Stop Loss (SL):</b> <code>${sl_str}</code> (Structural Floor)\n"
-                f"✅ <i>Populated directly in your CoinDCX TP / SL column! Exchange safety active.</i>"
-            )
-            return True
-    except Exception: return False
+    
+    payload_variants = [
+        {"timestamp": int(time.time() * 1000), "id": str(position_id), "take_profit": {"stop_price": float(target_price)}, "stop_loss": {"stop_price": float(stop_loss_price)}},
+        {"timestamp": int(time.time() * 1000), "position_id": str(position_id), "take_profit": {"stop_price": float(target_price)}, "stop_loss": {"stop_price": float(stop_loss_price)}},
+        {"timestamp": int(time.time() * 1000), "pair": pair, "id": str(position_id), "take_profit": {"stop_price": float(target_price)}, "stop_loss": {"stop_price": float(stop_loss_price)}},
+        {"timestamp": int(time.time() * 1000), "pair": pair, "take_profit": {"stop_price": float(target_price)}, "stop_loss": {"stop_price": float(stop_loss_price)}},
+        {"timestamp": int(time.time() * 1000), "id": str(position_id), "target_price": float(target_price), "stop_loss_price": float(stop_loss_price)}
+    ]
+    
+    for body in payload_variants:
+        try:
+            json_body = json.dumps(body, separators=(',', ':'))
+            signature = hmac.new(COINDCX_SECRET_KEY.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
+            headers = {
+                'Content-Type': 'application/json',
+                'X-AUTH-APIKEY': COINDCX_API_KEY,
+                'X-AUTH-SIGNATURE': signature,
+                'User-Agent': 'Mozilla/5.0'
+            }
+            req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers)
+            with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
+                if resp.status in [200, 201]:
+                    return True
+        except Exception: pass
+    return False
 
 def sync_all_open_positions_tpsl():
-    pos_list = fetch_all_coindcx_live_positions()
-    if not pos_list or not isinstance(pos_list, list): return []
+    results = []
+    with active_trades_lock:
+        tracked_symbols = list(ACTIVE_TRADES.keys())
+    
+    all_symbols = list(dict.fromkeys(tracked_symbols + WATCHLIST[:25]))
+    for sym in all_symbols:
+        try:
+            pos = fetch_coindcx_position_details(sym)
+            if pos and pos.get('position_id') and pos.get('quantity', 0) > 0:
+                with active_trades_lock:
+                    trade = ACTIVE_TRADES.get(sym)
+                
+                entry_p = pos.get('entry_price', 0)
+                if trade:
+                    tp_price = trade.get('tp1')
+                    sl_price = trade.get('sl')
+                elif entry_p > 0:
+                    tp_price = round(entry_p * 1.032, 4)
+                    sl_price = round(entry_p * (1.0 - 0.0095), 4)
+                else: continue
 
-    synced_results = []
-    for p in pos_list:
-        if not isinstance(p, dict) or not is_position_open(p): continue
-        p_pair = str(p.get('pair', p.get('market', ''))).upper()
-        raw_c = p_pair.replace("B-", "").replace("_USDT", "").replace("USDT", "").replace("1000", "")
-        sym = f"{raw_c}-USDT"
-        entry_p = float(p.get('avg_price', p.get('entry_price', 0)))
-        if entry_p <= 0: continue
+                success = apply_coindcx_native_tpsl(pos['pair'], pos['position_id'], tp_price, sl_price)
+                results.append({'symbol': sym, 'pair': pos['pair'], 'tp': tp_price, 'sl': sl_price, 'success': success})
+                if success:
+                    send_telegram_message(
+                        f"🎯 <b>NATIVE COINDCX TP/SL APPLIED AUTOMATICALLY!</b>\n\n"
+                        f"• <b>Pair:</b> <code>{pos['pair']}</code>\n"
+                        f"• <b>Position ID:</b> <code>{pos['position_id']}</code>\n"
+                        f"• <b>Target (TP):</b> <code>${tp_price}</code> (+3.2%)\n"
+                        f"• <b>Stop Loss (SL):</b> <code>${sl_price}</code> (-0.95% floor)\n"
+                        f"✅ <i>Populated directly in your CoinDCX TP / SL column! Exchange safety active.</i>"
+                    )
+        except Exception: pass
+    return results
 
-        with active_trades_lock:
-            trade = ACTIVE_TRADES.get(sym)
-            tp_val = trade.get('tp1', round(entry_p * 1.032, 4)) if trade else round(entry_p * 1.032, 4)
-            sl_val = trade.get('sl', round(entry_p * 0.9880, 4)) if trade else round(entry_p * 0.9880, 4)
+def recover_live_coindcx_positions():
+    if not COINDCX_API_KEY or not COINDCX_SECRET_KEY: return
+    endpoints = [
+        "https://api.coindcx.com/exchange/v1/derivatives/futures/positions",
+        "https://api.coindcx.com/exchange/v1/derivatives/futures/positions/active"
+    ]
+    for url in endpoints:
+        try:
+            ts = int(time.time() * 1000)
+            body = {"timestamp": ts}
+            json_body = json.dumps(body, separators=(',', ':'))
+            signature = hmac.new(COINDCX_SECRET_KEY.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
+            headers = {
+                'Content-Type': 'application/json',
+                'X-AUTH-APIKEY': COINDCX_API_KEY,
+                'X-AUTH-SIGNATURE': signature,
+                'User-Agent': 'Mozilla/5.0'
+            }
+            req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers)
+            with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+                pos_list = data if isinstance(data, list) else data.get('positions', [])
+                for p in pos_list:
+                    qty = abs(float(p.get('active_units', 0) or p.get('size', 0) or p.get('quantity', 0)))
+                    if qty > 0:
+                        pair_str = p.get('pair') or p.get('symbol') or ''
+                        clean_sym = pair_str.replace('B-', '').replace('_USDT', '-USDT').replace('USDT', '-USDT')
+                        with active_trades_lock:
+                            if clean_sym not in ACTIVE_TRADES:
+                                entry_p = float(p.get('avg_price', 0) or p.get('entry_price', 0) or p.get('price', 0))
+                                if entry_p > 0:
+                                    ACTIVE_TRADES[clean_sym] = {
+                                        'entry_price': entry_p,
+                                        'highest_price': entry_p,
+                                        'initial_qty': qty,
+                                        'remaining_qty': qty,
+                                        'leverage': 7,
+                                        'stage': 1,
+                                        'sl': round(entry_p * (1.0 - 0.0095), 4),
+                                        'tp1': round(entry_p * 1.032, 4),
+                                        'order_id': p.get('id', 'RECOVERED'),
+                                        'entry_time': time.time(),
+                                        'last_check_time': time.time()
+                                    }
+                save_active_trades()
+                return
+        except Exception: pass
 
-        success = auto_place_coindcx_native_tpsl(sym, tp_val, sl_val)
-        synced_results.append({'pair': p_pair, 'symbol': sym, 'tp': tp_val, 'sl': sl_val, 'success': success})
-        time.sleep(1)
-    return synced_results
+def calculate_step_size_quantity(target_margin_inr, cmp_price, leverage=7):
+    usdt_inr_rate = 93.0
+    total_position_value_usdt = (target_margin_inr / usdt_inr_rate) * leverage
+    raw_qty = total_position_value_usdt / cmp_price
+
+    if cmp_price >= 10000: return round(raw_qty, 3)
+    elif cmp_price >= 1000: return round(raw_qty, 2)
+    elif cmp_price >= 100: return round(raw_qty, 1)
+    elif cmp_price >= 1.0: return round(raw_qty, 1)
+    elif cmp_price >= 0.1: return round(raw_qty, 0)
+    else: return round(raw_qty, 0)
+
+def execute_coindcx_futures_trade(symbol, side="buy", cmp=0.0, leverage=7, margin_inr=1000, custom_quantity=None):
+    if not COINDCX_API_KEY or not COINDCX_SECRET_KEY:
+        return {'success': False, 'message': 'API keys missing'}
+
+    coin = symbol.split('-')[0].upper()
+    mapped_coin = COINDCX_PAIR_ALIASES.get(coin, coin)
+    primary_pair = f"B-{mapped_coin}_USDT"
+
+    quantity = custom_quantity if custom_quantity is not None else calculate_step_size_quantity(margin_inr, cmp, leverage)
+    if quantity <= 0: quantity = 1.0
+
+    endpoints = [
+        "https://api.coindcx.com/exchange/v1/derivatives/futures/orders/create",
+        "https://api.coindcx.com/exchange/v1/orders/create"
+    ]
+
+    pair_variants = [
+        primary_pair,
+        primary_pair.replace('_', ''),
+        primary_pair.replace('B-', ''),
+        f"{mapped_coin}USDT"
+    ]
+
+    last_error = ""
+
+    for url in endpoints:
+        for pair_choice in pair_variants:
+            is_futures = "futures" in url
+            payload_variants = [
+                {
+                    "timestamp": int(time.time() * 1000),
+                    "order": {
+                        "side": side.lower(),
+                        "pair": pair_choice,
+                        "order_type": "market_order",
+                        "total_quantity": float(quantity),
+                        "leverage": int(leverage)
+                    }
+                } if is_futures else {
+                    "timestamp": int(time.time() * 1000),
+                    "side": side.lower(),
+                    "order_type": "market_order",
+                    "market": pair_choice,
+                    "total_quantity": float(quantity),
+                    "leverage": int(leverage)
+                },
+                {
+                    "timestamp": int(time.time() * 1000),
+                    "side": side.lower(),
+                    "pair": pair_choice,
+                    "order_type": "market_order",
+                    "total_quantity": float(quantity),
+                    "leverage": int(leverage)
+                }
+            ]
+
+            for payload in payload_variants:
+                try:
+                    json_body = json.dumps(payload, separators=(',', ':'))
+                    signature = hmac.new(COINDCX_SECRET_KEY.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
+                    headers = {
+                        'Content-Type': 'application/json',
+                        'X-AUTH-APIKEY': COINDCX_API_KEY,
+                        'X-AUTH-SIGNATURE': signature,
+                        'User-Agent': 'Mozilla/5.0'
+                    }
+                    req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers)
+                    with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
+                        resp_data = json.loads(resp.read().decode('utf-8'))
+                        order_id = resp_data.get('id') or resp_data.get('order_id') or resp_data.get('orderId')
+                        return {'success': True, 'order_id': order_id, 'data': resp_data, 'pair': pair_choice}
+                except urllib.error.HTTPError as he:
+                    try:
+                        err_bytes = he.read()
+                        try:
+                            import gzip
+                            err_str = gzip.decompress(err_bytes).decode('utf-8')
+                        except Exception:
+                            err_str = err_bytes.decode('utf-8')
+                        last_error = f"HTTP {he.code}: {err_str}"
+                    except Exception:
+                        last_error = f"HTTP {he.code}"
+                except Exception as ex:
+                    last_error = str(ex)
+
+    return {'success': False, 'message': last_error}
 
 # ==============================================================================
-# 9. WEB DASHBOARD ENDPOINTS
+# 8. FLASK DASHBOARD, REPORTS & 1-CLICK WEB CONTROLS
 # ==============================================================================
 @app.route('/scan-now')
 def scan_now_endpoint():
     try:
-        daily_count = get_today_executed_trades_count()
         today_str = get_ist_now().strftime("%d-%m-%Y")
         st_file = load_state()
-
         report_lines = [
-            f"{'='*95}",
-            f"⚡ CPR BREAKOUT & RETEST MARKET DIAGNOSTICS & STATUS",
-            f"{'='*95}",
-            f"🎯 Today's Executed Trades: {daily_count}",
+            f"⚡ REAL-TIME CPR MARKET SCANNER DIAGNOSTICS ({today_str})",
             f"{'='*95}",
             f"{'SYMBOL':11s} | {'CMP':<9s} | {'CPR BIAS':<13s} | {'CPR TYPE':<24s} | {'VOL':<6s} | {'SCORE':<5s} | {'STATUS'}",
             f"{'-'*95}"
@@ -756,6 +791,7 @@ def scan_now_endpoint():
 @app.route('/today')
 def today_report_endpoint(date_override=None):
     try:
+        global AUTO_TRADING_ENABLED
         target_date = date_override if date_override else get_ist_now().strftime("%d-%m-%Y")
         with trade_history_lock:
             all_events = load_all_trade_events()
@@ -790,12 +826,29 @@ def today_report_endpoint(date_override=None):
                 code {{ background: #2d333b; padding: 3px 6px; border-radius: 4px; color: #ff7b72; }}
                 .btn {{ display: inline-block; padding: 8px 16px; background: #238636; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; margin-right: 10px; }}
                 .btn-blue {{ background: #1f6feb; }}
+                .btn-red {{ background: #da3633; }}
+                .ctrl-panel {{ background: {'#1b4725' if AUTO_TRADING_ENABLED else '#4c1d1d'}; padding: 15px 20px; border-radius: 8px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; border: 1px solid {'#2ea043' if AUTO_TRADING_ENABLED else '#f85149'}; }}
             </style>
         </head>
         <body>
             <div class="container">
                 <h1>📅 CPR Trading Report</h1>
                 <p><b>Date:</b> {target_date} | <b>Strategy:</b> CPR Breakout & Bounce Engine</p>
+
+                <!-- 1-Click Mobile Control Panel -->
+                <div class="ctrl-panel">
+                    <div>
+                        <span style="font-size:16px;"><b>Auto-Trading Execution:</b></span> 
+                        <b style="font-size:18px; margin-left:8px; color:{'#3fb950' if AUTO_TRADING_ENABLED else '#ff7b72'};">
+                            {'🟢 LIVE (ENABLED)' if AUTO_TRADING_ENABLED else '🛑 PAUSED (OFF)'}
+                        </b>
+                    </div>
+                    <div>
+                        <a href="/start" class="btn" style="background:#238636;">🟢 Turn ON</a>
+                        <a href="/stop" class="btn btn-red">🛑 Turn OFF</a>
+                    </div>
+                </div>
+
                 <div style="margin-bottom: 20px;">
                     <a href="/today" class="btn">Today's Report</a>
                     <a href="/yesterday" class="btn btn-blue">Yesterday's Audit</a>
@@ -849,10 +902,109 @@ def status_endpoint():
         'active_positions': active_list
     }, 200
 
+@app.route('/start')
+@app.route('/resume')
+@app.route('/on')
+@app.route('/toggle/start')
+def start_auto_trading():
+    global AUTO_TRADING_ENABLED
+    AUTO_TRADING_ENABLED = True
+    st = load_state()
+    st["auto_trading_enabled"] = True
+    save_state(st)
+    send_telegram_message(
+        "🟢 <b>AUTO-TRADING ACTIVATED VIA WEB DASHBOARD!</b>\n\n"
+        "• Auto-order execution on CoinDCX is now <b>LIVE</b>.\n"
+        "• High-conviction CPR setups will execute automatically.\n"
+        "• Turn OFF anytime via /stop or dashboard button."
+    )
+    return """
+    <html><head><meta http-equiv="refresh" content="2;url=/today"><style>body{background:#0b0e14;color:#e1e4e8;font-family:sans-serif;text-align:center;padding:50px;}</style></head>
+    <body><h2 style='color:#3fb950;'>🟢 Auto-Trading is now ENABLED & LIVE!</h2><p>Redirecting to dashboard in 2 seconds...</p><p><a href='/today' style='color:#58a6ff;'>Click here if not redirected</a></p></body></html>
+    """, 200
+
+@app.route('/stop')
+@app.route('/pause')
+@app.route('/off')
+@app.route('/toggle/stop')
+def stop_auto_trading():
+    global AUTO_TRADING_ENABLED
+    AUTO_TRADING_ENABLED = False
+    st = load_state()
+    st["auto_trading_enabled"] = False
+    save_state(st)
+    send_telegram_message(
+        "🛑 <b>AUTO-TRADING PAUSED VIA WEB DASHBOARD!</b>\n\n"
+        "• Auto-order execution on CoinDCX is now <b>OFF</b>.\n"
+        "• Scanner will only send notifications.\n"
+        "• Turn ON anytime via /start or dashboard button."
+    )
+    return """
+    <html><head><meta http-equiv="refresh" content="2;url=/today"><style>body{background:#0b0e14;color:#e1e4e8;font-family:sans-serif;text-align:center;padding:50px;}</style></head>
+    <body><h2 style='color:#ff7b72;'>🛑 Auto-Trading is now PAUSED (OFF)!</h2><p>Redirecting to dashboard in 2 seconds...</p><p><a href='/today' style='color:#58a6ff;'>Click here if not redirected</a></p></body></html>
+    """, 200
+
+@app.route('/webhook', methods=['GET', 'POST'])
+@app.route('/telegram-webhook', methods=['GET', 'POST'])
+def telegram_webhook_endpoint():
+    global AUTO_TRADING_ENABLED
+    if request.method == 'GET':
+        return "Webhook endpoint active", 200
+    try:
+        data = request.get_json(force=True, silent=True)
+        if not data: return "OK", 200
+        msg = data.get('message') or data.get('channel_post') or data.get('edited_message')
+        if not msg: return "OK", 200
+        raw_text = msg.get('text', '').strip()
+        cmd = raw_text.lower().split()[0].split('@')[0] if raw_text else ''
+
+        if cmd in ['/stop', 'stop', '/pause', 'pause', 'off']:
+            AUTO_TRADING_ENABLED = False
+            st = load_state()
+            st["auto_trading_enabled"] = False
+            save_state(st)
+            send_telegram_message(
+                "🛑 <b>AUTO-TRADING PAUSED VIA COMMAND!</b>\n\n"
+                "• Auto-order execution on CoinDCX is now <b>OFF</b>.\n"
+                "• Scanner will only send notifications.\n"
+                "• Send <code>/start</code> anytime to resume auto-execution."
+            )
+        elif cmd in ['/start', 'start', '/resume', 'resume', 'on']:
+            AUTO_TRADING_ENABLED = True
+            st = load_state()
+            st["auto_trading_enabled"] = True
+            save_state(st)
+            send_telegram_message(
+                "🟢 <b>AUTO-TRADING ACTIVATED VIA COMMAND!</b>\n\n"
+                "• Auto-order execution on CoinDCX is now <b>LIVE</b>.\n"
+                "• High-conviction CPR setups will execute automatically.\n"
+                "• Send <code>/stop</code> anytime to pause."
+            )
+        elif cmd in ['/status', 'status']:
+            daily_count = get_today_executed_trades_count()
+            with active_trades_lock:
+                active_list = list(ACTIVE_TRADES.keys())
+            send_telegram_message(
+                f"📊 <b>BOT SYSTEM STATUS:</b>\n\n"
+                f"• <b>Auto-Trading:</b> {'🟢 ACTIVE (LIVE)' if AUTO_TRADING_ENABLED else '🛑 PAUSED'}\n"
+                f"• <b>Today's Trades:</b> {daily_count}\n"
+                f"• <b>Active Positions:</b> {', '.join(active_list) if active_list else 'None'}\n"
+                f"• <b>Universe:</b> Tradeable Crypto Universe (CPR Engine)"
+            )
+        elif cmd in ['/today', '/daily', '/report', 'today', 'daily', 'report', '/history']:
+            send_telegram_message(generate_daily_summary())
+    except Exception as e:
+        print(f"Webhook processing error: {e}")
+    return "OK", 200
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def catch_all(path):
     clean_p = path.strip().strip('/')
+    if clean_p.lower() in ['start', 'on', 'resume']:
+        return start_auto_trading()
+    if clean_p.lower() in ['stop', 'off', 'pause']:
+        return stop_auto_trading()
     if clean_p.lower() == 'yesterday':
         yesterday_str = (get_ist_now() - timedelta(days=1)).strftime("%d-%m-%Y")
         return today_report_endpoint(date_override=yesterday_str)
@@ -888,244 +1040,240 @@ def run_scan():
                 continue
 
             with active_trades_lock:
-                if symbol in ACTIVE_TRADES: continue
+                if symbol in ACTIVE_TRADES:
+                    continue
 
-            # Fetch 15M candles and Daily candles
-            m15_klines = fetch_klines(symbol, '15m', 40)
-            daily_klines = fetch_klines(symbol, '1d', 4)
-            if not m15_klines or not daily_klines or len(m15_klines) < 25 or len(daily_klines) < 2:
+            # Fetch 15m and Daily Candles
+            m15 = fetch_klines(symbol, "15m", limit=35)
+            daily = fetch_klines(symbol, "1d", limit=4)
+            if not m15 or not daily or len(m15) < 20 or len(daily) < 2:
                 continue
 
-            cmp = m15_klines[-1][4]
-            cpr = calculate_cpr_levels(daily_klines)
+            cmp = m15[-1][4]
+            cpr = calculate_cpr_levels(daily)
             if not cpr: continue
 
-            # Bias check: Never Long below BC or inside CPR chop zone
-            if cmp <= cpr['tc']:
+            # Core CPR Breakout / Bounce Logic
+            above_tc = cmp > cpr['tc']
+            in_cpr_bounce = (cmp >= cpr['pivot'] and m15[-1][3] <= cpr['bc'])
+            if not (above_tc or in_cpr_bounce):
                 continue
 
-            # Supertrend 15M check
-            st_dir, _ = calculate_supertrend(m15_klines)
-            if st_dir != 1: continue
-
-            # Volume surge confirmation (>= 1.25x average volume)
-            vol_spike = calculate_volume_spike(m15_klines)
-            if vol_spike < 1.25: continue
-
-            # 15M EMA 20 Alignment
-            close_prices = [k[4] for k in m15_klines]
-            ema20 = calculate_ema(close_prices, 20)
-            if cmp < ema20 * 0.998: continue
-
-            # RSI Confirmation (Healthy 48 to 70 range)
-            rsi_val = calculate_rsi(close_prices)
-            if rsi_val < 48 or rsi_val > 70: continue
-
-            # Price Action Trigger:
-            # 1. Breakout: Prev candle was below/testing TC, current candle closed cleanly ABOVE TC
-            prev_close = m15_klines[-2][4]
-            curr_close = m15_klines[-1][4]
-            curr_low = m15_klines[-1][3]
-            curr_open = m15_klines[-1][1]
-
-            is_true_breakout = (prev_close <= cpr['tc'] * 1.002) and (curr_close > cpr['tc'])
-            # 2. Retest & Bounce: Low tested CPR and candle closed green above TC
-            is_cpr_bounce = (curr_low <= cpr['tc'] * 1.003) and (curr_low >= cpr['bc'] * 0.997) and (curr_close > curr_open)
-
-            if not (is_true_breakout or is_cpr_bounce):
+            # Volume Surge Filter: >= 1.25x
+            vol_spike = calculate_volume_spike(m15)
+            if vol_spike < 1.25:
                 continue
 
-            # Real Confluence Score Calculation
-            score = 0
-            if is_true_breakout: score += 30
-            elif is_cpr_bounce: score += 25
+            # Trend Confirmation: SuperTrend & EMA20
+            st_dir, _ = calculate_supertrend(m15)
+            if st_dir != 1:
+                continue
 
-            if cpr['is_narrow']: score += 25
-            elif cpr['is_ascending']: score += 20
-            elif cpr['is_inside']: score += 20
+            closes_15 = [k[4] for k in m15]
+            ema20 = calculate_ema(closes_15, 20)
+            if cmp < ema20:
+                continue
 
-            if vol_spike >= 1.75: score += 25
-            elif vol_spike >= 1.25: score += 20
+            # RSI Quality Filter (48 to 68)
+            rsi = calculate_rsi(closes_15, 14)
+            if not (48.0 <= rsi <= 68.0):
+                continue
 
-            if st_dir == 1: score += 15
-            if 50 <= rsi_val <= 65: score += 10
+            # Confluence Scoring Engine
+            score = 70
+            if above_tc: score += 10
+            if vol_spike >= 1.5: score += 10
+            elif vol_spike >= 1.25: score += 5
+            if cpr['is_narrow']: score += 10
+            if cpr['is_ascending']: score += 5
 
             if score >= 80:
-                setup_name = "TRUE CPR BREAKOUT 🚀" if is_true_breakout else "CPR RETEST & BOUNCE 🛡️"
                 candidates.append({
                     'symbol': symbol,
-                    'score': score,
-                    'setup_name': setup_name,
                     'cmp': cmp,
                     'cpr': cpr,
                     'vol_spike': vol_spike,
-                    'm15_low': curr_low
+                    'rsi': rsi,
+                    'score': score
                 })
-        except Exception: pass
+        except Exception as e:
+            print(f"Error scanning {symbol}: {e}")
 
+    if not candidates:
+        return
+
+    # Sort Candidates by Highest Confluence Score
     candidates.sort(key=lambda x: x['score'], reverse=True)
-    coin_margin = 1000.0
-    lev_num = 7
 
-    for cand in candidates:
-        with active_trades_lock:
-            if len(ACTIVE_TRADES) >= 3: break
+    with active_trades_lock:
+        slots_available = 3 - len(ACTIVE_TRADES)
+    
+    selected_trades = candidates[:slots_available]
 
-        symbol = cand['symbol']
+    for cand in selected_trades:
+        sym = cand['symbol']
         cmp = cand['cmp']
         cpr = cand['cpr']
         vol_spike = cand['vol_spike']
+        rsi = cand['rsi']
         score = cand['score']
-        setup_name = cand['setup_name']
 
-        # Structural Stop Loss (Below Bottom Central or 15M Swing Low, capped at -1.2%)
-        structural_sl = min(cpr['bc'] * 0.997, cand['m15_low'] * 0.997)
-        hard_floor_sl = cmp * 0.9880 # 1.2% maximum price stop loss
-        sl = round(max(hard_floor_sl, structural_sl), 4)
+        # Determine Floor Stop Loss (Maximum -0.95%)
+        cpr_support = cpr['bc']
+        sl_from_cpr = cpr_support * 0.998
+        sl_floor = cmp * (1.0 - 0.0095)
+        final_sl = round(max(sl_from_cpr, sl_floor), 4)
 
-        # Target (TP1): R1 / R2 / +3.2% move
-        tp1 = round(max(cpr['r1'], cmp * 1.032), 4)
-        be_trigger = round(cmp * 1.0085, 4)
+        # 1:3.3 Risk-Reward Target (+3.2% move = +22.4% ROE at 7x)
+        tp1 = round(cmp * 1.032, 4)
+        qty = calculate_step_size_quantity(1000.0, cmp, 7)
 
-        # CORE PRINCIPLE: Never block execution loop. Fire directly to CoinDCX!
+        # ----------------------------------------------------------------------
+        # EXECUTE DIRECTLY TO COINDCX (Non-blocking direct execution)
+        # ----------------------------------------------------------------------
+        order_res = None
         if AUTO_TRADING_ENABLED:
-            trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=coin_margin, leverage=lev_num)
-        else:
-            trade_res = {'success': False, 'error': 'Auto-trading PAUSED via Mobile Telegram command (/stop).'}
+            order_res = execute_coindcx_futures_trade(symbol=sym, side="buy", cmp=cmp, leverage=7, margin_inr=1000.0)
+            
+            # Broadcast Full Transparency to Telegram
+            if order_res.get('success'):
+                order_id_str = str(order_res.get('order_id', 'FILLED'))
+                log_trade_event(sym, "EXECUTED", {
+                    'cmp': cmp,
+                    'quantity': qty,
+                    'order_id': order_id_str,
+                    'margin': 1000.0,
+                    'score': score
+                })
+                send_telegram_message(
+                    f"🟢 <b>COINDCX LIVE ORDER FILLED! ⚡</b>\n\n"
+                    f"<b>Pair:</b> <code>{sym}</code>\n"
+                    f"• <b>Status:</b> FILLED ON EXCHANGE ✅\n"
+                    f"• <b>Order ID:</b> <code>{order_id_str}</code>\n"
+                    f"• <b>Live Entry CMP:</b> <code>${cmp}</code>\n"
+                    f"• <b>Quantity:</b> <code>{qty}</code> (₹1,000 Margin @ 7x)\n"
+                    f"• <b>TP (+3.2%):</b> <code>${tp1}</code> | <b>SL (-0.95%):</b> <code>${final_sl}</code>"
+                )
+                
+                # Apply Native CoinDCX TP/SL on the exchange
+                time.sleep(1.0)
+                pos = fetch_coindcx_position_details(sym)
+                if pos and pos.get('position_id'):
+                    apply_coindcx_native_tpsl(pos['pair'], pos['position_id'], tp1, final_sl)
+            else:
+                err_msg = order_res.get('message', 'Unknown Error')
+                send_telegram_message(
+                    f"⚠️ <b>COINDCX EXCHANGE ORDER NOTICE</b>\n\n"
+                    f"<b>Pair:</b> <code>{sym}</code>\n"
+                    f"• <b>Criteria:</b> MET (Score: {score}/100)\n"
+                    f"• <b>Notice:</b> <code>{err_msg}</code>\n"
+                    f"<i>Scanner remains active and transparent.</i>"
+                )
 
-        # CORE PRINCIPLE: Always broadcast full transparency to Telegram—trader is NEVER left in the dark!
-        if trade_res.get('success'):
-            order_id = trade_res.get('order_id')
-            qty = trade_res.get('quantity')
-            log_trade_event(symbol, "EXECUTED", {"cmp": cmp, "quantity": qty, "order_id": order_id, "margin": coin_margin})
+        # Register in State
+        with active_trades_lock:
+            ACTIVE_TRADES[sym] = {
+                'entry_price': cmp,
+                'highest_price': cmp,
+                'initial_qty': qty,
+                'remaining_qty': qty,
+                'leverage': 7,
+                'stage': 1,
+                'sl': final_sl,
+                'tp1': tp1,
+                'order_id': order_res.get('order_id', 'PAPER') if order_res else 'PAPER',
+                'entry_time': time.time(),
+                'last_check_time': time.time()
+            }
+        save_active_trades()
 
-            with active_trades_lock:
-                ACTIVE_TRADES[symbol] = {
-                    'entry_price': cmp,
-                    'total_qty': qty,
-                    'remaining_qty': qty,
-                    'tp1': tp1,
-                    'sl': sl,
-                    'be_trigger': be_trigger,
-                    'is_be_active': False,
-                    'highest_price': cmp,
-                    'leverage': lev_num,
-                    'entry_time': time.time()
-                }
-            save_active_trades()
+        # Update Cooldown State
+        curr_state = load_state()
+        curr_state[f"last_traded_{sym}"] = time.time()
+        save_state(curr_state)
 
-            curr_state[f"last_traded_{symbol}"] = time.time()
-            save_state(curr_state)
-
-            # Auto place Native CoinDCX TP/SL in background thread
-            threading.Thread(target=auto_place_coindcx_native_tpsl, args=(symbol, tp1, sl), daemon=True).start()
-
-            msg = (
-                f"🟢 <b>HIGH-CONVICTION CPR SIGNAL!</b>\n\n"
-                f"<b>Pair:</b> <code>{symbol}</code> (Futures)\n"
-                f"<b>Setup:</b> <b>{setup_name}</b>\n"
-                f"<b>CPR Structure:</b> <code>{cpr['cpr_type']}</code>\n"
-                f"🔥 <b>Confluence Score:</b> <code>{score} / 100</code>\n"
-                f"📊 <b>Volume Surge:</b> <code>{vol_spike:.2f}x Average</code>\n\n"
-                f"⚙️ <b>Trade Parameters:</b>\n"
-                f"• <b>Leverage:</b> <code>{lev_num}x (Isolated)</code>\n"
-                f"• <b>Entry CMP:</b> <code>${cmp}</code>\n"
-                f"🛑 <b>CPR Structural SL:</b> <code>${sl}</code>\n"
-                f"🎯 <b>Target (TP1):</b> <code>${tp1}</code> (+3.2% move / +22.4% ROE)\n"
-                f"🛡️ <b>Breakeven Lock:</b> At +6.0% ROE (+0.85% move)\n\n"
-                f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
-                f"• Order ID: <code>{order_id}</code>\n"
-                f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}"
-            )
-            send_telegram_message(msg)
-            break
-        else:
-            # Full transparency broadcast on CoinDCX notice/failure!
-            err_reason = trade_res.get('error', 'Unknown Error')
-            log_trade_event(symbol, "CANCELLED", {"cmp": cmp, "error": err_reason})
-            curr_state[f"last_traded_{symbol}"] = time.time()
-            save_state(curr_state)
-
-            notice_msg = (
-                f"🟢 <b>CPR SIGNAL DETECTED: {symbol}</b>\n\n"
-                f"<b>Setup:</b> {setup_name} (Score: {score}/100)\n"
-                f"<b>CMP:</b> ${cmp} | <b>Target:</b> ${tp1} | <b>SL:</b> ${sl}\n\n"
-                f"⚠️ <b>COINDCX EXECUTION NOTICE:</b>\n"
-                f"<code>{err_reason}</code>\n\n"
-                f"<i>Cooldown locked for 3 hours to prevent fee drain.</i>"
-            )
-            send_telegram_message(notice_msg)
+        # Broadcast Signal Card to Telegram
+        send_telegram_message(
+            f"🎯 <b>NEW HIGH-CONFLUENCE CPR SIGNAL</b>\n\n"
+            f"<b>Pair:</b> <code>{sym}</code>\n"
+            f"<b>Direction:</b> 🟢 BUY / LONG (7x Isolated)\n"
+            f"<b>Confluence Score:</b> <code>{score} / 100</code> 👑\n\n"
+            f"📊 <b>Market Diagnostics:</b>\n"
+            f"• <b>CMP:</b> <code>${cmp}</code>\n"
+            f"• <b>CPR Structure:</b> {cpr['cpr_type']}\n"
+            f"• <b>Volume Spike:</b> <code>{vol_spike:.2f}x</code> Surge\n"
+            f"• <b>RSI (15M):</b> <code>{rsi:.1f}</code> (Optimal Momentum)\n\n"
+            f"🎯 <b>Trade Plan:</b>\n"
+            f"• <b>Target (TP1):</b> <code>${tp1}</code> (+3.2% move / +22.4% ROE)\n"
+            f"• <b>Stop Loss:</b> <code>${final_sl}</code> (-0.95% floor / -6.6% ROE)\n"
+            f"• <b>Risk-Reward:</b> 1 : 3.37 🏆\n"
+            f"• <b>Auto-Execution:</b> {'🟢 LIVE ON COINDCX' if AUTO_TRADING_ENABLED else '🛑 OFF (Signal Only)'}"
+        )
 
 # ==============================================================================
-# 11. REAL-TIME POSITION MONITORING & AUTOMATED EXITS
+# 11. ACTIVE TRADE MONITOR: TRAILING PROFIT LOCK & CAPITAL PROTECTION
 # ==============================================================================
 def monitor_active_positions():
-    time.sleep(5)
+    global ACTIVE_TRADES
     while True:
         try:
             with active_trades_lock:
-                symbols_to_check = list(ACTIVE_TRADES.keys())
-            
-            for symbol in symbols_to_check:
+                symbols = list(ACTIVE_TRADES.keys())
+
+            for symbol in symbols:
                 try:
-                    time.sleep(0.3)
-                    m1_klines = fetch_klines(symbol, '1m', 3)
-                    if not m1_klines: continue
-                    cmp = m1_klines[-1][4]
-                    
                     with active_trades_lock:
-                        if symbol not in ACTIVE_TRADES: continue
-                        trade = ACTIVE_TRADES[symbol]
-                    
+                        trade = ACTIVE_TRADES.get(symbol)
+                    if not trade: continue
+
+                    m15 = fetch_klines(symbol, "15m", limit=3)
+                    if not m15: continue
+                    cmp = m15[-1][4]
+
                     entry_p = trade['entry_price']
-                    entry_time = trade.get('entry_time', time.time())
-                    highest_peak = trade.get('highest_price', entry_p)
-                    raw_pnl_pct = ((cmp - entry_p) / entry_p) * trade.get('leverage', 7) * 100
+                    highest_p = max(trade.get('highest_price', entry_p), cmp)
+                    trade['highest_price'] = highest_p
 
-                    if cmp > highest_peak:
-                        highest_peak = cmp
-                        with active_trades_lock: trade['highest_price'] = highest_peak
-                        save_active_trades()
-
-                    # 1. 75-MINUTE STAGNATION GUARD
-                    if time.time() - entry_time >= 4500:
+                    # 1. TIME-BASED STAGNATION STOP: Exit flat trades after 60 mins
+                    if time.time() - trade['entry_time'] > 3600 and cmp <= entry_p * 1.002:
                         live_qty = fetch_coindcx_live_position_qty(symbol)
                         sell_qty = min(live_qty, trade['remaining_qty']) if live_qty > 0 else trade['remaining_qty']
                         execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=sell_qty)
                         with active_trades_lock: ACTIVE_TRADES.pop(symbol, None)
                         save_active_trades()
-                        log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": round(raw_pnl_pct, 1), "sl_type": "75-MIN STAGNATION TIME-STOP ⏱️"})
+                        realized_pnl_pct = ((cmp - entry_p) / entry_p) * 7 * 100
+                        log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": round(realized_pnl_pct, 1), "sl_type": "STAGNATION TIME-STOP ⏱️"})
                         send_telegram_message(
-                            f"⏱️ <b>75-MINUTE TIME-STOP EXECUTED!</b>\n\n"
+                            f"⏱️ <b>TIME-BASED STAGNATION EXIT</b>\n\n"
                             f"<b>Pair:</b> <code>{symbol}</code>\n"
-                            f"• <b>Exit Price:</b> <code>${cmp}</code>\n"
-                            f"• <b>Result:</b> <code>{raw_pnl_pct:+.1f}% ROE</code>\n"
-                            f"• Capital released for fresh setups."
+                            f"• Position exited after 60 mins of flat momentum to free capital.\n"
+                            f"• <b>PnL:</b> <code>{realized_pnl_pct:+.1f}% ROE</code>"
                         )
                         continue
 
-                    # 2. BREAKEVEN PROFIT LOCK (+6.0% ROE)
-                    if not trade.get('is_be_active', False) and cmp >= trade.get('be_trigger', entry_p * 1.0085):
-                        with active_trades_lock:
-                            trade['is_be_active'] = True
-                            trade['sl'] = round(entry_p * 1.001, 4)
+                    # 2. STAGE 1 PROFIT LOCK: At +1.0% Gain -> Trail SL to Entry + 0.15% (Zero Risk)
+                    if trade['stage'] == 1 and cmp >= entry_p * 1.010:
+                        trade['stage'] = 2
+                        new_sl = round(entry_p * 1.0015, 4)
+                        trade['sl'] = new_sl
+                        with active_trades_lock: ACTIVE_TRADES[symbol] = trade
                         save_active_trades()
+                        
+                        pos = fetch_coindcx_position_details(symbol)
+                        if pos and pos.get('position_id'):
+                            apply_coindcx_native_tpsl(pos['pair'], pos['position_id'], trade['tp1'], new_sl)
+
                         send_telegram_message(
-                            f"🛡️ <b>BREAKEVEN PROFIT LOCK ACTIVATED! 🚀</b>\n\n"
+                            f"🛡️ <b>BREAKEVEN PROFIT LOCK ACTIVATED!</b>\n\n"
                             f"<b>Pair:</b> <code>{symbol}</code>\n"
-                            f"• Gain Reached: +6.0% ROE (+0.85% move)\n"
-                            f"• Stop Loss shifted to <b>${entry_p * 1.001:.4f}</b> (Zero Risk Trade)!"
+                            f"• Coin reached +1.0% gain (+7.0% ROE).\n"
+                            f"• Stop Loss moved to <code>${new_sl}</code> (+0.15% profit lock).\n"
+                            f"• This position is now <b>100% RISK-FREE</b>! 🏆"
                         )
 
-                    # 3. 3-STAGE DYNAMIC TRAILING
-                    peak_gain_pct = (highest_peak - entry_p) / entry_p
-                    if peak_gain_pct >= 0.0180: # Stage 3 (+12.6% ROE)
-                        trailing_sl = round(highest_peak * 0.9940, 4)
-                        if trailing_sl > trade['sl']:
-                            with active_trades_lock: trade['sl'] = trailing_sl
-                            save_active_trades()
-                    elif peak_gain_pct >= 0.0120: # Stage 2 (+8.4% ROE)
-                        stage2_sl = round(entry_p * 1.0060, 4)
+                    # 3. STAGE 2 DYNAMIC TRAILING: Protect gains when near target
+                    if trade['stage'] == 2:
+                        stage2_sl = round(highest_p * 0.993, 4)
                         if stage2_sl > trade['sl']:
                             with active_trades_lock: trade['sl'] = stage2_sl
                             save_active_trades()
@@ -1238,6 +1386,7 @@ def run_telegram_command_listener():
                                     "• Auto-order execution on CoinDCX is now <b>OFF</b>.\n"
                                     "• Scanner will only send notifications.\n"
                                     "• Send <code>/start</code> anytime to resume auto-execution."
+                                Oddly,
                                 ))
                             elif cmd in ['/start', 'start', '/resume', 'resume', 'on']:
                                 AUTO_TRADING_ENABLED = True
@@ -1317,7 +1466,7 @@ def start_background_loop():
         "• <b>Execution:</b> Non-blocking direct order execution\n"
         "• <b>Anti-Churn:</b> 3-Hour Cooldown & Full-Day Ban on Stop-Loss Coins\n"
         "• <b>Transparency:</b> Every fill & exchange notice broadcasted\n"
-        "• <b>Mobile Commands:</b> /stop, /start, /status, /today, /tpsl"
+        "• <b>Controls:</b> Web 1-Click Buttons + Telegram /stop & /start"
     )
 
 start_background_loop()
