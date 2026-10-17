@@ -1684,7 +1684,7 @@ def run_telegram_command_listener():
                                     "• Auto-order execution on CoinDCX is now <b>OFF</b>.\n"
                                     "• Scanner will only send notifications.\n"
                                     "• Send <code>/start</code> anytime to resume auto-execution."
-                                Crocodile))
+                                ))
                             elif cmd in ['/start', 'start', '/resume', 'resume', 'on']:
                                 AUTO_TRADING_ENABLED = True
                                 st = load_state()
