@@ -184,7 +184,7 @@ def generate_daily_summary(target_date_str=None):
 
     day_events = [e for e in all_events if e.get('date') == target_date_str]
     executed = [e for e in day_events if e.get('type') == 'EXECUTED']
-    closed = [e for e in day_events if e.get('type') == 'CLOSED']
+    closed = [e for e in day_events if e.get('type') in ['CLOSED', 'CLOSED_MANUALLY']]
 
     wins = [c for c in closed if c.get('details', {}).get('realized_pnl_pct', 0) > 0]
     total_closed = len(closed)
@@ -219,7 +219,7 @@ def generate_daily_summary(target_date_str=None):
             sym = cl.get('symbol', 'UNKNOWN')
             dt = cl.get('details', {})
             pnl_val = dt.get('realized_pnl_pct', 0)
-            sl_type = dt.get('sl_type', 'CLOSED')
+            sl_type = dt.get('sl_type', 'MANUAL EXIT')
             lines.append(f"{idx}. <b>{sym}</b> | PnL: <code>{pnl_val:+.1f}% ROE</code> | Type: {sl_type}")
 
     return "\n".join(lines)
@@ -419,26 +419,6 @@ def clear_telegram_webhooks():
             with urllib.request.urlopen(req, context=ctx, timeout=5) as resp: pass
         except Exception: pass
 
-def format_price_clean(val):
-    if val is None: return "0.0"
-    try:
-        f = float(val)
-        if f >= 100: return f"{f:.2f}"
-        elif f >= 1: return f"{f:.4f}"
-        elif f >= 0.001: return f"{f:.6f}"
-        else: return f"{f:.8f}"
-    except Exception: return str(val)
-
-def round_price_clean(val):
-    if val is None: return 0.0
-    try:
-        f = float(val)
-        if f >= 100: return round(f, 2)
-        elif f >= 1: return round(f, 4)
-        elif f >= 0.001: return round(f, 6)
-        else: return round(f, 8)
-    except Exception: return val
-
 def send_telegram_message(text, parse_mode="HTML"):
     candidate_tokens = list(dict.fromkeys([
         TOKEN,
@@ -450,19 +430,16 @@ def send_telegram_message(text, parse_mode="HTML"):
     for tok in candidate_tokens:
         for mode in [parse_mode, None]:
             try:
-                if mode == "HTML":
-                    out_text = re.sub(r'&(?!(?:amp|lt|gt|quot);)', '&amp;', text)
-                else:
-                    out_text = re.sub(r'<[^>]+>', '', text)
-
                 url = f"https://api.telegram.org/bot{tok}/sendMessage"
-                payload = {'chat_id': CHAT_ID, 'text': out_text}
+                payload = {'chat_id': CHAT_ID, 'text': text}
                 if mode: payload['parse_mode'] = mode
                 data = urllib.parse.urlencode(payload).encode('utf-8')
                 req = urllib.request.Request(url, data=data, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
                     if resp.status == 200: return True
             except Exception:
+                if mode == 'HTML':
+                    text = re.sub(r'<[^>]+>', '', text)
                 continue
     return False
 
@@ -471,13 +448,7 @@ def send_telegram_message(text, parse_mode="HTML"):
 # ==============================================================================
 def extract_pos_qty(p):
     if not isinstance(p, dict): return 0.0
-    for k in ['active_pos', 'open_position_qty', 'net_position', 'current_position', 'current_pos', 'open_pos', 'active_units']:
-        val = p.get(k)
-        if val is not None:
-            try:
-                return abs(float(val))
-            except (ValueError, TypeError): pass
-    for k in ['quantity', 'size', 'units', 'position_qty', 'total_quantity']:
+    for k in ['quantity', 'active_pos', 'active_units', 'open_position_qty', 'size', 'total_quantity']:
         val = p.get(k)
         if val is not None:
             try:
@@ -489,14 +460,8 @@ def extract_pos_qty(p):
 def is_position_open(p):
     if not isinstance(p, dict): return False
     st = str(p.get('status', '')).lower()
-    if st in ['closed', 'completed', 'canceled', 'cancelled', 'liquidated', 'expired', 'inactive', '0', 'false']:
-        return False
-    qty = extract_pos_qty(p)
-    if qty <= 0.0:
-        return False
-    if st in ['open', 'active', 'opened', '1', 'true']:
-        return True
-    return qty > 0.0
+    if st in ['open', 'active', 'opened']: return True
+    return extract_pos_qty(p) > 0
 
 def fetch_all_coindcx_live_positions():
     if not COINDCX_API_KEY or not COINDCX_SECRET_KEY: return []
@@ -637,13 +602,12 @@ def recover_live_coindcx_positions():
                     if entry_p <= 0:
                         k1 = fetch_klines(sym, '1m', 1)
                         entry_p = k1[-1][4] if k1 else 1.0
-                    lev = int(p.get('leverage', 7))
 
                     # 1. Stop Loss EQUAL to TP (1:1 equal distance: 3.2% move)
-                    tp_val = round_price_clean(entry_p * 1.032)
-                    sl_val = round_price_clean(entry_p * 0.9680)
+                    tp_val = round(entry_p * 1.032, 4)
+                    sl_val = round(entry_p * 0.9680, 4)
 
-                    # 2. Check if user already customized SL/TP on CoinDCX directly
+                    # 2. Check if user already set manual SL/TP directly on CoinDCX
                     exch_tp, exch_sl = extract_exchange_tpsl(p)
                     is_manual = False
                     if exch_tp or exch_sl:
@@ -651,31 +615,29 @@ def recover_live_coindcx_positions():
                         if exch_tp: tp_val = exch_tp
                         if exch_sl: sl_val = exch_sl
 
-                    be_val = round_price_clean(entry_p * 1.0085)
                     ACTIVE_TRADES[sym] = {
                         'entry_price': entry_p,
                         'total_qty': active_u,
                         'remaining_qty': active_u,
                         'tp1': tp_val,
                         'sl': sl_val,
-                        'system_tp': round_price_clean(entry_p * 1.032),
-                        'system_sl': round_price_clean(entry_p * 0.9680),
-                        'user_manual_tpsl': is_manual,
-                        'be_trigger': be_val,
+                        'initial_tp': tp_val,
+                        'initial_sl': sl_val,
+                        'manual_override': is_manual,
+                        'be_trigger': round(entry_p * 1.0085, 4),
                         'is_be_active': False,
-                        'leverage': lev,
+                        'highest_price': entry_p,
+                        'leverage': int(p.get('leverage', 7)),
                         'entry_time': time.time()
                     }
-                    save_active_trades()
-                    status_note = "👤 Manual CoinDCX TP/SL Active (System Stoploss PAUSED)" if is_manual else "1:1 Equal Risk/Reward (SL = TP)"
                     send_telegram_message(
                         f"🔄 <b>AUTO-RECOVERED ACTIVE POSITION:</b>\n\n"
                         f"• <b>Pair:</b> <code>{p_pair}</code> ({sym})\n"
-                        f"• <b>Quantity:</b> <code>{active_u}</code> | Leverage: <code>{lev}x</code>\n"
-                        f"• <b>Entry Price:</b> <code>${format_price_clean(entry_p)}</code>\n"
-                        f"• <b>Target (TP1):</b> <code>${format_price_clean(tp_val)}</code> (+3.2%)\n"
-                        f"• <b>Stop Loss (SL):</b> <code>${format_price_clean(sl_val)}</code> (-3.2% Equal to TP)\n"
-                        f"• <b>Mode:</b> {status_note}"
+                        f"• <b>Quantity:</b> <code>{active_u}</code>\n"
+                        f"• <b>Entry Price:</b> <code>${entry_p}</code>\n"
+                        f"• <b>Target (TP):</b> <code>${tp_val}</code>\n"
+                        f"• <b>Stop Loss (SL):</b> <code>${sl_val}</code> (1:1 Equal to TP)\n"
+                        f"• <b>Control:</b> {'👤 MANUAL (System Stoploss PAUSED)' if is_manual else '🤖 SYSTEM ACTIVE'}"
                     )
     save_active_trades()
 
@@ -694,7 +656,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
     # STRICT NO-SHORT-TRADE POLICY:
     # A SELL order is ONLY allowed to close an active LONG position!
     # Under NO circumstances can a SHORT trade ever be opened.
-    # ==========================================================
+    # ==========================================================================
     if side.lower() == "sell":
         live_long_qty = fetch_coindcx_live_position_qty(symbol)
         if live_long_qty <= 0.0:
@@ -715,11 +677,6 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=1.0, margin_inr=1000.0
             position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
             raw_qty = position_value_usdt / cmp if cmp > 0 else 0.1
             
-            # 1000-MULTIPLIER CONTRACT FIX (BONK, PEPE, SHIB, FLOKI, etc.)
-            # On CoinDCX futures, 1 contract represents 1,000 tokens!
-            if str(futures_coin).startswith("1000"):
-                raw_qty = raw_qty / 1000.0
-
             if raw_coin == 'BTC': quantity = round(max(0.001, raw_qty), 3)
             elif raw_coin in ['ETH', 'SOL']: quantity = round(max(0.1, raw_qty), 1)
             elif raw_qty >= 50: quantity = float(int(round(raw_qty)))
@@ -817,10 +774,10 @@ def apply_coindcx_native_tpsl(pair, position_id, target_price, stop_loss_price):
     if not COINDCX_API_KEY or not COINDCX_SECRET_KEY: return False
     url = "https://api.coindcx.com/exchange/v1/derivatives/futures/positions/create_tpsl"
     
-    tp_str = format_price_clean(target_price)
-    sl_str = format_price_clean(stop_loss_price)
-    tp_lim_str = format_price_clean(target_price * 0.999)
-    sl_lim_str = format_price_clean(stop_loss_price * 0.995)
+    tp_str = f"{target_price:.4f}" if target_price < 1.0 else f"{target_price:.2f}"
+    sl_str = f"{stop_loss_price:.4f}" if stop_loss_price < 1.0 else f"{stop_loss_price:.2f}"
+    tp_lim_str = f"{target_price * 0.999:.4f}" if target_price < 1.0 else f"{round(target_price * 0.999, 2):.2f}"
+    sl_lim_str = f"{stop_loss_price * 0.995:.4f}" if stop_loss_price < 1.0 else f"{round(stop_loss_price * 0.995, 2):.2f}"
     ts = int(time.time() * 1000)
 
     payload_variants = [
@@ -866,20 +823,17 @@ def auto_place_coindcx_native_tpsl(symbol, tp_price, sl_price):
                     f"🎯 <b>NATIVE COINDCX TP/SL APPLIED AUTOMATICALLY!</b>\n\n"
                     f"• <b>Pair:</b> <code>{pos['pair']}</code>\n"
                     f"• <b>Position ID:</b> <code>{pos['position_id']}</code>\n"
-                    f"• <b>Target (TP):</b> <code>${format_price_clean(tp_price)}</code> (+3.2%)\n"
-                    f"• <b>Stop Loss (SL):</b> <code>${format_price_clean(sl_price)}</code> (-3.2% EQUAL TO TP)\n"
-                    f"⚖️ <b>Risk-to-Reward:</b> <code>1:1 (SL equal to TP)</code>\n"
-                    f"✅ <i>Populated directly in your CoinDCX TP / SL column! Exchange safety active.</i>\n"
-                    f"💡 <i>Manual Update: If you edit SL or TP on CoinDCX directly, system stoploss will automatically pause to follow your wish!</i>"
+                    f"• <b>Target (TP):</b> <code>${tp_price}</code> (+3.2%)\n"
+                    f"• <b>Stop Loss (SL):</b> <code>${sl_price}</code> (-3.2% [1:1 EQUAL])\n"
+                    f"✅ <i>Populated directly in your CoinDCX TP / SL column! Exchange safety active.</i>"
                 )
                 return True
     return False
 
 def sync_all_open_positions_tpsl():
     """
-    Continuous background synchronizer ensuring active positions have Native CoinDCX TP/SL fitted.
-    RESPECTS MANUAL SETTINGS: If user updated SL or TP directly on CoinDCX or flagged manual,
-    this function NEVER overwrites it!
+    Continuous background synchronizer ensuring all active positions have Native CoinDCX TP/SL fitted.
+    Respects manual user overrides - will NEVER overwrite user's custom settings.
     """
     pos_list = fetch_all_coindcx_live_positions()
     if not pos_list or not isinstance(pos_list, list): return []
@@ -890,32 +844,16 @@ def sync_all_open_positions_tpsl():
         p_pair = str(p.get('pair', p.get('market', p.get('symbol', '')))).upper()
         raw_c = p_pair.replace("B-", "").replace("_USDT", "").replace("USDT", "").replace("1000", "")
         sym = f"{raw_c}-USDT"
-        entry_p = float(p.get('avg_price', 0) or p.get('entry_price', 0) or p.get('price', 0))
+        entry_p = float(p.get('avg_price', p.get('entry_price', 0)))
         if entry_p <= 0: continue
 
         with active_trades_lock:
             trade = ACTIVE_TRADES.get(sym)
-            if trade and trade.get('user_manual_tpsl', False):
-                # User manually updated SL/TP on CoinDCX -> DO NOT OVERWRITE!
+            if trade and trade.get('manual_override', False):
+                # User manually updated SL/TP on CoinDCX - NEVER overwrite!
                 continue
-
-            # Check if exchange already has TP or SL set
-            exch_tp, exch_sl = extract_exchange_tpsl(p)
-            if exch_tp is not None or exch_sl is not None:
-                # If exchange has values different from system default, flag manual & preserve!
-                if trade:
-                    sys_tp = trade.get('system_tp')
-                    sys_sl = trade.get('system_sl')
-                    if (exch_tp and sys_tp and abs(exch_tp - sys_tp) > 1e-5) or (exch_sl and sys_sl and abs(exch_sl - sys_sl) > 1e-5):
-                        trade['user_manual_tpsl'] = True
-                        if exch_tp: trade['tp1'] = exch_tp
-                        if exch_sl: trade['sl'] = exch_sl
-                # Already populated on CoinDCX -> keep user/exchange intact!
-                continue
-
-            # Calculate 1:1 equal TP and SL if not already set
-            tp_val = trade.get('tp1', round_price_clean(entry_p * 1.032)) if trade else round_price_clean(entry_p * 1.032)
-            sl_val = trade.get('sl', round_price_clean(entry_p * 0.9680)) if trade else round_price_clean(entry_p * 0.9680)
+            tp_val = trade.get('tp1', round(entry_p * 1.032, 4)) if trade else round(entry_p * 1.032, 4)
+            sl_val = trade.get('sl', round(entry_p * 0.9680, 4)) if trade else round(entry_p * 0.9680, 4)
 
         pos_id = p.get('id') or p.get('position_id') or p.get('positionId') or p.get('id_')
         if pos_id:
@@ -1175,6 +1113,16 @@ def telegram_webhook_endpoint():
                 "• High-conviction CPR setups will execute automatically.\n"
                 "• Send <code>/stop</code> anytime to pause."
             )
+        elif cmd in ['/manual', 'manual']:
+            with active_trades_lock:
+                for s in ACTIVE_TRADES:
+                    ACTIVE_TRADES[s]['manual_override'] = True
+            save_active_trades()
+            send_telegram_message(
+                "👤 <b>MANUAL MODE ACTIVATED FOR ACTIVE POSITIONS!</b>\n\n"
+                "• System stoploss, trailing, and time-stop are <b>PAUSED</b>.\n"
+                "• Your SL and TP set directly on CoinDCX will execute as per your wish."
+            )
         elif cmd in ['/status', 'status']:
             daily_count = get_today_executed_trades_count()
             with active_trades_lock:
@@ -1279,17 +1227,14 @@ def run_scan():
             is_true_breakout = ((prev_close <= cpr['tc'] * 1.002 or prev2_close <= cpr['tc'] * 1.002) and (curr_close > cpr['tc'])) or (cpr['is_narrow'] and curr_close > cpr['tc'] and curr_close > prev_close)
             # 2. Retest & Bounce: Low tested CPR and candle closed green above TC
             is_cpr_bounce = (curr_low <= cpr['tc'] * 1.004) and (curr_low >= cpr['bc'] * 0.995) and (curr_close > curr_open)
-            # 3. CPR Trend Continuation: Clean bullish hold above TC and EMA20
-            is_cpr_continuation = (curr_close > cpr['tc']) and (curr_close > ema20) and (curr_close >= prev_close * 0.998)
 
-            if not (is_true_breakout or is_cpr_bounce or is_cpr_continuation):
+            if not (is_true_breakout or is_cpr_bounce):
                 continue
 
             # Real Confluence Score Calculation
             score = 0
             if is_true_breakout: score += 30
             elif is_cpr_bounce: score += 25
-            elif is_cpr_continuation: score += 20
 
             if cpr['is_narrow']: score += 25
             elif cpr['is_ascending']: score += 20
@@ -1303,9 +1248,7 @@ def run_scan():
             if 50 <= rsi_val <= 65: score += 10
 
             if score >= 70:
-                if is_true_breakout: setup_name = "TRUE CPR BREAKOUT 🚀"
-                elif is_cpr_bounce: setup_name = "CPR RETEST AND BOUNCE 🛡️"
-                else: setup_name = "CPR TREND CONTINUATION 🚀"
+                setup_name = "TRUE CPR BREAKOUT 🚀" if is_true_breakout else "CPR RETEST & BOUNCE 🛡️"
                 candidates.append({
                     'symbol': symbol,
                     'score': score,
@@ -1333,12 +1276,12 @@ def run_scan():
         setup_name = cand['setup_name']
 
         # Target (TP1): R1 / R2 / +3.2% move
-        tp1 = round_price_clean(max(cpr['r1'], cmp * 1.032))
+        tp1 = round(max(cpr['r1'], cmp * 1.032), 4)
+        tp_distance = tp1 - cmp
 
         # Stop Loss: EQUAL TO TP (1:1 Risk-to-Reward ratio - identical distance from entry)
-        tp_distance = tp1 - cmp
-        sl = round_price_clean(cmp - tp_distance)
-        be_trigger = round_price_clean(cmp + (tp_distance * 0.25))
+        sl = round(cmp - tp_distance, 4)
+        be_trigger = round(cmp * 1.0085, 4)
 
         # CORE PRINCIPLE: Never block execution loop. Fire directly to CoinDCX!
         if AUTO_TRADING_ENABLED:
@@ -1359,9 +1302,9 @@ def run_scan():
                     'remaining_qty': qty,
                     'tp1': tp1,
                     'sl': sl,
-                    'system_tp': tp1,
-                    'system_sl': sl,
-                    'user_manual_tpsl': False,
+                    'initial_tp': tp1,
+                    'initial_sl': sl,
+                    'manual_override': False,
                     'be_trigger': be_trigger,
                     'is_be_active': False,
                     'highest_price': cmp,
@@ -1373,11 +1316,9 @@ def run_scan():
             curr_state[f"last_traded_{symbol}"] = time.time()
             save_state(curr_state)
 
-            # AUTOMATICALLY FIT TP & SL ON COINDCX IMMEDIATELY AFTER ENTRY FILL
+            # AUTOMATICALLY FIT TP & SL ON COINDCX IMMEDIATELY AFTER ENTRY FILL (EQUAL TP AND SL)
             threading.Thread(target=auto_place_coindcx_native_tpsl, args=(symbol, tp1, sl), daemon=True).start()
 
-            tp_pct = ((tp1 - cmp) / cmp) * 100
-            sl_pct = ((cmp - sl) / cmp) * 100
             msg = (
                 f"🟢 <b>HIGH-CONVICTION CPR SIGNAL!</b>\n\n"
                 f"<b>Pair:</b> <code>{symbol}</code> (Futures)\n"
@@ -1387,15 +1328,14 @@ def run_scan():
                 f"📊 <b>Volume Surge:</b> <code>{vol_spike:.2f}x Average</code>\n\n"
                 f"⚙️ <b>Trade Parameters:</b>\n"
                 f"• <b>Leverage:</b> <code>{lev_num}x (Isolated)</code>\n"
-                f"• <b>Entry CMP:</b> <code>${format_price_clean(cmp)}</code>\n"
-                f"🛑 <b>Stop Loss (SL):</b> <code>${format_price_clean(sl)}</code> (-{sl_pct:.1f}% move / -{sl_pct*lev_num:.1f}% ROE)\n"
-                f"🎯 <b>Target (TP1):</b> <code>${format_price_clean(tp1)}</code> (+{tp_pct:.1f}% move / +{tp_pct*lev_num:.1f}% ROE)\n"
-                f"⚖️ <b>Risk-to-Reward:</b> <code>1:1 (SL equal to TP)</code>\n\n"
+                f"• <b>Entry CMP:</b> <code>${cmp}</code>\n"
+                f"🛑 <b>Stop Loss (SL):</b> <code>${sl}</code> (-{((cmp - sl)/cmp)*100:.1f}% move / -{((cmp - sl)/cmp)*100*lev_num:.1f}% ROE)\n"
+                f"🎯 <b>Target (TP1):</b> <code>${tp1}</code> (+{((tp1 - cmp)/cmp)*100:.1f}% move / +{((tp1 - cmp)/cmp)*100*lev_num:.1f}% ROE) [1:1 EQUAL]\n"
+                f"🛡️ <b>Breakeven Lock:</b> At +6.0% ROE (+0.85% move)\n\n"
                 f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
                 f"• Order ID: <code>{order_id}</code>\n"
                 f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
-                f"🔄 <i>Native CoinDCX TP/SL auto-fitting active...</i>\n"
-                f"💡 <i>Manual Update: If you edit SL or TP on CoinDCX directly, system stoploss will pause to follow your wish!</i>"
+                f"🔄 <i>Native CoinDCX TP/SL auto-fitting active...</i>"
             )
             send_telegram_message(msg)
             break
@@ -1409,7 +1349,7 @@ def run_scan():
             notice_msg = (
                 f"🟢 <b>CPR SIGNAL DETECTED: {symbol}</b>\n\n"
                 f"<b>Setup:</b> {setup_name} (Score: {score}/100)\n"
-                f"<b>CMP:</b> ${format_price_clean(cmp)} | <b>Target:</b> ${format_price_clean(tp1)} | <b>SL:</b> ${format_price_clean(sl)}\n\n"
+                f"<b>CMP:</b> ${cmp} | <b>Target:</b> ${tp1} | <b>SL:</b> ${sl}\n\n"
                 f"⚠️ <b>COINDCX EXECUTION NOTICE:</b>\n"
                 f"<code>{err_reason}</code>\n\n"
                 f"<i>Cooldown locked for 3 hours to prevent fee drain.</i>"
@@ -1425,86 +1365,66 @@ def monitor_active_positions():
         try:
             with active_trades_lock:
                 symbols_to_check = list(ACTIVE_TRADES.keys())
-
-            if not symbols_to_check:
-                time.sleep(3)
-                continue
-
-            # Fetch all live positions in 1 single call to avoid rate limits
-            live_pos_list = fetch_all_coindcx_live_positions()
             
             for symbol in symbols_to_check:
                 try:
-                    time.sleep(0.2)
+                    time.sleep(0.3)
                     
                     with active_trades_lock:
                         if symbol not in ACTIVE_TRADES: continue
                         trade = ACTIVE_TRADES[symbol]
 
-                    # Match live position from exchange list
-                    raw_coin = symbol.split('-')[0].upper()
-                    futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin).upper()
-                    target_clean = futures_coin.replace("1000", "")
-                    pos_match = None
-                    if isinstance(live_pos_list, list):
-                        for p in live_pos_list:
-                            if not isinstance(p, dict): continue
-                            p_pair = str(p.get('pair', p.get('market', p.get('symbol', '')))).upper()
-                            p_clean = p_pair.replace("B-", "").replace("1000", "").replace("_", "").replace("-", "").replace("USDT", "")
-                            if (p_clean == target_clean or raw_coin in p_pair) and is_position_open(p):
-                                pos_match = p
-                                break
-
-                    live_qty = extract_pos_qty(pos_match) if pos_match else 0.0
-
                     # ==========================================================
-                    # 1. MANUAL OR EXCHANGE CLOSE DETECTION (STRICT NO-SHORT-TRADE POLICY):
-                    # If position size is 0 (closed manually by user or triggered by SL/TP),
-                    # remove from active trades immediately. NEVER fire a SELL order!
+                    # 1. MANUAL CLOSE DETECTION (STRICT NO-SHORT-TRADE POLICY):
+                    # If user manually closed position on CoinDCX, live_qty is 0.
+                    # We MUST instantly remove it from tracking and NEVER fire a SELL order!
                     # ==========================================================
+                    live_qty = fetch_coindcx_live_position_qty(symbol)
                     if live_qty <= 0.0:
                         with active_trades_lock:
                             ACTIVE_TRADES.pop(symbol, None)
                         save_active_trades()
-                        log_trade_event(symbol, "CLOSED_MANUALLY", {"status": "Closed manually or via exchange TP/SL on CoinDCX"})
+                        log_trade_event(symbol, "CLOSED_MANUALLY", {"status": "Closed manually by user on CoinDCX"})
                         send_telegram_message(
-                            f"ℹ️ <b>POSITION CLOSED ON COINDCX:</b>\n\n"
+                            f"ℹ️ <b>MANUAL POSITION CLOSE DETECTED:</b>\n\n"
                             f"<b>Pair:</b> <code>{symbol}</code>\n"
-                            f"• Position is now zero on CoinDCX (Closed manually or via your SL/TP).\n"
-                            f"• Tracking removed cleanly. <b>Zero short trades will be placed.</b>"
+                            f"• Position was closed directly by you on CoinDCX.\n"
+                            f"• Tracking removed. <b>Zero short trades will be placed.</b>"
                         )
                         continue
 
                     # ==========================================================
-                    # 2. DETECT MANUAL TP / SL EDITS ON COINDCX DIRECTLY:
-                    # If user manually customized SL or TP on CoinDCX, system stoploss STOPS!
+                    # 2. DETECT MANUAL SL / TP UPDATES BY USER ON COINDCX DIRECTLY:
+                    # If user updates SL or TP on CoinDCX, system stoploss stops!
                     # ==========================================================
-                    exch_tp, exch_sl = extract_exchange_tpsl(pos_match) if pos_match else (None, None)
-                    sys_tp = trade.get('system_tp')
-                    sys_sl = trade.get('system_sl')
-                    is_tp_changed = exch_tp is not None and sys_tp is not None and abs(exch_tp - sys_tp) > 1e-5
-                    is_sl_changed = exch_sl is not None and sys_sl is not None and abs(exch_sl - sys_sl) > 1e-5
+                    if not trade.get('manual_override', False):
+                        pos_info = fetch_coindcx_position_details(symbol)
+                        if pos_info and isinstance(pos_info.get('raw'), dict):
+                            exch_tp, exch_sl = extract_exchange_tpsl(pos_info['raw'])
+                            init_tp = trade.get('initial_tp', trade.get('tp1', 0))
+                            init_sl = trade.get('initial_sl', trade.get('sl', 0))
 
-                    if is_tp_changed or is_sl_changed:
-                        was_manual = trade.get('user_manual_tpsl', False)
-                        with active_trades_lock:
-                            trade['user_manual_tpsl'] = True
-                            if exch_tp is not None: trade['tp1'] = exch_tp
-                            if exch_sl is not None: trade['sl'] = exch_sl
-                        save_active_trades()
+                            tp_changed = exch_tp and abs(exch_tp - init_tp) > 0.0001
+                            sl_changed = exch_sl and abs(exch_sl - init_sl) > 0.0001
 
-                        if not was_manual:
-                            send_telegram_message(
-                                f"👤 <b>MANUAL COINDCX TP/SL DETECTED!</b>\n\n"
-                                f"<b>Pair:</b> <code>{symbol}</code>\n"
-                                f"• <b>Your Desired SL:</b> <code>${format_price_clean(trade['sl'])}</code>\n"
-                                f"• <b>Your Desired TP:</b> <code>${format_price_clean(trade['tp1'])}</code>\n\n"
-                                f"🛑 <b>SYSTEM STOPLOSS STOPPED:</b>\n"
-                                f"• 75-min stagnation time-stop: <b>OFF</b>\n"
-                                f"• Breakeven profit lock: <b>OFF</b>\n"
-                                f"• Dynamic trailing stop: <b>OFF</b>\n"
-                                f"✅ Trade is running strictly as per your wish on CoinDCX!"
-                            )
+                            if tp_changed or sl_changed:
+                                with active_trades_lock:
+                                    trade['manual_override'] = True
+                                    if exch_tp: trade['tp1'] = exch_tp
+                                    if exch_sl: trade['sl'] = exch_sl
+                                save_active_trades()
+                                send_telegram_message(
+                                    f"👤 <b>MANUAL COINDCX SL/TP DETECTED!</b>\n\n"
+                                    f"<b>Pair:</b> <code>{symbol}</code>\n"
+                                    f"• Your Manual TP: <code>${trade['tp1']}</code>\n"
+                                    f"• Your Manual SL: <code>${trade['sl']}</code>\n"
+                                    f"⏸️ <b>System stoploss is now STOPPED.</b>\n"
+                                    f"CoinDCX will execute your orders directly as per your wish!"
+                                )
+
+                    # If manual override is active, stop system stoploss completely!
+                    if trade.get('manual_override', False):
+                        continue
 
                     m1_klines = fetch_klines(symbol, '1m', 3)
                     if not m1_klines: continue
@@ -1520,59 +1440,54 @@ def monitor_active_positions():
                         with active_trades_lock: trade['highest_price'] = highest_peak
                         save_active_trades()
 
-                    # ==========================================================
-                    # SYSTEM STOPLOSS (Bypassed if user took manual control):
-                    # ==========================================================
-                    if not trade.get('user_manual_tpsl', False):
-                        # 3. 75-MINUTE STAGNATION GUARD
-                        if time.time() - entry_time >= 4500:
-                            sell_qty = min(live_qty, trade.get('remaining_qty', live_qty))
-                            if sell_qty > 0:
-                                execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=sell_qty)
-                            with active_trades_lock: ACTIVE_TRADES.pop(symbol, None)
+                    # 3. 75-MINUTE STAGNATION GUARD
+                    if time.time() - entry_time >= 4500:
+                        sell_qty = min(live_qty, trade.get('remaining_qty', live_qty))
+                        if sell_qty > 0:
+                            execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=sell_qty)
+                        with active_trades_lock: ACTIVE_TRADES.pop(symbol, None)
+                        save_active_trades()
+                        log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": round(raw_pnl_pct, 1), "sl_type": "75-MIN STAGNATION TIME-STOP ⏱️"})
+                        send_telegram_message(
+                            f"⏱️ <b>75-MINUTE TIME-STOP EXECUTED!</b>\n\n"
+                            f"<b>Pair:</b> <code>{symbol}</code>\n"
+                            f"• <b>Exit Price:</b> <code>${cmp}</code>\n"
+                            f"• <b>Result:</b> <code>{raw_pnl_pct:+.1f}% ROE</code>\n"
+                            f"• Capital released for fresh setups."
+                        )
+                        continue
+
+                    # 4. BREAKEVEN PROFIT LOCK (+6.0% ROE)
+                    if not trade.get('is_be_active', False) and cmp >= trade.get('be_trigger', entry_p * 1.0085):
+                        with active_trades_lock:
+                            trade['is_be_active'] = True
+                            trade['sl'] = round(entry_p * 1.001, 4)
+                        save_active_trades()
+                        
+                        # Update Native CoinDCX Stop Loss to Breakeven
+                        pos = fetch_coindcx_position_details(symbol)
+                        if pos and pos.get('position_id'):
+                            apply_coindcx_native_tpsl(pos['pair'], pos['position_id'], trade['tp1'], trade['sl'])
+
+                        send_telegram_message(
+                            f"🛡️ <b>BREAKEVEN PROFIT LOCK ACTIVATED! 🚀</b>\n\n"
+                            f"<b>Pair:</b> <code>{symbol}</code>\n"
+                            f"• Gain Reached: +6.0% ROE (+0.85% move)\n"
+                            f"• Stop Loss shifted to <b>${entry_p * 1.001:.4f}</b> (Zero Risk Trade)!"
+                        )
+
+                    # 5. 3-STAGE DYNAMIC TRAILING
+                    peak_gain_pct = (highest_peak - entry_p) / entry_p
+                    if peak_gain_pct >= 0.0180: # Stage 3 (+12.6% ROE)
+                        trailing_sl = round(highest_peak * 0.9940, 4)
+                        if trailing_sl > trade['sl']:
+                            with active_trades_lock: trade['sl'] = trailing_sl
                             save_active_trades()
-                            log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": round(raw_pnl_pct, 1), "sl_type": "75-MIN STAGNATION TIME-STOP ⏱️"})
-                            send_telegram_message(
-                                f"⏱️ <b>75-MINUTE TIME-STOP EXECUTED!</b>\n\n"
-                                f"<b>Pair:</b> <code>{symbol}</code>\n"
-                                f"• <b>Exit Price:</b> <code>${format_price_clean(cmp)}</code>\n"
-                                f"• <b>Result:</b> <code>{raw_pnl_pct:+.1f}% ROE</code>\n"
-                                f"• Capital released for fresh setups."
-                            )
-                            continue
-
-                        # 4. BREAKEVEN PROFIT LOCK (+6.0% ROE)
-                        if not trade.get('is_be_active', False) and cmp >= trade.get('be_trigger', entry_p * 1.0085):
-                            with active_trades_lock:
-                                trade['is_be_active'] = True
-                                trade['sl'] = round_price_clean(entry_p * 1.001)
+                    elif peak_gain_pct >= 0.0120: # Stage 2 (+8.4% ROE)
+                        stage2_sl = round(entry_p * 1.0060, 4)
+                        if stage2_sl > trade['sl']:
+                            with active_trades_lock: trade['sl'] = stage2_sl
                             save_active_trades()
-                            
-                            # Update Native CoinDCX Stop Loss to Breakeven
-                            pos_id = pos_match.get('id') or pos_match.get('position_id') or pos_match.get('positionId') or pos_match.get('id_') if pos_match else None
-                            p_pair = str(pos_match.get('pair', f"B-{futures_coin}_USDT")).upper() if pos_match else f"B-{futures_coin}_USDT"
-                            if pos_id:
-                                apply_coindcx_native_tpsl(p_pair, pos_id, trade['tp1'], trade['sl'])
-
-                            send_telegram_message(
-                                f"🛡️ <b>BREAKEVEN PROFIT LOCK ACTIVATED! 🚀</b>\n\n"
-                                f"<b>Pair:</b> <code>{symbol}</code>\n"
-                                f"• Gain Reached: +6.0% ROE (+0.85% move)\n"
-                                f"• Stop Loss shifted to <b>${format_price_clean(entry_p * 1.001)}</b> (Zero Risk Trade)!"
-                            )
-
-                        # 5. 3-STAGE DYNAMIC TRAILING
-                        peak_gain_pct = (highest_peak - entry_p) / entry_p
-                        if peak_gain_pct >= 0.0180: # Stage 3 (+12.6% ROE)
-                            trailing_sl = round_price_clean(highest_peak * 0.9940)
-                            if trailing_sl > trade['sl']:
-                                with active_trades_lock: trade['sl'] = trailing_sl
-                                save_active_trades()
-                        elif peak_gain_pct >= 0.0120: # Stage 2 (+8.4% ROE)
-                            stage2_sl = round_price_clean(entry_p * 1.0060)
-                            if stage2_sl > trade['sl']:
-                                with active_trades_lock: trade['sl'] = stage2_sl
-                                save_active_trades()
 
                     # 6. TARGET (TP1) HIT
                     if cmp >= trade['tp1']:
@@ -1581,18 +1496,17 @@ def monitor_active_positions():
                             execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=sell_qty)
                         with active_trades_lock: ACTIVE_TRADES.pop(symbol, None)
                         save_active_trades()
-                        realized_pnl_pct = ((cmp - entry_p) / entry_p) * trade.get('leverage', 7) * 100
-                        tp_tag = "MANUAL TARGET WIN 🎯" if trade.get('user_manual_tpsl') else "TARGET WIN (+22.4% ROE) 🎯"
-                        log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": round(realized_pnl_pct, 1), "sl_type": tp_tag})
+                        realized_pnl_pct = ((cmp - entry_p) / entry_p) * 7 * 100
+                        log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": round(realized_pnl_pct, 1), "sl_type": "TARGET WIN 🎯"})
                         send_telegram_message(
-                            f"🎯 <b>PROFIT TARGET HIT! 🚀</b>\n\n"
+                            f"🎯 <b>PROFIT TARGET HIT (TP1)! 🚀</b>\n\n"
                             f"<b>Pair:</b> <code>{symbol}</code>\n"
-                            f"• <b>Entry:</b> <code>${format_price_clean(entry_p)}</code> | <b>Exit:</b> <code>${format_price_clean(cmp)}</code>\n"
+                            f"• <b>Entry:</b> <code>${entry_p}</code> | <b>Exit:</b> <code>${cmp}</code>\n"
                             f"• <b>Realized Gain:</b> <code>+{realized_pnl_pct:.1f}% ROE</code> 💰"
                         )
                         continue
 
-                    # 7. STOP LOSS HIT
+                    # 7. STOP LOSS HIT -> FULL DAY BAN ON THIS SYMBOL
                     if cmp <= trade['sl']:
                         sell_qty = min(live_qty, trade.get('remaining_qty', live_qty))
                         if sell_qty > 0:
@@ -1600,22 +1514,21 @@ def monitor_active_positions():
                         with active_trades_lock: ACTIVE_TRADES.pop(symbol, None)
                         save_active_trades()
 
-                        # Only ban symbol for the day if it was the bot's system SL that hit, not manual
-                        if not trade.get('user_manual_tpsl', False):
-                            today_str = get_ist_now().strftime("%d-%m-%Y")
-                            st = load_state()
-                            st[f"sl_banned_{symbol}"] = today_str
-                            save_state(st)
+                        # BAN THIS SYMBOL FOR THE REST OF TODAY
+                        today_str = get_ist_now().strftime("%d-%m-%Y")
+                        st = load_state()
+                        st[f"sl_banned_{symbol}"] = today_str
+                        save_state(st)
 
-                        realized_pnl_pct = ((cmp - entry_p) / entry_p) * trade.get('leverage', 7) * 100
-                        sl_type = "MANUAL STOP LOSS EXIT 🛑" if trade.get('user_manual_tpsl') else ("TRAILING PROFIT LOCK EXIT 💰" if cmp >= entry_p * 1.001 else "STOP LOSS HIT 🛑")
+                        realized_pnl_pct = ((cmp - entry_p) / entry_p) * 7 * 100
+                        sl_type = "TRAILING PROFIT LOCK EXIT 💰" if cmp >= entry_p * 1.001 else "STOP LOSS HIT 🛑"
                         log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": round(realized_pnl_pct, 1), "sl_type": sl_type})
                         send_telegram_message(
                             f"🏁 <b>POSITION CLOSED: {sl_type}</b>\n\n"
                             f"<b>Pair:</b> <code>{symbol}</code>\n"
-                            f"• <b>Exit Price:</b> <code>${format_price_clean(cmp)}</code>\n"
+                            f"• <b>Exit Price:</b> <code>${cmp}</code>\n"
                             f"• <b>Realized PNL:</b> <code>{realized_pnl_pct:+.1f}% ROE</code>\n"
-                            f"• Mode: {'👤 Manual Wish Respected' if trade.get('user_manual_tpsl') else 'System Stoploss'}"
+                            f"🚫 <b>Note:</b> {symbol} is locked for the remainder of today to protect capital."
                         )
                         continue
                 except Exception as e:
@@ -1696,6 +1609,16 @@ def run_telegram_command_listener():
                                     "• High-conviction CPR setups will execute automatically.\n"
                                     "• Send <code>/stop</code> anytime to pause."
                                 ))
+                            elif cmd in ['/manual', 'manual']:
+                                with active_trades_lock:
+                                    for s in ACTIVE_TRADES:
+                                        ACTIVE_TRADES[s]['manual_override'] = True
+                                save_active_trades()
+                                reply_user(tok, user_chat_id, (
+                                    "👤 <b>MANUAL MODE ACTIVATED!</b>\n\n"
+                                    "• System stoploss, trailing, and time-stop are <b>PAUSED</b>.\n"
+                                    "• Your SL and TP set directly on CoinDCX will execute as per your wish."
+                                ))
                             elif cmd in ['/status', 'status']:
                                 daily_count = get_today_executed_trades_count()
                                 with active_trades_lock:
@@ -1717,19 +1640,6 @@ def run_telegram_command_listener():
                             elif cmd in ['/tpsl', 'tpsl', '/synctpsl', 'synctpsl']:
                                 reply_user(tok, user_chat_id, "🔄 <i>Syncing Native CoinDCX TP/SL for all active positions...</i>")
                                 threading.Thread(target=sync_all_open_positions_tpsl, daemon=True).start()
-                            elif cmd in ['/manual', 'manual', '/manualtpsl', '/stopsl', '/stopsystemsl']:
-                                with active_trades_lock:
-                                    if ACTIVE_TRADES:
-                                        for s, tr in ACTIVE_TRADES.items():
-                                            tr['user_manual_tpsl'] = True
-                                        save_active_trades()
-                                        reply_user(tok, user_chat_id, (
-                                            "👤 <b>SYSTEM STOPLOSS STOPPED FOR ACTIVE TRADES!</b>\n\n"
-                                            "• Dynamic trailing, breakeven lock, and 75m time-stop are <b>PAUSED</b>.\n"
-                                            "• Positions are running strictly as per your wish on CoinDCX."
-                                        ))
-                                    else:
-                                        reply_user(tok, user_chat_id, "ℹ️ No active trades currently open.")
                 initialized.add(tok)
             except Exception: pass
             time.sleep(1)
@@ -1768,10 +1678,8 @@ def start_background_loop():
         time.sleep(10)
         while True:
             try:
-                recover_live_coindcx_positions()
                 sync_all_open_positions_tpsl()
-            except Exception as e:
-                print(f"TPSL sync worker error: {e}")
+            except Exception: pass
             time.sleep(60)
 
     threading.Thread(target=run_loop, daemon=True).start()
@@ -1786,8 +1694,8 @@ def start_background_loop():
         "• <b>Universe:</b> Crypto Universe (Stablecoins & Stocks Excluded)\n"
         "• <b>Execution:</b> Non-blocking direct order execution\n"
         "• <b>Safety Guarantee:</b> STRICT NO-SHORT-TRADE Protection active\n"
-        "• <b>Native TP/SL:</b> 1:1 Equal Risk/Reward (SL = TP = 3.2% move)\n"
-        "• <b>Manual Control:</b> Edit SL/TP on CoinDCX directly -> System Stoploss stops!\n"
+        "• <b>Native TP/SL:</b> Auto-fitting TP (+3.2%) & SL (-3.2% [1:1 EQUAL])\n"
+        "• <b>Manual Control:</b> Manual CoinDCX SL/TP supported (System SL pauses)\n"
         "• <b>Controls:</b> Web 1-Click Buttons + Telegram /stop & /start"
     )
 
