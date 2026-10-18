@@ -1699,6 +1699,264 @@ def start_background_loop():
         "• <b>Controls:</b> Web 1-Click Buttons + Telegram /stop & /start"
     )
 
+# ==============================================================================
+# 14. CHOP MARKET FILTER & 2-STAGNATION CIRCUIT BREAKER ADD-ON
+# ==============================================================================
+# [HOW TO REVERT TO PREVIOUS EXACT MAIN.PY]:
+# If you ever want to remove this update and restore your previous exact main.py,
+# simply DELETE ONLY THIS SECTION 14 BLOCK (between START and END markers below).
+# Lines 1 to 1701 above and the 7 starter lines below will remain 100% untouched!
+# >>>>> START OF CHOP FILTER ADD-ON (DELETE FROM HERE TO REVERT) >>>>>
+
+CIRCUIT_BREAKER_STATE = {
+    "consecutive_timestops": 0,
+    "paused_until": 0,
+    "last_timestop_symbol": ""
+}
+
+# 1. CIRCUIT BREAKER WRAPPER (Tracks 2 Consecutive 75-Min Time-Stops)
+_orig_log_trade_event = log_trade_event
+def log_trade_event(symbol, event_type, data):
+    _orig_log_trade_event(symbol, event_type, data)
+    try:
+        if event_type == "CLOSED":
+            sl_type = str(data.get("sl_type", "")).upper()
+            realized_pnl = float(data.get("realized_pnl_pct", 0))
+
+            if "75-MIN STAGNATION" in sl_type or "TIME-STOP" in sl_type:
+                CIRCUIT_BREAKER_STATE["consecutive_timestops"] += 1
+                CIRCUIT_BREAKER_STATE["last_timestop_symbol"] = symbol
+
+                if CIRCUIT_BREAKER_STATE["consecutive_timestops"] >= 2:
+                    pause_seconds = 7200  # 2 Hours Pause
+                    resume_time_dt = get_ist_now() + timedelta(seconds=pause_seconds)
+                    CIRCUIT_BREAKER_STATE["paused_until"] = time.time() + pause_seconds
+                    CIRCUIT_BREAKER_STATE["consecutive_timestops"] = 0  # Reset after tripping
+
+                    send_telegram_message(
+                        f"⏸️ <b>CHOP MARKET CIRCUIT BREAKER TRIPPED!</b>\n\n"
+                        f"• <b>Reason:</b> 2 Consecutive 75-Minute Time-Stops detected.\n"
+                        f"• <b>Last Pair:</b> <code>{symbol}</code>\n"
+                        f"• <b>Market Condition:</b> Low-volume sideways chop.\n"
+                        f"• <b>Safety Action:</b> New auto-entries <b>PAUSED for 2 Hours</b>.\n"
+                        f"• <b>Auto-Resumes At:</b> <code>{resume_time_dt.strftime('%I:%M %p IST')}</code>\n"
+                        f"<i>(Send <code>/start</code> anytime in chat to override and resume immediately).</i>"
+                    )
+            elif realized_pnl > 0 or "WIN" in sl_type or "PROFIT" in sl_type:
+                # Winning trade resets the consecutive stagnation counter
+                CIRCUIT_BREAKER_STATE["consecutive_timestops"] = 0
+    except Exception as e:
+        print(f"Circuit breaker logger exception: {e}")
+
+# 2. UPGRADED SCANNER (Enforces Strict Volume >= 1.0x & Circuit Breaker)
+def run_scan():
+    today_str = get_ist_now().strftime("%d-%m-%Y")
+    curr_state = load_state()
+
+    # Rule A: Check Circuit Breaker (Pause if 2 consecutive time-stops occurred)
+    if time.time() < CIRCUIT_BREAKER_STATE.get("paused_until", 0):
+        return
+
+    # Rule B: Check Active Open Positions (Max 3 concurrent positions)
+    with active_trades_lock:
+        if len(ACTIVE_TRADES) >= 3:
+            return
+
+    candidates = []
+
+    for symbol in WATCHLIST:
+        try:
+            time.sleep(0.03)
+
+            # Check Stop Loss Day Ban
+            if curr_state.get(f"sl_banned_{symbol}") == today_str:
+                continue
+
+            # Check 3-Hour Symbol Cooldown
+            last_traded = curr_state.get(f"last_traded_{symbol}", 0)
+            if time.time() - last_traded < SYMBOL_COOLDOWN_SECONDS:
+                continue
+
+            with active_trades_lock:
+                if symbol in ACTIVE_TRADES: continue
+
+            # Fetch 15M candles and Daily candles
+            m15_klines = fetch_klines(symbol, '15m', 40)
+            daily_klines = fetch_klines(symbol, '1d', 4)
+            if not m15_klines or not daily_klines or len(m15_klines) < 25 or len(daily_klines) < 2:
+                continue
+
+            cmp = m15_klines[-1][4]
+            cpr = calculate_cpr_levels(daily_klines)
+            if not cpr: continue
+
+            # Bias check: Never Long below BC or inside CPR chop zone
+            if cmp <= cpr['tc']:
+                continue
+
+            # Supertrend 15M check
+            st_dir, _ = calculate_supertrend(m15_klines)
+            if st_dir != 1: continue
+
+            # ==================================================================
+            # UPGRADE CRITERION 1: STRICT MINIMUM VOLUME GATE (>= 1.0x)
+            # ZERO EXCEPTIONS for Narrow CPR! Low-volume chop trades are BLOCKED!
+            # ==================================================================
+            vol_spike = calculate_volume_spike(m15_klines)
+            if vol_spike < 1.0:
+                continue
+
+            # 15M EMA 20 Alignment
+            close_prices = [k[4] for k in m15_klines]
+            ema20 = calculate_ema(close_prices, 20)
+            if cmp < ema20 * 0.998: continue
+
+            # RSI Confirmation (Healthy 48 to 70 range)
+            rsi_val = calculate_rsi(close_prices)
+            if rsi_val < 48 or rsi_val > 70: continue
+
+            # Price Action Trigger:
+            # 1. Breakout: Recent candle broke out or tested TC, candle closed cleanly ABOVE TC
+            prev_close = m15_klines[-2][4]
+            prev2_close = m15_klines[-3][4] if len(m15_klines) >= 3 else prev_close
+            curr_close = m15_klines[-1][4]
+            curr_low = m15_klines[-1][3]
+            curr_open = m15_klines[-1][1]
+
+            is_true_breakout = ((prev_close <= cpr['tc'] * 1.002 or prev2_close <= cpr['tc'] * 1.002) and (curr_close > cpr['tc'])) or (cpr['is_narrow'] and curr_close > cpr['tc'] and curr_close > prev_close)
+            # 2. Retest & Bounce: Low tested CPR and candle closed green above TC
+            is_cpr_bounce = (curr_low <= cpr['tc'] * 1.004) and (curr_low >= cpr['bc'] * 0.995) and (curr_close > curr_open)
+
+            if not (is_true_breakout or is_cpr_bounce):
+                continue
+
+            # Real Confluence Score Calculation
+            score = 0
+            if is_true_breakout: score += 30
+            elif is_cpr_bounce: score += 25
+
+            if cpr['is_narrow']: score += 25
+            elif cpr['is_ascending']: score += 20
+            elif cpr['is_inside']: score += 20
+
+            # Strict volume scoring: only awarded when volume genuinely expands
+            if vol_spike >= 1.50: score += 25
+            elif vol_spike >= 1.00: score += 20
+
+            if st_dir == 1: score += 15
+            if 50 <= rsi_val <= 65: score += 10
+
+            if score >= 70:
+                setup_name = "TRUE CPR BREAKOUT 🚀" if is_true_breakout else "CPR RETEST & BOUNCE 🛡️"
+                candidates.append({
+                    'symbol': symbol,
+                    'score': score,
+                    'setup_name': setup_name,
+                    'cmp': cmp,
+                    'cpr': cpr,
+                    'vol_spike': vol_spike,
+                    'm15_low': curr_low
+                })
+        except Exception: pass
+
+    candidates.sort(key=lambda x: x['score'], reverse=True)
+    coin_margin = 1000.0
+    lev_num = 7
+
+    for cand in candidates:
+        with active_trades_lock:
+            if len(ACTIVE_TRADES) >= 3: break
+
+        symbol = cand['symbol']
+        cmp = cand['cmp']
+        cpr = cand['cpr']
+        vol_spike = cand['vol_spike']
+        score = cand['score']
+        setup_name = cand['setup_name']
+
+        # Target (TP1): R1 / R2 / +3.2% move
+        tp1 = round(max(cpr['r1'], cmp * 1.032), 4)
+        tp_distance = tp1 - cmp
+
+        # Stop Loss: EQUAL TO TP (1:1 Risk-to-Reward ratio - identical distance from entry)
+        sl = round(cmp - tp_distance, 4)
+        be_trigger = round(cmp * 1.0085, 4)
+
+        # CORE PRINCIPLE: Never block execution loop. Fire directly to CoinDCX!
+        if AUTO_TRADING_ENABLED:
+            trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=coin_margin, leverage=lev_num)
+        else:
+            trade_res = {'success': False, 'error': 'Auto-trading PAUSED via Mobile Telegram / Web button.'}
+
+        # CORE PRINCIPLE: Always broadcast full transparency to Telegram—trader is NEVER left in the dark!
+        if trade_res.get('success'):
+            order_id = trade_res.get('order_id')
+            qty = trade_res.get('quantity')
+            log_trade_event(symbol, "EXECUTED", {"cmp": cmp, "quantity": qty, "order_id": order_id, "margin": coin_margin})
+
+            with active_trades_lock:
+                ACTIVE_TRADES[symbol] = {
+                    'entry_price': cmp,
+                    'total_qty': qty,
+                    'remaining_qty': qty,
+                    'tp1': tp1,
+                    'sl': sl,
+                    'initial_tp': tp1,
+                    'initial_sl': sl,
+                    'manual_override': False,
+                    'be_trigger': be_trigger,
+                    'is_be_active': False,
+                    'highest_price': cmp,
+                    'leverage': lev_num,
+                    'entry_time': time.time()
+                }
+            save_active_trades()
+
+            curr_state[f"last_traded_{symbol}"] = time.time()
+            save_state(curr_state)
+
+            # AUTOMATICALLY FIT TP & SL ON COINDCX IMMEDIATELY AFTER ENTRY FILL (EQUAL TP AND SL)
+            threading.Thread(target=auto_place_coindcx_native_tpsl, args=(symbol, tp1, sl), daemon=True).start()
+
+            msg = (
+                f"🟢 <b>HIGH-CONVICTION CPR SIGNAL!</b>\n\n"
+                f"<b>Pair:</b> <code>{symbol}</code> (Futures)\n"
+                f"<b>Setup:</b> <b>{setup_name}</b>\n"
+                f"<b>CPR Structure:</b> <code>{cpr['cpr_type']}</code>\n"
+                f"🔥 <b>Confluence Score:</b> <code>{score} / 100</code>\n"
+                f"📊 <b>Volume Surge:</b> <code>{vol_spike:.2f}x Average</code> (Strict Filter Active)\n\n"
+                f"⚙️ <b>Trade Parameters:</b>\n"
+                f"• <b>Leverage:</b> <code>{lev_num}x (Isolated)</code>\n"
+                f"• <b>Entry CMP:</b> <code>${cmp}</code>\n"
+                f"🛑 <b>Stop Loss (SL):</b> <code>${sl}</code> (-{((cmp - sl)/cmp)*100:.1f}% move / -{((cmp - sl)/cmp)*100*lev_num:.1f}% ROE)\n"
+                f"🎯 <b>Target (TP1):</b> <code>${tp1}</code> (+{((tp1 - cmp)/cmp)*100:.1f}% move / +{((tp1 - cmp)/cmp)*100*lev_num:.1f}% ROE) [1:1 EQUAL]\n"
+                f"🛡️ <b>Breakeven Lock:</b> At +6.0% ROE (+0.85% move)\n\n"
+                f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
+                f"• Order ID: <code>{order_id}</code>\n"
+                f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
+                f"🔄 <i>Native CoinDCX TP/SL auto-fitting active...</i>"
+            )
+            send_telegram_message(msg)
+            break
+        else:
+            err_reason = trade_res.get('error', 'Unknown Error')
+            log_trade_event(symbol, "CANCELLED", {"cmp": cmp, "error": err_reason})
+            curr_state[f"last_traded_{symbol}"] = time.time()
+            save_state(curr_state)
+
+            notice_msg = (
+                f"🟢 <b>CPR SIGNAL DETECTED: {symbol}</b>\n\n"
+                f"<b>Setup:</b> {setup_name} (Score: {score}/100)\n"
+                f"<b>CMP:</b> ${cmp} | <b>Target:</b> ${tp1} | <b>SL:</b> ${sl}\n\n"
+                f"⚠️ <b>COINDCX EXECUTION NOTICE:</b>\n"
+                f"<code>{err_reason}</code>\n\n"
+                f"<i>Cooldown locked for 3 hours to prevent fee drain.</i>"
+            )
+            send_telegram_message(notice_msg)
+
+# <<<<< END OF CHOP FILTER ADD-ON (DELETE UP TO HERE TO REVERT) <<<<<
+# ==============================================================================
+
 start_background_loop()
 
 if __name__ == "__main__":
