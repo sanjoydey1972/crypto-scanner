@@ -101,7 +101,7 @@ COINDCX_PAIR_ALIASES = {
     'BTT': '1000BTT'
 }
 
-SYMBOL_COOLDOWN_SECONDS = 3600  # 1 Hour cooldown per symbol after successful trade exit
+SYMBOL_COOLDOWN_SECONDS = 3600  # 1 Hour cooldown per symbol after full trade exit
 
 # ==============================================================================
 # 3. PERMANENT AUDIT JOURNAL & HISTORY LOGGER
@@ -192,7 +192,7 @@ def clear_telegram_webhooks():
         except Exception: pass
 
 # ==============================================================================
-# 5. CANDLESTICK FETCHING & EMA INDICATOR CALCULATIONS
+# 5. CANDLESTICK FETCHING & 9/20 EMA INDICATOR CALCULATIONS (NO VOLUME FILTER)
 # ==============================================================================
 def fetch_klines(symbol, interval='1m', limit=35):
     raw_coin = symbol.split('-')[0].upper()
@@ -266,15 +266,6 @@ def calculate_ema_series(prices, period):
         new_ema = (price - ema_vals[-1]) * multiplier + ema_vals[-1]
         ema_vals.append(new_ema)
     return ema_vals
-
-def calculate_volume_spike(klines, period=20):
-    if len(klines) < period + 1:
-        return 1.0
-    recent_vol = klines[-1][5]
-    prev_vols = [k[5] for k in klines[-(period + 1):-1]]
-    avg_vol = sum(prev_vols) / len(prev_vols) if prev_vols else 1.0
-    if avg_vol <= 0: return 1.0
-    return round(recent_vol / avg_vol, 2)
 
 # ==============================================================================
 # 6. COINDCX FUTURES POSITION INSPECTION & RECOVERY
@@ -652,12 +643,12 @@ def sync_all_open_positions_tpsl():
     return synced_results
 
 # ==============================================================================
-# 8. 9 EMA & 20 EMA 1-MINUTE SCALPING ENGINE (LONG & SHORT)
+# 8. 9 EMA & 20 EMA 1-MINUTE SCALPING ENGINE (PURE PRICE ACTION & EMA ONLY)
 # ==============================================================================
 def run_scan():
     """
-    1-Minute Scalping Engine based on Trader Pankaj Gupta's 9 EMA & 20 EMA Blueprint.
-    Executes both LONG and SHORT trades with immediate non-blocking execution.
+    1-Minute Scalping Engine based purely on Trader Pankaj Gupta's 9 EMA & 20 EMA Blueprint.
+    ZERO volume requirement. Executes Long & Short trades instantly when EMA rules trigger.
     """
     today_str = get_ist_now().strftime("%d-%m-%Y")
     curr_state = load_state()
@@ -685,7 +676,7 @@ def run_scan():
             with active_trades_lock:
                 if symbol in ACTIVE_TRADES: continue
 
-            # Fetch 1-Minute Candlesticks (using multi-source non-blocking engine)
+            # Fetch 1-Minute Candlesticks
             m1_klines = fetch_klines(symbol, '1m', 35)
             if not m1_klines or len(m1_klines) < 25:
                 continue
@@ -711,24 +702,17 @@ def run_scan():
             prev2_ema9 = ema9_series[-3] if len(ema9_series) >= 3 else prev_ema9
             prev2_ema20 = ema20_series[-3] if len(ema20_series) >= 3 else prev_ema20
 
-            # ------------------------------------------------------------------
-            # CHOP FILTER: Skip if EMAs are flat or crisscrossing (Sideways Zone)
-            # ------------------------------------------------------------------
+            # CHOP FILTER: Skip if EMAs are flat or intertwined
             ema_spread_pct = abs(curr_ema9 - curr_ema20) / curr_ema20
-            if ema_spread_pct < 0.0003:
-                continue
-
-            # Volume Confirmation Spike (>= 1.05x 20-period average volume)
-            vol_spike = calculate_volume_spike(m1_klines, 20)
-            if vol_spike < 1.05:
+            if ema_spread_pct < 0.00025:
                 continue
 
             # ------------------------------------------------------------------
-            # 🟢 LONG SETUP EVALUATION
+            # 🟢 LONG SETUP EVALUATION (PURE 9/20 EMA + CANDLE CLOSE)
             # ------------------------------------------------------------------
             is_long_crossover = (prev_ema9 <= prev_ema20 or prev2_ema9 <= prev2_ema20) and (curr_ema9 > curr_ema20)
             is_long_pullback = (curr_ema9 > curr_ema20) and (min(lows[-2:]) <= curr_ema9 * 1.001) and (cmp > curr_ema9)
-            is_long_breakout = (curr_ema9 > curr_ema20) and (cmp > closes[-2]) and (cmp > curr_ema9) and (vol_spike >= 1.05)
+            is_long_breakout = (curr_ema9 > curr_ema20) and (cmp > closes[-2]) and (cmp > curr_ema9)
             is_long_confirmed = (cmp > curr_open or cmp > closes[-2]) and (cmp > curr_ema9) and (cmp > curr_ema20)
 
             if (is_long_crossover or is_long_pullback or is_long_breakout) and is_long_confirmed:
@@ -757,7 +741,6 @@ def run_scan():
                     'cmp': cmp,
                     'sl': raw_sl,
                     'tp1': tp1,
-                    'vol_spike': vol_spike,
                     'ema9': curr_ema9,
                     'ema20': curr_ema20,
                     'score': score
@@ -765,11 +748,11 @@ def run_scan():
                 continue
 
             # ------------------------------------------------------------------
-            # 🔴 SHORT SETUP EVALUATION
+            # 🔴 SHORT SETUP EVALUATION (PURE 9/20 EMA + CANDLE CLOSE)
             # ------------------------------------------------------------------
             is_short_crossover = (prev_ema9 >= prev_ema20 or prev2_ema9 >= prev2_ema20) and (curr_ema9 < curr_ema20)
             is_short_pullback = (curr_ema9 < curr_ema20) and (max(highs[-2:]) >= curr_ema9 * 0.999) and (cmp < curr_ema9)
-            is_short_breakdown = (curr_ema9 < curr_ema20) and (cmp < closes[-2]) and (cmp < curr_ema9) and (vol_spike >= 1.05)
+            is_short_breakdown = (curr_ema9 < curr_ema20) and (cmp < closes[-2]) and (cmp < curr_ema9)
             is_short_confirmed = (cmp < curr_open or cmp < closes[-2]) and (cmp < curr_ema9) and (cmp < curr_ema20)
 
             if (is_short_crossover or is_short_pullback or is_short_breakdown) and is_short_confirmed:
@@ -798,14 +781,14 @@ def run_scan():
                     'cmp': cmp,
                     'sl': raw_sl,
                     'tp1': tp1,
-                    'vol_spike': vol_spike,
                     'ema9': curr_ema9,
                     'ema20': curr_ema20,
                     'score': score
                 })
         except Exception: pass
 
-    candidates.sort(key=lambda x: (x['score'], x['vol_spike']), reverse=True)
+    # Sort candidates by setup conviction score
+    candidates.sort(key=lambda x: x['score'], reverse=True)
     coin_margin = 1000.0
     lev_num = 7
 
@@ -818,7 +801,6 @@ def run_scan():
         cmp = cand['cmp']
         sl = cand['sl']
         tp1 = cand['tp1']
-        vol_spike = cand['vol_spike']
         score = cand['score']
         setup_name = cand['setup_name']
 
@@ -863,13 +845,12 @@ def run_scan():
             tp_dist_pct = abs(tp1 - cmp) / cmp * 100.0
             icon = "🟢" if side == "LONG" else "🔴"
 
-            # FULL TRANSPARENCY TELEGRAM ALERT
+            # FULL TRANSPARENCY TELEGRAM ALERT (PURE 9/20 EMA)
             msg = (
                 f"{icon} <b>1-MIN EMA SCALP SIGNAL! ({side})</b>\n\n"
                 f"<b>Pair:</b> <code>{symbol}</code> (Futures)\n"
                 f"<b>Setup:</b> <b>{setup_name}</b>\n"
-                f"🔥 <b>Confluence Score:</b> <code>{score} / 100</code>\n"
-                f"📊 <b>1M Volume Surge:</b> <code>{vol_spike:.2f}x Average</code>\n\n"
+                f"🔥 <b>Strategy:</b> <code>Trader Pankaj Gupta 9/20 EMA</code>\n\n"
                 f"⚙️ <b>Trade Parameters:</b>\n"
                 f"• <b>Direction:</b> <code>{side}</code> (7x Isolated)\n"
                 f"• <b>Entry CMP:</b> <code>${cmp}</code>\n"
@@ -884,10 +865,8 @@ def run_scan():
             send_telegram_message(msg)
             break
         else:
-            # 100% TRANSPARENCY ON COINDCX NOTICES & REJECTIONS
             err_reason = trade_res.get('error', 'Unknown Error')
             log_trade_event(symbol, "CANCELLED", {"cmp": cmp, "error": err_reason, "side": side})
-            # Lock for only 2 minutes on failed order attempt instead of 1 hour
             curr_state[f"last_traded_{symbol}"] = time.time() - (SYMBOL_COOLDOWN_SECONDS - 120)
             save_state(curr_state)
 
@@ -953,6 +932,7 @@ def monitor_active_positions():
                                     trade['manual_override'] = True
                                     if exch_tp: trade['tp1'] = exch_tp
                                     if exch_sl: trade['sl'] = exch_sl
+                                Exception
                                 save_active_trades()
                                 send_telegram_message(
                                     f"👤 <b>MANUAL COINDCX SL/TP DETECTED!</b>\n\n"
@@ -985,7 +965,7 @@ def monitor_active_positions():
                         raw_roe_pct = ((entry_p - cmp) / entry_p) * trade.get('leverage', 7) * 100.0
 
                     # ----------------------------------------------------------
-                    # A. 9 EMA TRAILING VIOLATION EXIT
+                    # A. 9 EMA TRAILING VIOLATION EXIT (PURE PANKAJ GUPTA RULE)
                     # ----------------------------------------------------------
                     is_long_ema9_exit = (side == "LONG" and curr_close < curr_ema9 * 0.9995)
                     is_short_ema9_exit = (side == "SHORT" and curr_close > curr_ema9 * 1.0005)
@@ -1076,7 +1056,7 @@ def monitor_active_positions():
         time.sleep(2)
 
 # ==============================================================================
-# 10. FLASK WEB DASHBOARD & STATUS CONTROLS
+# 10. FLASK WEB DASHBOARD & STATUS CONTROLS (PURE 9/20 EMA DIAGNOSTICS)
 # ==============================================================================
 @app.route('/scan-now')
 def scan_now_endpoint():
@@ -1091,10 +1071,10 @@ def scan_now_endpoint():
 
         report_lines = [
             f"⚡ REAL-TIME 1M 9-20 EMA SCALPER DIAGNOSTICS ({today_str})",
-            f"Engine Status: {status_txt} | Active Slots: {slot_txt}",
-            f"{'='*95}",
-            f"{'SYMBOL':11s} | {'CMP':<9s} | {'9 EMA':<9s} | {'20 EMA':<9s} | {'TREND':<10s} | {'VOL':<6s} | {'SETUP'}",
-            f"{'-'*95}"
+            f"Engine Status: {status_txt} | Active Slots: {slot_txt} | Strategy: Pure 9/20 EMA (Zero Volume Filter)",
+            f"{'='*90}",
+            f"{'SYMBOL':11s} | {'CMP':<9s} | {'9 EMA':<9s} | {'20 EMA':<9s} | {'TREND':<10s} | {'SETUP'}",
+            f"{'-'*90}"
         ]
 
         # Scan top 20 liquid pairs for fast <2s page response, or all if requested
@@ -1105,30 +1085,29 @@ def scan_now_endpoint():
                 time.sleep(0.01)
                 m1 = fetch_klines(symbol, '1m', 25)
                 if not m1 or len(m1) < 20:
-                    report_lines.append(f"{symbol:11s} | {'SYNCING':<9s} | {'--':<9s} | {'--':<9s} | {'CONNECTING':<10s} | {'--':<6s} | 🔄 BUFFERING")
+                    report_lines.append(f"{symbol:11s} | {'SYNCING':<9s} | {'--':<9s} | {'--':<9s} | {'CONNECTING':<10s} | 🔄 BUFFERING")
                     continue
                 closes = [k[4] for k in m1]
                 cmp = closes[-1]
                 ema9 = calculate_ema_series(closes, 9)[-1]
                 ema20 = calculate_ema_series(closes, 20)[-1]
-                vol_spike = calculate_volume_spike(m1, 20)
 
-                if ema9 > ema20 * 1.0003:
+                if ema9 > ema20 * 1.00025:
                     trend_txt = "🟢 BULLISH"
-                elif ema9 < ema20 * 0.9997:
+                elif ema9 < ema20 * 0.99975:
                     trend_txt = "🔴 BEARISH"
                 else:
                     trend_txt = "⚪ CHOP"
 
                 setup_txt = "⚪ WAITING"
-                if trend_txt == "🟢 BULLISH" and closes[-1] > closes[-2] and closes[-1] > ema9 and vol_spike >= 1.05:
+                if trend_txt == "🟢 BULLISH" and closes[-1] > ema9 and (closes[-1] > closes[-2] or closes[-1] > m1[-1][1]):
                     setup_txt = "🔥 BUY READY"
-                elif trend_txt == "🔴 BEARISH" and closes[-1] < closes[-2] and closes[-1] < ema9 and vol_spike >= 1.05:
+                elif trend_txt == "🔴 BEARISH" and closes[-1] < ema9 and (closes[-1] < closes[-2] or closes[-1] < m1[-1][1]):
                     setup_txt = "🔥 SHORT READY"
 
-                report_lines.append(f"{symbol:11s} | {cmp:<9.4f} | {ema9:<9.4f} | {ema20:<9.4f} | {trend_txt:<10s} | {vol_spike:.2f}x | {setup_txt}")
+                report_lines.append(f"{symbol:11s} | {cmp:<9.4f} | {ema9:<9.4f} | {ema20:<9.4f} | {trend_txt:<10s} | {setup_txt}")
             except Exception as e:
-                report_lines.append(f"{symbol:11s} | {'ERROR':<9s} | {'--':<9s} | {'--':<9s} | {'ERROR':<10s} | {'--':<6s} | ⚠️ {str(e)[:15]}")
+                report_lines.append(f"{symbol:11s} | {'ERROR':<9s} | {'--':<9s} | {'--':<9s} | {'ERROR':<10s} | ⚠️ {str(e)[:15]}")
 
         nav_bar = f"<p><b>Status:</b> {status_txt} | <b>Active:</b> {slot_txt}</p><p><a href='/today'>⬅️ Back to Dashboard</a> | <a href='/scan-now'>🔄 Refresh Top 20</a> | <a href='/scan-now?all=true'>🌐 Scan All 45</a></p>"
         return f"<h2>⚡ 1-Minute 9-20 EMA Scalper Diagnostics</h2>{nav_bar}<pre>" + "\n".join(report_lines) + "</pre>", 200
@@ -1180,7 +1159,7 @@ def today_report_endpoint(date_override=None):
         <body>
             <div class="container">
                 <h1>⚡ 1-Minute 9 & 20 EMA Scalper</h1>
-                <p><b>Date:</b> {target_date} | <b>Strategy:</b> 9-20 EMA Crossover & Trailing Momentum (Long + Short)</p>
+                <p><b>Date:</b> {target_date} | <b>Strategy:</b> 9-20 EMA Crossover & Trailing Momentum (Long + Short - Pure Price Action)</p>
 
                 <!-- 1-Click Mobile Control Panel -->
                 <div class="ctrl-panel">
@@ -1236,7 +1215,7 @@ def status_endpoint():
         active_list = list(ACTIVE_TRADES.keys())
     return {
         'auto_trading_enabled': AUTO_TRADING_ENABLED,
-        'strategy': '9-20 EMA 1-Minute Scalper (Long + Short)',
+        'strategy': '9-20 EMA 1-Minute Scalper (Long + Short - Pure Price Action)',
         'trades_executed_today': daily_count,
         'active_positions': active_list
     }, 200
@@ -1254,6 +1233,7 @@ def start_auto_trading():
         "🟢 <b>1-MIN EMA SCALPER ACTIVATED!</b>\n\n"
         "• Auto-order execution on CoinDCX is now <b>LIVE</b>.\n"
         "• Both LONG and SHORT setups will execute automatically.\n"
+        "• Strategy: Pure 9/20 EMA (Trader Pankaj Gupta rules).\n"
         "• Turn OFF anytime via /stop or dashboard button."
     )
     return """
@@ -1367,7 +1347,7 @@ def run_telegram_command_listener():
                             reply_user(tok, user_chat_id, (
                                 f"📊 <b>1-MIN EMA SCALPER STATUS:</b>\n\n"
                                 f"• <b>Auto-Trading:</b> {'🟢 ACTIVE (LIVE)' if AUTO_TRADING_ENABLED else '🛑 PAUSED'}\n"
-                                f"• <b>Strategy:</b> 9 & 20 EMA 1-Minute Scalper (Long + Short)\n"
+                                f"• <b>Strategy:</b> 9 & 20 EMA 1-Minute Scalper (Pure Price Action)\n"
                                 f"• <b>Today's Trades:</b> {daily_count}\n"
                                 f"• <b>Active Positions:</b> {', '.join(active_list) if active_list else 'None'}\n"
                                 f"• <b>Risk per Trade:</b> Strict -0.6% SL & 9 EMA Trailing"
@@ -1448,7 +1428,7 @@ def start_background_loop():
 
     send_telegram_message(
         "⚡ <b>1-MINUTE 9 & 20 EMA SCALPING BOT DEPLOYED!</b>\n\n"
-        "• <b>Strategy:</b> 9-20 EMA Crossover & Pullback Momentum\n"
+        "• <b>Strategy:</b> Pure 9-20 EMA (Trader Pankaj Gupta Rules - ZERO Volume Filter)\n"
         "• <b>Timeframe:</b> 1-Minute (Ultra-fast execution)\n"
         "• <b>Modes:</b> Both 🟢 LONG and 🔴 SHORT trades active\n"
         "• <b>Risk Control:</b> Strict ~0.6% SL & 9 EMA Trailing Exits\n"
