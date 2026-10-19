@@ -101,7 +101,7 @@ COINDCX_PAIR_ALIASES = {
     'BTT': '1000BTT'
 }
 
-SYMBOL_COOLDOWN_SECONDS = 3600  # 1 Hour cooldown per symbol after exit
+SYMBOL_COOLDOWN_SECONDS = 3600  # 1 Hour cooldown per symbol after successful trade exit
 
 # ==============================================================================
 # 3. PERMANENT AUDIT JOURNAL & HISTORY LOGGER
@@ -199,11 +199,6 @@ def fetch_klines(symbol, interval='1m', limit=35):
     futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin).upper()
     binance_sym = symbol.replace('-', '').upper()
 
-    # Resilient non-geo-blocked endpoints list:
-    # 1. Binance Vision Data Mirror (Public data mirror, open globally without US restriction)
-    # 2. Bybit Linear Futures (Globally open, fast, high volume)
-    # 3. CoinDCX Public Candles (Native exchange candles)
-    # 4. Standard Binance endpoints (fapi / api fallback)
     endpoints = [
         ("binance_vision", f"https://data-api.binance.vision/api/v3/klines?symbol={binance_sym}&interval={interval}&limit={limit}"),
         ("bybit", f"https://api.bybit.com/v5/market/kline?category=linear&symbol={binance_sym}&interval=1&limit={limit}"),
@@ -222,22 +217,15 @@ def fetch_klines(symbol, interval='1m', limit=35):
                 raw_bytes = resp.read()
                 data = json.loads(raw_bytes.decode('utf-8'))
 
-                # Case 1: Binance format (list of lists)
                 if isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
                     candles = []
                     for k in data:
                         candles.append([
-                            float(k[0]), # open_time
-                            float(k[1]), # open
-                            float(k[2]), # high
-                            float(k[3]), # low
-                            float(k[4]), # close
-                            float(k[5])  # volume
+                            float(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])
                         ])
                     if len(candles) >= 15:
                         return candles[-limit:]
 
-                # Case 2: Bybit v5 format
                 elif isinstance(data, dict) and data.get("result", {}).get("list"):
                     raw_list = data["result"]["list"]
                     if raw_list and isinstance(raw_list, list):
@@ -245,28 +233,18 @@ def fetch_klines(symbol, interval='1m', limit=35):
                         candles = []
                         for k in sorted_list:
                             candles.append([
-                                float(k[0]), # open_time
-                                float(k[1]), # open
-                                float(k[2]), # high
-                                float(k[3]), # low
-                                float(k[4]), # close
-                                float(k[5])  # volume
+                                float(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])
                             ])
                         if len(candles) >= 15:
                             return candles[-limit:]
 
-                # Case 3: CoinDCX format (list of dicts)
                 elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
                     sorted_data = sorted(data, key=lambda x: x.get('time', 0))
                     candles = []
                     for k in sorted_data:
                         candles.append([
-                            float(k.get('time', 0)),
-                            float(k.get('open', 0)),
-                            float(k.get('high', 0)),
-                            float(k.get('low', 0)),
-                            float(k.get('close', 0)),
-                            float(k.get('volume', 0))
+                            float(k.get('time', 0)), float(k.get('open', 0)), float(k.get('high', 0)),
+                            float(k.get('low', 0)), float(k.get('close', 0)), float(k.get('volume', 0))
                         ])
                     if len(candles) >= 15:
                         return candles[-limit:]
@@ -280,7 +258,6 @@ def calculate_ema_series(prices, period):
         return [prices[-1]] * len(prices) if prices else []
     multiplier = 2.0 / (period + 1.0)
     ema_vals = []
-    # Seed with SMA
     sma = sum(prices[:period]) / period
     for _ in range(period - 1):
         ema_vals.append(sma)
@@ -428,47 +405,57 @@ def extract_exchange_tpsl(p):
 
 def recover_live_coindcx_positions():
     pos_list = fetch_all_coindcx_live_positions()
-    if not pos_list or not isinstance(pos_list, list): return
-
+    live_open_symbols = set()
     recovered_count = 0
-    for p in pos_list:
-        if not isinstance(p, dict) or not is_position_open(p): continue
-        qty = extract_pos_qty(p)
-        if qty <= 0: continue
 
-        p_pair = str(p.get('pair', p.get('market', p.get('symbol', '')))).upper()
-        raw_c = p_pair.replace("B-", "").replace("_USDT", "").replace("USDT", "").replace("1000", "")
-        sym = f"{raw_c}-USDT"
-        entry_p = float(p.get('avg_price', 0) or p.get('entry_price', 0) or p.get('price', 0))
-        if entry_p <= 0: continue
+    if isinstance(pos_list, list):
+        for p in pos_list:
+            if not isinstance(p, dict) or not is_position_open(p): continue
+            qty = extract_pos_qty(p)
+            if qty <= 0: continue
 
-        side_str = str(p.get('side', p.get('order_type', 'buy'))).lower()
-        side = "SHORT" if ('short' in side_str or 'sell' in side_str) else "LONG"
+            p_pair = str(p.get('pair', p.get('market', p.get('symbol', '')))).upper()
+            raw_c = p_pair.replace("B-", "").replace("_USDT", "").replace("USDT", "").replace("1000", "")
+            sym = f"{raw_c}-USDT"
+            live_open_symbols.add(sym)
 
-        with active_trades_lock:
-            if sym not in ACTIVE_TRADES:
-                tp_dist = entry_p * 0.010
-                tp_val = round(entry_p - tp_dist if side == "SHORT" else entry_p + tp_dist, 4)
-                sl_val = round(entry_p + entry_p * 0.006 if side == "SHORT" else entry_p - entry_p * 0.006, 4)
+            entry_p = float(p.get('avg_price', 0) or p.get('entry_price', 0) or p.get('price', 0))
+            if entry_p <= 0: continue
 
-                ACTIVE_TRADES[sym] = {
-                    'entry_price': entry_p,
-                    'total_qty': qty,
-                    'remaining_qty': qty,
-                    'side': side,
-                    'tp1': tp_val,
-                    'sl': sl_val,
-                    'initial_tp': tp_val,
-                    'initial_sl': sl_val,
-                    'manual_override': False,
-                    'entry_time': time.time(),
-                    'highest_price': entry_p,
-                    'lowest_price': entry_p,
-                    'leverage': 7
-                }
-                recovered_count += 1
+            side_str = str(p.get('side', p.get('order_type', 'buy'))).lower()
+            side = "SHORT" if ('short' in side_str or 'sell' in side_str) else "LONG"
+
+            with active_trades_lock:
+                if sym not in ACTIVE_TRADES:
+                    tp_dist = entry_p * 0.010
+                    tp_val = round(entry_p - tp_dist if side == "SHORT" else entry_p + tp_dist, 4)
+                    sl_val = round(entry_p + entry_p * 0.006 if side == "SHORT" else entry_p - entry_p * 0.006, 4)
+
+                    ACTIVE_TRADES[sym] = {
+                        'entry_price': entry_p,
+                        'total_qty': qty,
+                        'remaining_qty': qty,
+                        'side': side,
+                        'tp1': tp_val,
+                        'sl': sl_val,
+                        'initial_tp': tp_val,
+                        'initial_sl': sl_val,
+                        'manual_override': False,
+                        'entry_time': time.time(),
+                        'highest_price': entry_p,
+                        'lowest_price': entry_p,
+                        'leverage': 7
+                    }
+                    recovered_count += 1
+
+    # PRUNE STALE POSITIONS: Remove any trades from ACTIVE_TRADES that are no longer open on CoinDCX
+    with active_trades_lock:
+        stale_syms = [s for s in list(ACTIVE_TRADES.keys()) if s not in live_open_symbols]
+        for s in stale_syms:
+            ACTIVE_TRADES.pop(s, None)
+
+    save_active_trades()
     if recovered_count > 0:
-        save_active_trades()
         print(f"✅ Successfully recovered {recovered_count} active position(s) from CoinDCX!")
 
 # ==============================================================================
@@ -477,7 +464,7 @@ def recover_live_coindcx_positions():
 def execute_coindcx_futures_trade(symbol, side="buy", cmp=0.0, margin_inr=1000.0, leverage=7, custom_quantity=None, is_close=False):
     """
     Executes Market Orders directly on CoinDCX Futures.
-    Never blocks the scanner; tries variants with fast response and logs exact exchange notices.
+    Never blocks the scanner; captures exact exchange notices.
     """
     if not COINDCX_API_KEY or not COINDCX_SECRET_KEY:
         return {'success': False, 'error': 'CoinDCX API Keys not configured.'}
@@ -690,7 +677,7 @@ def run_scan():
             if curr_state.get(f"sl_banned_{symbol}") == today_str:
                 continue
 
-            # Check 1-Hour Symbol Cooldown
+            # Check Symbol Cooldown
             last_traded = curr_state.get(f"last_traded_{symbol}", 0)
             if time.time() - last_traded < SYMBOL_COOLDOWN_SECONDS:
                 continue
@@ -741,9 +728,10 @@ def run_scan():
             # ------------------------------------------------------------------
             is_long_crossover = (prev_ema9 <= prev_ema20 or prev2_ema9 <= prev2_ema20) and (curr_ema9 > curr_ema20)
             is_long_pullback = (curr_ema9 > curr_ema20) and (min(lows[-2:]) <= curr_ema9 * 1.001) and (cmp > curr_ema9)
-            is_long_confirmed = (cmp > curr_open) and (cmp > curr_ema9) and (cmp > curr_ema20)
+            is_long_breakout = (curr_ema9 > curr_ema20) and (cmp > closes[-2]) and (cmp > curr_ema9) and (vol_spike >= 1.05)
+            is_long_confirmed = (cmp > curr_open or cmp > closes[-2]) and (cmp > curr_ema9) and (cmp > curr_ema20)
 
-            if (is_long_crossover or is_long_pullback) and is_long_confirmed:
+            if (is_long_crossover or is_long_pullback or is_long_breakout) and is_long_confirmed:
                 swing_low = min(lows[-6:])
                 raw_sl = min(swing_low * 0.9995, curr_ema20 * 0.9990)
                 sl_dist = cmp - raw_sl
@@ -752,7 +740,15 @@ def run_scan():
                 else: raw_sl = round(raw_sl, 4)
 
                 tp1 = round(max(cmp + (cmp - raw_sl) * 1.5, cmp * 1.0090), 4)
-                setup_title = "9-20 EMA LONG CROSSOVER 🚀" if is_long_crossover else "9 EMA PULLBACK & BOUNCE 🟢"
+                if is_long_crossover:
+                    setup_title = "9-20 EMA LONG CROSSOVER 🚀"
+                    score = 100
+                elif is_long_pullback:
+                    setup_title = "9 EMA PULLBACK & BOUNCE 🟢"
+                    score = 90
+                else:
+                    setup_title = "1M MOMENTUM BREAKOUT 💥"
+                    score = 85
 
                 candidates.append({
                     'symbol': symbol,
@@ -764,7 +760,7 @@ def run_scan():
                     'vol_spike': vol_spike,
                     'ema9': curr_ema9,
                     'ema20': curr_ema20,
-                    'score': 100 if is_long_crossover else 85
+                    'score': score
                 })
                 continue
 
@@ -773,9 +769,10 @@ def run_scan():
             # ------------------------------------------------------------------
             is_short_crossover = (prev_ema9 >= prev_ema20 or prev2_ema9 >= prev2_ema20) and (curr_ema9 < curr_ema20)
             is_short_pullback = (curr_ema9 < curr_ema20) and (max(highs[-2:]) >= curr_ema9 * 0.999) and (cmp < curr_ema9)
-            is_short_confirmed = (cmp < curr_open) and (cmp < curr_ema9) and (cmp < curr_ema20)
+            is_short_breakdown = (curr_ema9 < curr_ema20) and (cmp < closes[-2]) and (cmp < curr_ema9) and (vol_spike >= 1.05)
+            is_short_confirmed = (cmp < curr_open or cmp < closes[-2]) and (cmp < curr_ema9) and (cmp < curr_ema20)
 
-            if (is_short_crossover or is_short_pullback) and is_short_confirmed:
+            if (is_short_crossover or is_short_pullback or is_short_breakdown) and is_short_confirmed:
                 swing_high = max(highs[-6:])
                 raw_sl = max(swing_high * 1.0005, curr_ema20 * 1.0010)
                 sl_dist = raw_sl - cmp
@@ -784,7 +781,15 @@ def run_scan():
                 else: raw_sl = round(raw_sl, 4)
 
                 tp1 = round(min(cmp - (raw_sl - cmp) * 1.5, cmp * 0.9910), 4)
-                setup_title = "9-20 EMA SHORT CROSSOVER 📉" if is_short_crossover else "9 EMA PULLBACK & REJECT 🔴"
+                if is_short_crossover:
+                    setup_title = "9-20 EMA SHORT CROSSOVER 📉"
+                    score = 100
+                elif is_short_pullback:
+                    setup_title = "9 EMA PULLBACK & REJECT 🔴"
+                    score = 90
+                else:
+                    setup_title = "1M MOMENTUM BREAKDOWN 💥"
+                    score = 85
 
                 candidates.append({
                     'symbol': symbol,
@@ -796,7 +801,7 @@ def run_scan():
                     'vol_spike': vol_spike,
                     'ema9': curr_ema9,
                     'ema20': curr_ema20,
-                    'score': 100 if is_short_crossover else 85
+                    'score': score
                 })
         except Exception: pass
 
@@ -882,7 +887,8 @@ def run_scan():
             # 100% TRANSPARENCY ON COINDCX NOTICES & REJECTIONS
             err_reason = trade_res.get('error', 'Unknown Error')
             log_trade_event(symbol, "CANCELLED", {"cmp": cmp, "error": err_reason, "side": side})
-            curr_state[f"last_traded_{symbol}"] = time.time()
+            # Lock for only 2 minutes on failed order attempt instead of 1 hour
+            curr_state[f"last_traded_{symbol}"] = time.time() - (SYMBOL_COOLDOWN_SECONDS - 120)
             save_state(curr_state)
 
             notice_msg = (
@@ -891,7 +897,7 @@ def run_scan():
                 f"<b>CMP:</b> ${cmp} | <b>Target:</b> ${tp1} | <b>SL:</b> ${sl}\n\n"
                 f"⚠️ <b>COINDCX EXECUTION NOTICE:</b>\n"
                 f"<code>{err_reason}</code>\n\n"
-                f"<i>Cooldown locked for 1 hour to prevent fee drain.</i>"
+                f"<i>Cooldown locked for 2 minutes before retry.</i>"
             )
             send_telegram_message(notice_msg)
 
@@ -1030,7 +1036,6 @@ def monitor_active_positions():
                         with active_trades_lock: ACTIVE_TRADES.pop(symbol, None)
                         save_active_trades()
 
-                        # 1-Hour Lockout on this symbol to prevent revenge trading
                         st = load_state()
                         st[f"last_traded_{symbol}"] = time.time()
                         save_state(st)
@@ -1077,8 +1082,16 @@ def monitor_active_positions():
 def scan_now_endpoint():
     try:
         today_str = get_ist_now().strftime("%d-%m-%Y")
+        with active_trades_lock:
+            open_count = len(ACTIVE_TRADES)
+            open_names = list(ACTIVE_TRADES.keys())
+        
+        status_txt = "🟢 LIVE (ENABLED)" if AUTO_TRADING_ENABLED else "🛑 PAUSED (OFF)"
+        slot_txt = f"{open_count} / 2 Positions Open" + (f" ({', '.join(open_names)})" if open_names else " (Slots Available)")
+
         report_lines = [
             f"⚡ REAL-TIME 1M 9-20 EMA SCALPER DIAGNOSTICS ({today_str})",
+            f"Engine Status: {status_txt} | Active Slots: {slot_txt}",
             f"{'='*95}",
             f"{'SYMBOL':11s} | {'CMP':<9s} | {'9 EMA':<9s} | {'20 EMA':<9s} | {'TREND':<10s} | {'VOL':<6s} | {'SETUP'}",
             f"{'-'*95}"
@@ -1117,7 +1130,7 @@ def scan_now_endpoint():
             except Exception as e:
                 report_lines.append(f"{symbol:11s} | {'ERROR':<9s} | {'--':<9s} | {'--':<9s} | {'ERROR':<10s} | {'--':<6s} | ⚠️ {str(e)[:15]}")
 
-        nav_bar = "<p><a href='/today'>⬅️ Back to Dashboard</a> | <a href='/scan-now'>🔄 Refresh Top 20</a> | <a href='/scan-now?all=true'>🌐 Scan All 45</a></p>"
+        nav_bar = f"<p><b>Status:</b> {status_txt} | <b>Active:</b> {slot_txt}</p><p><a href='/today'>⬅️ Back to Dashboard</a> | <a href='/scan-now'>🔄 Refresh Top 20</a> | <a href='/scan-now?all=true'>🌐 Scan All 45</a></p>"
         return f"<h2>⚡ 1-Minute 9-20 EMA Scalper Diagnostics</h2>{nav_bar}<pre>" + "\n".join(report_lines) + "</pre>", 200
     except Exception as e:
         return f"<h3>⚠️ Scan Error: {e}</h3>", 500
@@ -1407,7 +1420,6 @@ def start_background_loop():
                     finally: scan_lock.release()
             except Exception as e:
                 print(f"Scalp scan exception: {e}")
-            # Fast 1-Minute Polling (15 seconds loop)
             time.sleep(15)
 
     def run_keep_alive_loop():
