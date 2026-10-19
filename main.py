@@ -101,7 +101,7 @@ COINDCX_PAIR_ALIASES = {
     'BTT': '1000BTT'
 }
 
-SYMBOL_COOLDOWN_SECONDS = 3600  # 1 Hour cooldown per symbol after full trade exit
+SYMBOL_COOLDOWN_SECONDS = 120  # 2 Minutes cooldown per symbol for 1-minute scalping
 
 # ==============================================================================
 # 3. PERMANENT AUDIT JOURNAL & HISTORY LOGGER
@@ -148,7 +148,7 @@ def get_today_executed_trades_count():
         return len([e for e in events if e.get('date') == today_str and e.get('type') == 'EXECUTED'])
 
 # ==============================================================================
-# 4. TELEGRAM ENGINE (BULLETPROOF ALERT SYSTEM)
+# 4. TELEGRAM ENGINE (BULLETPROOF ALERT SYSTEM WITH PLAIN-TEXT FALLBACK)
 # ==============================================================================
 def send_telegram_message(text):
     if not TOKEN:
@@ -160,21 +160,50 @@ def send_telegram_message(text):
     ]))
     candidate_tokens = [t for t in candidate_tokens if t]
 
+    target_chats = [CHAT_ID]
+    st = load_state()
+    last_chat = st.get("last_telegram_chat_id")
+    if last_chat and str(last_chat) != str(CHAT_ID):
+        target_chats.append(str(last_chat))
+
     for tok in candidate_tokens:
-        try:
-            url = f"https://api.telegram.org/bot{tok}/sendMessage"
-            payload = {'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'HTML', 'disable_web_page_preview': True}
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode('utf-8'),
-                headers={'Content-Type': 'application/json'},
-                method='POST'
-            )
-            with urllib.request.urlopen(req, context=ctx, timeout=8) as response:
-                if response.status == 200:
-                    return True
-        except Exception as e:
-            print(f"Telegram error on token {tok[:10]}...: {e}")
+        for cid in target_chats:
+            sent = False
+            # Attempt 1: Rich HTML format
+            try:
+                url = f"https://api.telegram.org/bot{tok}/sendMessage"
+                payload = {'chat_id': cid, 'text': text, 'parse_mode': 'HTML', 'disable_web_page_preview': True}
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode('utf-8'),
+                    headers={'Content-Type': 'application/json'},
+                    method='POST'
+                )
+                with urllib.request.urlopen(req, context=ctx, timeout=6) as response:
+                    if response.status in [200, 201]:
+                        sent = True
+            except Exception:
+                pass
+
+            # Attempt 2: Bulletproof Plain-Text Fallback (Guarantees delivery even if HTML tags error)
+            if not sent:
+                try:
+                    clean_text = re.sub(r'<[^>]+>', '', text)
+                    url = f"https://api.telegram.org/bot{tok}/sendMessage"
+                    payload = {'chat_id': cid, 'text': clean_text, 'disable_web_page_preview': True}
+                    req = urllib.request.Request(
+                        url,
+                        data=json.dumps(payload).encode('utf-8'),
+                        headers={'Content-Type': 'application/json'},
+                        method='POST'
+                    )
+                    with urllib.request.urlopen(req, context=ctx, timeout=6) as response:
+                        if response.status in [200, 201]:
+                            sent = True
+                except Exception as e:
+                    print(f"Telegram alert delivery error: {e}")
+            if sent:
+                return True
     return False
 
 def clear_telegram_webhooks():
@@ -643,12 +672,13 @@ def sync_all_open_positions_tpsl():
     return synced_results
 
 # ==============================================================================
-# 8. 9 EMA & 20 EMA 1-MINUTE SCALPING ENGINE (PURE PRICE ACTION & EMA ONLY)
+# 8. 9 EMA & 20 EMA 1-MINUTE SCALPING ENGINE (DIRECT INSTANT EXECUTION)
 # ==============================================================================
 def run_scan():
     """
     1-Minute Scalping Engine based purely on Trader Pankaj Gupta's 9 EMA & 20 EMA Blueprint.
-    ZERO volume requirement. Executes Long & Short trades instantly when EMA rules trigger.
+    ZERO volume requirement.
+    ⚡ Core Principle: Never block on heavy queries. Fire orders directly the moment criteria are met!
     """
     today_str = get_ist_now().strftime("%d-%m-%Y")
     curr_state = load_state()
@@ -658,23 +688,25 @@ def run_scan():
         if len(ACTIVE_TRADES) >= 2:
             return
 
-    candidates = []
-
     for symbol in WATCHLIST:
         try:
             time.sleep(0.01)
+
+            # Check if slots filled during this loop
+            with active_trades_lock:
+                if len(ACTIVE_TRADES) >= 2:
+                    return
+                if symbol in ACTIVE_TRADES:
+                    continue
 
             # Check Stop Loss Day Ban
             if curr_state.get(f"sl_banned_{symbol}") == today_str:
                 continue
 
-            # Check Symbol Cooldown
+            # Check Symbol Cooldown (Fast 2-minute cooldown)
             last_traded = curr_state.get(f"last_traded_{symbol}", 0)
             if time.time() - last_traded < SYMBOL_COOLDOWN_SECONDS:
                 continue
-
-            with active_trades_lock:
-                if symbol in ACTIVE_TRADES: continue
 
             # Fetch 1-Minute Candlesticks
             m1_klines = fetch_klines(symbol, '1m', 35)
@@ -726,25 +758,87 @@ def run_scan():
                 tp1 = round(max(cmp + (cmp - raw_sl) * 1.5, cmp * 1.0090), 4)
                 if is_long_crossover:
                     setup_title = "9-20 EMA LONG CROSSOVER 🚀"
-                    score = 100
                 elif is_long_pullback:
                     setup_title = "9 EMA PULLBACK & BOUNCE 🟢"
-                    score = 90
                 else:
                     setup_title = "1M MOMENTUM BREAKOUT 💥"
-                    score = 85
 
-                candidates.append({
-                    'symbol': symbol,
-                    'side': 'LONG',
-                    'setup_name': setup_title,
-                    'cmp': cmp,
-                    'sl': raw_sl,
-                    'tp1': tp1,
-                    'ema9': curr_ema9,
-                    'ema20': curr_ema20,
-                    'score': score
-                })
+                # ⚡ DIRECT INSTANT EXECUTION: FIRE IMMEDIATELY THE MOMENT CRITERIA ARE MET!
+                coin_margin = 1000.0
+                lev_num = 7
+                if AUTO_TRADING_ENABLED:
+                    trade_res = execute_coindcx_futures_trade(symbol=symbol, side="buy", cmp=cmp, margin_inr=coin_margin, leverage=lev_num, is_close=False)
+                else:
+                    trade_res = {'success': False, 'error': 'Auto-trading PAUSED via Mobile Telegram / Web button.'}
+
+                if trade_res.get('success'):
+                    order_id = trade_res.get('order_id')
+                    qty = trade_res.get('quantity')
+                    log_trade_event(symbol, "EXECUTED", {"cmp": cmp, "quantity": qty, "order_id": order_id, "margin": coin_margin, "side": "LONG"})
+
+                    with active_trades_lock:
+                        ACTIVE_TRADES[symbol] = {
+                            'entry_price': cmp,
+                            'side': 'LONG',
+                            'total_qty': qty,
+                            'remaining_qty': qty,
+                            'tp1': tp1,
+                            'sl': raw_sl,
+                            'initial_tp': tp1,
+                            'initial_sl': raw_sl,
+                            'manual_override': False,
+                            'highest_price': cmp,
+                            'lowest_price': cmp,
+                            'leverage': lev_num,
+                            'entry_time': time.time()
+                        }
+                    save_active_trades()
+
+                    curr_state[f"last_traded_{symbol}"] = time.time()
+                    save_state(curr_state)
+
+                    threading.Thread(target=auto_place_coindcx_native_tpsl, args=(symbol, tp1, raw_sl, "LONG"), daemon=True).start()
+
+                    sl_dist_pct = abs(cmp - raw_sl) / cmp * 100.0
+                    tp_dist_pct = abs(tp1 - cmp) / cmp * 100.0
+
+                    msg = (
+                        f"🟢 <b>1-MIN EMA SCALP SIGNAL! (LONG)</b>\n\n"
+                        f"<b>Pair:</b> <code>{symbol}</code> (Futures)\n"
+                        f"<b>Setup:</b> <b>{setup_title}</b>\n"
+                        f"🔥 <b>Strategy:</b> <code>Trader Pankaj Gupta 9/20 EMA</code>\n\n"
+                        f"⚙️ <b>Trade Parameters:</b>\n"
+                        f"• <b>Direction:</b> <code>LONG</code> (7x Isolated)\n"
+                        f"• <b>Entry CMP:</b> <code>${cmp}</code>\n"
+                        f"🛑 <b>Stop Loss (SL):</b> <code>${raw_sl}</code> (-{sl_dist_pct:.2f}% move / -{sl_dist_pct * lev_num:.1f}% ROE)\n"
+                        f"🎯 <b>Target (TP1):</b> <code>${tp1}</code> (+{tp_dist_pct:.2f}% move / +{tp_dist_pct * lev_num:.1f}% ROE)\n"
+                        f"⚡ <b>Trailing Guide:</b> Exit immediately on 1M close beyond 9 EMA!\n\n"
+                        f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
+                        f"• Order ID: <code>{order_id}</code>\n"
+                        f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
+                        f"🔄 <i>Native CoinDCX TP/SL auto-fitting active...</i>"
+                    )
+                    send_telegram_message(msg)
+
+                    with active_trades_lock:
+                        if len(ACTIVE_TRADES) >= 2:
+                            return
+                else:
+                    err_reason = trade_res.get('error', 'Unknown Error')
+                    log_trade_event(symbol, "CANCELLED", {"cmp": cmp, "error": err_reason, "side": "LONG"})
+                    curr_state[f"last_traded_{symbol}"] = time.time()
+                    save_state(curr_state)
+
+                    clean_err = re.sub(r'<[^>]+>', ' ', str(err_reason))
+                    notice_msg = (
+                        f"⚡ <b>SCALP SIGNAL DETECTED: {symbol} (LONG)</b>\n\n"
+                        f"<b>Setup:</b> {setup_title}\n"
+                        f"<b>CMP:</b> ${cmp} | <b>Target:</b> ${tp1} | <b>SL:</b> ${raw_sl}\n\n"
+                        f"⚠️ <b>COINDCX EXECUTION NOTICE:</b>\n"
+                        f"<code>{clean_err[:120]}</code>\n\n"
+                        f"<i>Cooldown locked for 2 minutes before retry.</i>"
+                    )
+                    send_telegram_message(notice_msg)
                 continue
 
             # ------------------------------------------------------------------
@@ -766,119 +860,89 @@ def run_scan():
                 tp1 = round(min(cmp - (raw_sl - cmp) * 1.5, cmp * 0.9910), 4)
                 if is_short_crossover:
                     setup_title = "9-20 EMA SHORT CROSSOVER 📉"
-                    score = 100
                 elif is_short_pullback:
                     setup_title = "9 EMA PULLBACK & REJECT 🔴"
-                    score = 90
                 else:
                     setup_title = "1M MOMENTUM BREAKDOWN 💥"
-                    score = 85
 
-                candidates.append({
-                    'symbol': symbol,
-                    'side': 'SHORT',
-                    'setup_name': setup_title,
-                    'cmp': cmp,
-                    'sl': raw_sl,
-                    'tp1': tp1,
-                    'ema9': curr_ema9,
-                    'ema20': curr_ema20,
-                    'score': score
-                })
+                # ⚡ DIRECT INSTANT EXECUTION: FIRE IMMEDIATELY THE MOMENT CRITERIA ARE MET!
+                coin_margin = 1000.0
+                lev_num = 7
+                if AUTO_TRADING_ENABLED:
+                    trade_res = execute_coindcx_futures_trade(symbol=symbol, side="sell", cmp=cmp, margin_inr=coin_margin, leverage=lev_num, is_close=False)
+                else:
+                    trade_res = {'success': False, 'error': 'Auto-trading PAUSED via Mobile Telegram / Web button.'}
+
+                if trade_res.get('success'):
+                    order_id = trade_res.get('order_id')
+                    qty = trade_res.get('quantity')
+                    log_trade_event(symbol, "EXECUTED", {"cmp": cmp, "quantity": qty, "order_id": order_id, "margin": coin_margin, "side": "SHORT"})
+
+                    with active_trades_lock:
+                        ACTIVE_TRADES[symbol] = {
+                            'entry_price': cmp,
+                            'side': 'SHORT',
+                            'total_qty': qty,
+                            'remaining_qty': qty,
+                            'tp1': tp1,
+                            'sl': raw_sl,
+                            'initial_tp': tp1,
+                            'initial_sl': raw_sl,
+                            'manual_override': False,
+                            'highest_price': cmp,
+                            'lowest_price': cmp,
+                            'leverage': lev_num,
+                            'entry_time': time.time()
+                        }
+                    save_active_trades()
+
+                    curr_state[f"last_traded_{symbol}"] = time.time()
+                    save_state(curr_state)
+
+                    threading.Thread(target=auto_place_coindcx_native_tpsl, args=(symbol, tp1, raw_sl, "SHORT"), daemon=True).start()
+
+                    sl_dist_pct = abs(raw_sl - cmp) / cmp * 100.0
+                    tp_dist_pct = abs(cmp - tp1) / cmp * 100.0
+
+                    msg = (
+                        f"🔴 <b>1-MIN EMA SCALP SIGNAL! (SHORT)</b>\n\n"
+                        f"<b>Pair:</b> <code>{symbol}</code> (Futures)\n"
+                        f"<b>Setup:</b> <b>{setup_title}</b>\n"
+                        f"🔥 <b>Strategy:</b> <code>Trader Pankaj Gupta 9/20 EMA</code>\n\n"
+                        f"⚙️ <b>Trade Parameters:</b>\n"
+                        f"• <b>Direction:</b> <code>SHORT</code> (7x Isolated)\n"
+                        f"• <b>Entry CMP:</b> <code>${cmp}</code>\n"
+                        f"🛑 <b>Stop Loss (SL):</b> <code>${raw_sl}</code> (-{sl_dist_pct:.2f}% move / -{sl_dist_pct * lev_num:.1f}% ROE)\n"
+                        f"🎯 <b>Target (TP1):</b> <code>${tp1}</code> (+{tp_dist_pct:.2f}% move / +{tp_dist_pct * lev_num:.1f}% ROE)\n"
+                        f"⚡ <b>Trailing Guide:</b> Exit immediately on 1M close beyond 9 EMA!\n\n"
+                        f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
+                        f"• Order ID: <code>{order_id}</code>\n"
+                        f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
+                        f"🔄 <i>Native CoinDCX TP/SL auto-fitting active...</i>"
+                    )
+                    send_telegram_message(msg)
+
+                    with active_trades_lock:
+                        if len(ACTIVE_TRADES) >= 2:
+                            return
+                else:
+                    err_reason = trade_res.get('error', 'Unknown Error')
+                    log_trade_event(symbol, "CANCELLED", {"cmp": cmp, "error": err_reason, "side": "SHORT"})
+                    curr_state[f"last_traded_{symbol}"] = time.time()
+                    save_state(curr_state)
+
+                    clean_err = re.sub(r'<[^>]+>', ' ', str(err_reason))
+                    notice_msg = (
+                        f"⚡ <b>SCALP SIGNAL DETECTED: {symbol} (SHORT)</b>\n\n"
+                        f"<b>Setup:</b> {setup_title}\n"
+                        f"<b>CMP:</b> ${cmp} | <b>Target:</b> ${tp1} | <b>SL:</b> ${raw_sl}\n\n"
+                        f"⚠️ <b>COINDCX EXECUTION NOTICE:</b>\n"
+                        f"<code>{clean_err[:120]}</code>\n\n"
+                        f"<i>Cooldown locked for 2 minutes before retry.</i>"
+                    )
+                    send_telegram_message(notice_msg)
+                continue
         except Exception: pass
-
-    # Sort candidates by setup conviction score
-    candidates.sort(key=lambda x: x['score'], reverse=True)
-    coin_margin = 1000.0
-    lev_num = 7
-
-    for cand in candidates:
-        with active_trades_lock:
-            if len(ACTIVE_TRADES) >= 2: break
-
-        symbol = cand['symbol']
-        side = cand['side']
-        cmp = cand['cmp']
-        sl = cand['sl']
-        tp1 = cand['tp1']
-        score = cand['score']
-        setup_name = cand['setup_name']
-
-        coindcx_side = "buy" if side == "LONG" else "sell"
-
-        # FIRE ORDER IMMEDIATELY (NON-BLOCKING)
-        if AUTO_TRADING_ENABLED:
-            trade_res = execute_coindcx_futures_trade(symbol=symbol, side=coindcx_side, cmp=cmp, margin_inr=coin_margin, leverage=lev_num, is_close=False)
-        else:
-            trade_res = {'success': False, 'error': 'Auto-trading PAUSED via Mobile Telegram / Web button.'}
-
-        if trade_res.get('success'):
-            order_id = trade_res.get('order_id')
-            qty = trade_res.get('quantity')
-            log_trade_event(symbol, "EXECUTED", {"cmp": cmp, "quantity": qty, "order_id": order_id, "margin": coin_margin, "side": side})
-
-            with active_trades_lock:
-                ACTIVE_TRADES[symbol] = {
-                    'entry_price': cmp,
-                    'side': side,
-                    'total_qty': qty,
-                    'remaining_qty': qty,
-                    'tp1': tp1,
-                    'sl': sl,
-                    'initial_tp': tp1,
-                    'initial_sl': sl,
-                    'manual_override': False,
-                    'highest_price': cmp,
-                    'lowest_price': cmp,
-                    'leverage': lev_num,
-                    'entry_time': time.time()
-                }
-            save_active_trades()
-
-            curr_state[f"last_traded_{symbol}"] = time.time()
-            save_state(curr_state)
-
-            # Auto-place Native CoinDCX Bracket TP/SL asynchronously in background thread
-            threading.Thread(target=auto_place_coindcx_native_tpsl, args=(symbol, tp1, sl, side), daemon=True).start()
-
-            sl_dist_pct = abs(cmp - sl) / cmp * 100.0
-            tp_dist_pct = abs(tp1 - cmp) / cmp * 100.0
-            icon = "🟢" if side == "LONG" else "🔴"
-
-            # FULL TRANSPARENCY TELEGRAM ALERT (PURE 9/20 EMA)
-            msg = (
-                f"{icon} <b>1-MIN EMA SCALP SIGNAL! ({side})</b>\n\n"
-                f"<b>Pair:</b> <code>{symbol}</code> (Futures)\n"
-                f"<b>Setup:</b> <b>{setup_name}</b>\n"
-                f"🔥 <b>Strategy:</b> <code>Trader Pankaj Gupta 9/20 EMA</code>\n\n"
-                f"⚙️ <b>Trade Parameters:</b>\n"
-                f"• <b>Direction:</b> <code>{side}</code> (7x Isolated)\n"
-                f"• <b>Entry CMP:</b> <code>${cmp}</code>\n"
-                f"🛑 <b>Stop Loss (SL):</b> <code>${sl}</code> (-{sl_dist_pct:.2f}% move / -{sl_dist_pct * lev_num:.1f}% ROE)\n"
-                f"🎯 <b>Target (TP1):</b> <code>${tp1}</code> (+{tp_dist_pct:.2f}% move / +{tp_dist_pct * lev_num:.1f}% ROE)\n"
-                f"⚡ <b>Trailing Guide:</b> Exit immediately on 1M close beyond 9 EMA!\n\n"
-                f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
-                f"• Order ID: <code>{order_id}</code>\n"
-                f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
-                f"🔄 <i>Native CoinDCX TP/SL auto-fitting active...</i>"
-            )
-            send_telegram_message(msg)
-            break
-        else:
-            err_reason = trade_res.get('error', 'Unknown Error')
-            log_trade_event(symbol, "CANCELLED", {"cmp": cmp, "error": err_reason, "side": side})
-            curr_state[f"last_traded_{symbol}"] = time.time() - (SYMBOL_COOLDOWN_SECONDS - 120)
-            save_state(curr_state)
-
-            notice_msg = (
-                f"⚡ <b>SCALP SIGNAL DETECTED: {symbol} ({side})</b>\n\n"
-                f"<b>Setup:</b> {setup_name}\n"
-                f"<b>CMP:</b> ${cmp} | <b>Target:</b> ${tp1} | <b>SL:</b> ${sl}\n\n"
-                f"⚠️ <b>COINDCX EXECUTION NOTICE:</b>\n"
-                f"<code>{err_reason}</code>\n\n"
-                f"<i>Cooldown locked for 2 minutes before retry.</i>"
-            )
-            send_telegram_message(notice_msg)
 
 # ==============================================================================
 # 9. REAL-TIME POSITION MONITORING & 9 EMA TRAILING EXITS
@@ -932,7 +996,6 @@ def monitor_active_positions():
                                     trade['manual_override'] = True
                                     if exch_tp: trade['tp1'] = exch_tp
                                     if exch_sl: trade['sl'] = exch_sl
-                                Exception
                                 save_active_trades()
                                 send_telegram_message(
                                     f"👤 <b>MANUAL COINDCX SL/TP DETECTED!</b>\n\n"
@@ -1294,7 +1357,14 @@ def run_telegram_command_listener():
             payload = {'chat_id': chat_id, 'text': text_reply, 'parse_mode': 'HTML'}
             req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'}, method='POST')
             with urllib.request.urlopen(req, context=ctx, timeout=5) as r: pass
-        except Exception: pass
+        except Exception:
+            try:
+                clean_reply = re.sub(r'<[^>]+>', '', text_reply)
+                url = f"https://api.telegram.org/bot{tok}/sendMessage"
+                payload = {'chat_id': chat_id, 'text': clean_reply}
+                req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'}, method='POST')
+                with urllib.request.urlopen(req, context=ctx, timeout=5) as r: pass
+            except Exception: pass
 
     while True:
         for tok in candidate_tokens:
@@ -1314,6 +1384,11 @@ def run_telegram_command_listener():
                             continue
 
                         user_chat_id = msg.get('chat', {}).get('id', CHAT_ID)
+                        if user_chat_id:
+                            st_chat = load_state()
+                            if st_chat.get('last_telegram_chat_id') != str(user_chat_id):
+                                st_chat['last_telegram_chat_id'] = str(user_chat_id)
+                                save_state(st_chat)
                         raw_text = msg.get('text', '').strip()
                         if not raw_text: continue
 
@@ -1400,7 +1475,7 @@ def start_background_loop():
                     finally: scan_lock.release()
             except Exception as e:
                 print(f"Scalp scan exception: {e}")
-            time.sleep(15)
+            time.sleep(10)
 
     def run_keep_alive_loop():
         time.sleep(15)
@@ -1429,6 +1504,7 @@ def start_background_loop():
     send_telegram_message(
         "⚡ <b>1-MINUTE 9 & 20 EMA SCALPING BOT DEPLOYED!</b>\n\n"
         "• <b>Strategy:</b> Pure 9-20 EMA (Trader Pankaj Gupta Rules - ZERO Volume Filter)\n"
+        "• <b>Execution:</b> Instant Direct Fire the Moment Criteria are Met\n"
         "• <b>Timeframe:</b> 1-Minute (Ultra-fast execution)\n"
         "• <b>Modes:</b> Both 🟢 LONG and 🔴 SHORT trades active\n"
         "• <b>Risk Control:</b> Strict ~0.6% SL & 9 EMA Trailing Exits\n"
