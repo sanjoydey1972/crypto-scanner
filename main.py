@@ -64,7 +64,7 @@ COINDCX_SECRET_KEY = os.environ.get("COINDCX_SECRET_KEY", "").strip() or os.envi
 ctx = ssl._create_unverified_context()
 
 # ==============================================================================
-# 2. WATCHLIST & CRYPTO PAIR ALIASES
+# 2. WATCHLIST (70 TOP HIGH-LIQUIDITY COINS) & CRYPTO PAIR ALIASES
 # ==============================================================================
 WATCHLIST = [
     # Top Tier & Majors
@@ -300,7 +300,7 @@ def eval_crossover_setup(klines, ema9_series, ema20_series):
        Never enter late in the middle of a dump or at bottom support!
     3. 20 EMA slope must agree with trade direction (rejecting flat sideways chop).
     4. Closed candle body must confirm direction (Red candle for Short, Green for Long).
-    5. Minimum EMA separation (>0.03%) to ignore glued, zero-momentum EMAs.
+    5. Minimum EMA separation (>0.025%) to ignore glued, zero-momentum EMAs.
     """
     if len(klines) < 10 or len(ema9_series) < 10 or len(ema20_series) < 10:
         return None, 0
@@ -319,13 +319,25 @@ def eval_crossover_setup(klines, ema9_series, ema20_series):
     if spread_pct < 0.00025:
         return None, 0
 
+    # -------------------------------------------------------------------------
     # 🔴 BEARISH DEATH CROSSOVER (SHORT)
+    # - Candle -3: 9 EMA was >= 20 EMA
+    # - Candle -2 (closed): 9 EMA crossed strictly < 20 EMA
+    # - Closed candle was BEARISH (Red body)
+    # - 20 EMA is flat or sloping DOWN
+    # -------------------------------------------------------------------------
     if e9_prev >= e20_prev and e9_closed < e20_closed:
         if closed_close <= closed_open:
             if e20_closed <= e20_prev * 1.0002:
                 return 'SHORT', 0
 
+    # -------------------------------------------------------------------------
     # 🟢 BULLISH GOLDEN CROSSOVER (LONG)
+    # - Candle -3: 9 EMA was <= 20 EMA
+    # - Candle -2 (closed): 9 EMA crossed strictly > 20 EMA
+    # - Closed candle was BULLISH (Green body)
+    # - 20 EMA is flat or sloping UP
+    # -------------------------------------------------------------------------
     if e9_prev <= e20_prev and e9_closed > e20_closed:
         if closed_close >= closed_open:
             if e20_closed >= e20_prev * 0.9998:
@@ -360,11 +372,13 @@ def fetch_all_coindcx_live_positions():
         "https://api.coindcx.com/exchange/v1/derivatives/futures/positions/active"
     ]
     ts_sec = int(time.time())
-    ts_ms = int(time.time() * 1000)
+    ts_ms = int(round(time.time() * 1000))
     body_variants = [
+        {"timestamp": ts_sec, "page": "1", "size": "50"},
+        {"timestamp": ts_sec, "page": "1", "size": "50", "margin_currency_short_name": ["USDT", "INR"]},
+        {"timestamp": ts_ms, "page": "1", "size": "50"},
         {"timestamp": ts_sec},
-        {"timestamp": ts_ms},
-        {"timestamp": ts_sec, "page": "1", "size": "50"}
+        {"timestamp": ts_ms}
     ]
     for url in endpoints:
         for body in body_variants:
@@ -422,8 +436,17 @@ def fetch_coindcx_position_details(symbol):
             qty = extract_pos_qty(p)
             pos_id = p.get('id') or p.get('position_id') or p.get('positionId') or p.get('id_')
             entry_p = float(p.get('avg_price', 0) or p.get('entry_price', 0) or p.get('price', 0))
-            side_str = str(p.get('side', p.get('order_type', 'buy'))).lower()
-            side = "SHORT" if ('short' in side_str or 'sell' in side_str) else "LONG"
+            
+            # Accurate side determination from active_pos sign or side field
+            active_pos_num = float(p.get('active_pos', 0) or 0)
+            if active_pos_num < 0:
+                side = "SHORT"
+            elif active_pos_num > 0:
+                side = "LONG"
+            else:
+                side_str = str(p.get('side', p.get('order_type', 'buy'))).lower()
+                side = "SHORT" if ('short' in side_str or 'sell' in side_str) else "LONG"
+                
             if pos_id:
                 return {
                     'pair': p_pair if p_pair else target_pair,
@@ -454,8 +477,14 @@ def recover_live_coindcx_positions():
             entry_p = float(p.get('avg_price', 0) or p.get('entry_price', 0) or p.get('price', 0))
             if entry_p <= 0: continue
 
-            side_str = str(p.get('side', p.get('order_type', 'buy'))).lower()
-            side = "SHORT" if ('short' in side_str or 'sell' in side_str) else "LONG"
+            active_pos_num = float(p.get('active_pos', 0) or 0)
+            if active_pos_num < 0:
+                side = "SHORT"
+            elif active_pos_num > 0:
+                side = "LONG"
+            else:
+                side_str = str(p.get('side', p.get('order_type', 'buy'))).lower()
+                side = "SHORT" if ('short' in side_str or 'sell' in side_str) else "LONG"
 
             with active_trades_lock:
                 if sym not in ACTIVE_TRADES:
@@ -491,7 +520,7 @@ def recover_live_coindcx_positions():
         print(f"✅ Successfully recovered {recovered_count} active position(s) from CoinDCX!")
 
 # ==============================================================================
-# 8. ORDER EXECUTION WITH LOT SIZE PRECISION NORMALIZATION & NATIVE TP/SL
+# 8. ORDER EXECUTION WITH LOT SIZE PRECISION NORMALIZATION
 # ==============================================================================
 def execute_coindcx_futures_trade(symbol, side="buy", cmp=0.0, margin_inr=1000.0, leverage=7, custom_quantity=None, is_close=False):
     if not COINDCX_API_KEY or not COINDCX_SECRET_KEY:
@@ -598,46 +627,82 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=0.0, margin_inr=1000.0
     last_err = " | ".join(err_logs) if err_logs else "Unknown Error"
     return {'success': False, 'error': last_err}
 
+def cancel_coindcx_position_orders(position_id):
+    """Cancels any prior TP/SL orders on this position before applying new ones."""
+    if not COINDCX_API_KEY or not COINDCX_SECRET_KEY or not position_id: return False
+    url = "https://api.coindcx.com/exchange/v1/derivatives/futures/positions/cancel_all_open_orders_for_position"
+    payloads = [
+        {"timestamp": int(round(time.time() * 1000)), "id": str(position_id)},
+        {"timestamp": int(time.time()), "id": str(position_id)}
+    ]
+    for body in payloads:
+        try:
+            json_body = json.dumps(body, separators=(',', ':'))
+            sig = hmac.new(COINDCX_SECRET_KEY.encode('utf-8'), json_body.encode('utf-8'), hashlib.sha256).hexdigest()
+            headers = {
+                'Content-Type': 'application/json',
+                'X-AUTH-APIKEY': COINDCX_API_KEY,
+                'X-AUTH-SIGNATURE': sig,
+                'User-Agent': 'Mozilla/5.0'
+            }
+            req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers, method='POST')
+            with urllib.request.urlopen(req, context=ctx, timeout=4) as resp:
+                if resp.status in [200, 201]:
+                    return True
+        except Exception:
+            pass
+    return False
+
 def apply_coindcx_native_tpsl(pair, position_id, target_price, stop_loss_price):
-    if not COINDCX_API_KEY or not COINDCX_SECRET_KEY: return False
+    """
+    Applies Native Take Profit & Stop Loss directly to CoinDCX Open Position.
+    First cancels existing position orders, then sends formatted TP/SL bracket.
+    Returns (success: bool, status_message: str)
+    """
+    if not COINDCX_API_KEY or not COINDCX_SECRET_KEY: 
+        return False, "API keys missing"
+
+    # Step 1: Clear any pre-existing TP/SL for this position to avoid 'already exists' rejection
+    cancel_coindcx_position_orders(position_id)
+
     url = "https://api.coindcx.com/exchange/v1/derivatives/futures/positions/create_tpsl"
+    ts_ms = int(round(time.time() * 1000))
     ts_sec = int(time.time())
-    ts_ms = int(time.time() * 1000)
 
     tp_str = str(round_coin_price(target_price))
     sl_str = str(round_coin_price(stop_loss_price))
 
     payload_variants = [
-        # 1. Official CoinDCX schema: seconds timestamp, string stop_price, order_type
-        {
-            "timestamp": ts_sec,
-            "id": str(position_id),
-            "take_profit": {"stop_price": tp_str, "order_type": "take_profit_market"},
-            "stop_loss": {"stop_price": sl_str, "order_type": "stop_market"}
-        },
-        # 2. Float values with seconds timestamp
-        {
-            "timestamp": ts_sec,
-            "id": str(position_id),
-            "take_profit": {"stop_price": float(target_price), "order_type": "take_profit_market"},
-            "stop_loss": {"stop_price": float(stop_loss_price), "order_type": "stop_market"}
-        },
-        # 3. With pair included
-        {
-            "timestamp": ts_sec,
-            "pair": pair,
-            "id": str(position_id),
-            "take_profit": {"stop_price": tp_str, "order_type": "take_profit_market"},
-            "stop_loss": {"stop_price": sl_str, "order_type": "stop_market"}
-        },
-        # 4. Milliseconds fallback
+        # 1. Official CoinDCX schema: ms timestamp, string stop_price, order_type
         {
             "timestamp": ts_ms,
             "id": str(position_id),
             "take_profit": {"stop_price": tp_str, "order_type": "take_profit_market"},
             "stop_loss": {"stop_price": sl_str, "order_type": "stop_market"}
+        },
+        # 2. Seconds timestamp
+        {
+            "timestamp": ts_sec,
+            "id": str(position_id),
+            "take_profit": {"stop_price": tp_str, "order_type": "take_profit_market"},
+            "stop_loss": {"stop_price": sl_str, "order_type": "stop_market"}
+        },
+        # 3. Stop loss only (in case TP target is outside allowed band)
+        {
+            "timestamp": ts_ms,
+            "id": str(position_id),
+            "stop_loss": {"stop_price": sl_str, "order_type": "stop_market"}
+        },
+        # 4. Standard fields without explicit order_type
+        {
+            "timestamp": ts_ms,
+            "id": str(position_id),
+            "take_profit": {"stop_price": tp_str},
+            "stop_loss": {"stop_price": sl_str}
         }
     ]
+
+    last_error = "Unknown error"
     for body in payload_variants:
         try:
             json_body = json.dumps(body, separators=(',', ':'))
@@ -650,17 +715,41 @@ def apply_coindcx_native_tpsl(pair, position_id, target_price, stop_loss_price):
             }
             req = urllib.request.Request(url, data=json_body.encode('utf-8'), headers=headers, method='POST')
             with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
-                if resp.status in [200, 201]: return True
-        except Exception: pass
-    return False
+                resp_text = resp.read().decode('utf-8')
+                try:
+                    resp_data = json.loads(resp_text)
+                    if isinstance(resp_data, dict):
+                        if resp_data.get('message') == 'success' or resp_data.get('status') in [200, 201] or 'data' in resp_data:
+                            return True, "Native TP/SL successfully accepted by CoinDCX"
+                except Exception:
+                    pass
+                if resp.status in [200, 201]:
+                    return True, "Native TP/SL accepted by CoinDCX"
+        except urllib.error.HTTPError as e:
+            try:
+                err_text = e.read().decode('utf-8', errors='ignore')
+                err_clean = re.sub(r'<[^>]+>', ' ', err_text).strip()
+                last_error = f"HTTP {e.code}: {err_clean}"
+            except Exception:
+                last_error = f"HTTP {e.code}"
+        except Exception as e:
+            last_error = str(e)
+
+    return False, last_error
 
 def auto_place_coindcx_native_tpsl(symbol, tp_price, sl_price, side="LONG"):
+    """
+    Background worker that waits for position settlement and attaches CoinDCX native TP/SL.
+    Broadcats full transparency to Telegram if filled or if an exchange notice occurs.
+    """
     if not COINDCX_API_KEY or not COINDCX_SECRET_KEY: return False
-    for attempt in range(1, 12):
+    
+    last_err_msg = ""
+    for attempt in range(1, 11):
         time.sleep(2)
         pos = fetch_coindcx_position_details(symbol)
         if pos and pos.get('position_id') and pos.get('quantity', 0) > 0:
-            ok = apply_coindcx_native_tpsl(pos['pair'], pos['position_id'], tp_price, sl_price)
+            ok, msg_or_err = apply_coindcx_native_tpsl(pos['pair'], pos['position_id'], tp_price, sl_price)
             if ok:
                 send_telegram_message(
                     f"🎯 <b>NATIVE COINDCX TP/SL APPLIED AUTOMATICALLY!</b>\n\n"
@@ -671,6 +760,21 @@ def auto_place_coindcx_native_tpsl(symbol, tp_price, sl_price, side="LONG"):
                     f"✅ <i>Populated directly in your CoinDCX TP / SL column! Exchange safety active.</i>"
                 )
                 return True
+            else:
+                last_err_msg = msg_or_err
+        else:
+            last_err_msg = "Waiting for position fill confirmation on CoinDCX..."
+
+    # If native API fitting did not attach after 10 attempts, inform trader with full transparency
+    send_telegram_message(
+        f"⚠️ <b>COINDCX NATIVE TP/SL NOTICE: {symbol}</b>\n\n"
+        f"• <b>Exchange Status:</b> <code>{last_err_msg[:100]}</code>\n"
+        f"• <b>Target (TP):</b> <code>${format_coin_price(tp_price)}</code>\n"
+        f"• <b>Stop Loss (SL):</b> <code>${format_coin_price(sl_price)}</code>\n\n"
+        f"🛡️ <b>BOT HIGH-SPEED PROTECTION ACTIVE:</b>\n"
+        f"• Bot internal 1-min candle & peak-trailing engine is monitoring this position.\n"
+        f"• You can also tap <b>'+ Add TP / SL'</b> directly on CoinDCX to adjust manually at any time!"
+    )
     return False
 
 # ==============================================================================
@@ -723,15 +827,18 @@ def run_scan():
             # 🟢 LONG ENTRY (Initial SL = Recent Swing Low)
             # ------------------------------------------------------------------
             if signal_side == 'LONG':
+                # Swing Low of last 8 candles with safety cushion
                 recent_swing_low = min(lows[-8:])
                 raw_sl = round_coin_price(recent_swing_low * 0.9995)
 
+                # Guardrails: Min 0.35%, Max 1.3% distance
                 if (cmp - raw_sl) < (cmp * 0.0035):
                     raw_sl = round_coin_price(cmp * 0.995)
                 elif (cmp - raw_sl) > (cmp * 0.013):
                     raw_sl = round_coin_price(cmp * 0.988)
 
-                tp1 = round_coin_price(cmp * 1.018)
+                # Target TP: Extended to allow trailing SL to ride past 5%, 7%, 10% ROE
+                tp1 = round_coin_price(cmp * 1.018)  # ~+12.6% ROE max target
 
                 sl_dist_pct = abs(cmp - raw_sl) / cmp * 100.0 if cmp > 0 else 0.8
                 sl_roe_pct = sl_dist_pct * lev_num
@@ -786,7 +893,7 @@ def run_scan():
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
                             f"🛑 <b>Stop Loss (Swing Low):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE)\n"
                             f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+1.8% / +12.6% ROE)\n"
-                            f"🔄 <b>Trailing Stop:</b> Breakeven at +5% ROE | Continuous Peak-Trailing (1.5% below peak) above +7% ROE!\n\n"
+                            f"🔄 <b>Trailing Stop:</b> Trails 1.5% ROE below peak continuously from +5.0% ROE! (Locks +3.5% ROE at 5% peak)\n\n"
                             f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
                             f"• Order ID: <code>{order_id}</code>\n"
                             f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
@@ -811,15 +918,18 @@ def run_scan():
             # 🔴 SHORT ENTRY (Initial SL = Recent Swing High)
             # ------------------------------------------------------------------
             elif signal_side == 'SHORT':
+                # Swing High of last 8 candles with safety cushion
                 recent_swing_high = max(highs[-8:])
                 raw_sl = round_coin_price(recent_swing_high * 1.0005)
 
+                # Guardrails: Min 0.35%, Max 1.3% distance
                 if (raw_sl - cmp) < (cmp * 0.0035):
                     raw_sl = round_coin_price(cmp * 1.005)
                 elif (raw_sl - cmp) > (cmp * 0.013):
                     raw_sl = round_coin_price(cmp * 1.012)
 
-                tp1 = round_coin_price(cmp * 0.982)
+                # Target TP: Extended to allow trailing SL to ride past 5%, 7%, 10% ROE
+                tp1 = round_coin_price(cmp * 0.982)  # ~+12.6% ROE max target
 
                 sl_dist_pct = abs(raw_sl - cmp) / cmp * 100.0 if cmp > 0 else 0.8
                 sl_roe_pct = sl_dist_pct * lev_num
@@ -874,7 +984,7 @@ def run_scan():
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
                             f"🛑 <b>Stop Loss (Swing High):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE)\n"
                             f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+1.8% / +12.6% ROE)\n"
-                            f"🔄 <b>Trailing Stop:</b> Breakeven at +5% ROE | Continuous Peak-Trailing (1.5% below peak) above +7% ROE!\n\n"
+                            f"🔄 <b>Trailing Stop:</b> Trails 1.5% ROE below peak continuously from +5.0% ROE! (Locks +3.5% ROE at 5% peak)\n\n"
                             f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
                             f"• Order ID: <code>{order_id}</code>\n"
                             f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
@@ -901,12 +1011,15 @@ def run_scan():
 # ==============================================================================
 def monitor_active_positions():
     """
-    DYNAMIC PEAK-TRAILING STOP LOSS & PURE TREND-RIDER:
-    1. Trailing SL Tier 1: At +5% ROE -> Moves SL to lock +2.0% ROE (Breakeven + fee profit)
-    2. Continuous Peak Trailing: Once ROE >= +7.0% -> Dynamically trails 1.5% ROE below the highest peak ROE reached!
-       (e.g., At +9.0% Peak -> SL trails to +7.5% ROE; at +12% Peak -> SL trails to +10.5% ROE)
-    3. Exits on Reverse Crossover (Blue 9 EMA crosses Red 20 EMA in reverse on closed candle)
-    4. Exits if Trailing/Initial SL or Target TP is reached.
+    DYNAMIC CONTINUOUS PEAK-TRAILING STOP LOSS & PURE TREND-RIDER:
+    1. Continuous Peak Trailing: Once ROE >= +5.0% -> Dynamically trails 1.5% ROE below highest peak ROE!
+       - At +5.0% Peak -> SL trails to +3.5% ROE (Locks profit immediately)
+       - At +5.9% Peak -> SL trails to +4.4% ROE
+       - At +7.4% Peak -> SL trails to +5.9% ROE
+       - At +9.0% Peak -> SL trails to +7.5% ROE
+       - At +12.0% Peak -> SL trails to +10.5% ROE
+    2. Exits on Reverse Crossover (Blue 9 EMA crosses Red 20 EMA in reverse on closed candle)
+    3. Exits if Trailing/Initial SL or Target TP is reached.
     """
     time.sleep(5)
     while True:
@@ -928,7 +1041,6 @@ def monitor_active_positions():
                     entry_time = trade.get('entry_time', time.time())
                     lev = trade.get('leverage', 7)
                     pos_age = time.time() - entry_time
-                    current_tier = trade.get('trail_tier', 0)
 
                     # 1. Check if closed manually on CoinDCX
                     live_qty = fetch_coindcx_live_position_qty(symbol)
@@ -959,7 +1071,7 @@ def monitor_active_positions():
                     roe_pct = pnl_pct * lev
 
                     # ----------------------------------------------------------
-                    # 🔄 CONTINUOUS PEAK-TRAILING STOP LOSS ENGINE
+                    # 🔄 CONTINUOUS PEAK-TRAILING STOP LOSS ENGINE (FROM +5% ROE)
                     # ----------------------------------------------------------
                     trail_updated = False
                     new_sl_val = trade['sl']
@@ -973,8 +1085,8 @@ def monitor_active_positions():
                         peak_roe = ((peak_p - entry_p) / entry_p * 100.0) * lev
                         last_notified_roe = trade.get('last_notified_roe', 0.0)
 
-                        # Peak-Trailing Engine: Trail 1.5% ROE below peak once peak >= 7.0%
-                        if peak_roe >= 7.0:
+                        # Continuous Peak-Trailing: Trail 1.5% ROE below peak once peak >= 5.0%
+                        if peak_roe >= 5.0:
                             target_locked_roe = peak_roe - 1.5
                             target_sl = round_coin_price(entry_p * (1.0 + (target_locked_roe / 100.0) / lev))
                             if target_sl > trade['sl']:
@@ -986,17 +1098,6 @@ def monitor_active_positions():
                                     trade['last_trail_type'] = 'peak'
                                     trail_updated = True
 
-                        # Tier 1: At +5% ROE -> Lock +2.0% ROE (Breakeven + fee cushion)
-                        elif peak_roe >= 5.0 and current_tier < 1:
-                            target_sl = round_coin_price(entry_p * (1.0 + (0.020 / lev)))
-                            if target_sl > trade['sl']:
-                                new_sl_val = target_sl
-                                trade['trail_tier'] = 1
-                                trade['last_trail_type'] = 'tier1'
-                                trade['last_notified_roe'] = 2.0
-                                tier_name = "TIER 1 (+5.0% ROE Reached ➔ Locked +2.0% ROE Breakeven)"
-                                trail_updated = True
-
                     elif side == "SHORT":
                         # Track lowest peak price reached
                         if cmp < trade.get('lowest_price', entry_p):
@@ -1005,8 +1106,8 @@ def monitor_active_positions():
                         peak_roe = ((entry_p - peak_p) / entry_p * 100.0) * lev
                         last_notified_roe = trade.get('last_notified_roe', 0.0)
 
-                        # Peak-Trailing Engine: Trail 1.5% ROE below peak once peak >= 7.0%
-                        if peak_roe >= 7.0:
+                        # Continuous Peak-Trailing: Trail 1.5% ROE below peak once peak >= 5.0%
+                        if peak_roe >= 5.0:
                             target_locked_roe = peak_roe - 1.5
                             target_sl = round_coin_price(entry_p * (1.0 - (target_locked_roe / 100.0) / lev))
                             if target_sl < trade['sl']:
@@ -1018,22 +1119,11 @@ def monitor_active_positions():
                                     trade['last_trail_type'] = 'peak'
                                     trail_updated = True
 
-                        # Tier 1: At +5% ROE -> Lock +2.0% ROE (Breakeven + fee cushion)
-                        elif peak_roe >= 5.0 and current_tier < 1:
-                            target_sl = round_coin_price(entry_p * (1.0 - (0.020 / lev)))
-                            if target_sl < trade['sl']:
-                                new_sl_val = target_sl
-                                trade['trail_tier'] = 1
-                                trade['last_trail_type'] = 'tier1'
-                                trade['last_notified_roe'] = 2.0
-                                tier_name = "TIER 1 (+5.0% ROE Reached ➔ Locked +2.0% ROE Breakeven)"
-                                trail_updated = True
-
                     # Ratchet update & exchange bracket synchronization
                     if trade['sl'] != new_sl_val:
                         trade['sl'] = new_sl_val
                         save_active_trades()
-                        # Update exchange native SL in background
+                        # Update exchange native SL in background without blocking
                         pos_info = fetch_coindcx_position_details(symbol)
                         if pos_info and pos_info.get('position_id'):
                             threading.Thread(
@@ -1216,7 +1306,7 @@ def home():
         <div class="container">
             <div class="card">
                 <h1>⚡ 1-Minute 9 & 20 EMA Scalper</h1>
-                <p>Status: <b>{'🟢 RUNNING' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b> | Trailing SL: <b>Continuous Peak-Trailing (1.5% below peak above 7% ROE)</b></p>
+                <p>Status: <b>{'🟢 RUNNING' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b> | Trailing SL: <b>Continuous Peak-Trailing (1.5% below peak from 5% ROE)</b></p>
                 <div>
                     <a href="/toggle-bot" class="btn {'btn-red' if AUTO_TRADING_ENABLED else 'btn-green'}">
                         {'PAUSE BOT' if AUTO_TRADING_ENABLED else 'RESUME BOT'}
@@ -1313,8 +1403,7 @@ def start_background_loop():
         "• <b>Watchlist:</b> 70 Top High-Liquidity Coins\n"
         "• <b>Initial SL:</b> Recent Swing High (Short) / Swing Low (Long)\n"
         "• <b>Continuous Peak-Trailing SL:</b>\n"
-        "   └ 🥉 Tier 1: At +5% ROE ➔ Locks +2.0% ROE (Breakeven)\n"
-        "   └ 🚀 Peak-Trail: At ≥+7% ROE ➔ Continuously trails 1.5% ROE below highest peak!\n"
+        "   └ 🚀 Trails 1.5% ROE below highest peak continuously from +5.0% ROE! (Locks +3.5% ROE immediately at 5% peak)\n"
         "• <b>Exit:</b> Reverse Cross (Blue crosses Red) or Target\n"
         "• <b>Margin:</b> ₹1,000 INR (7x Isolated Leverage)\n"
         "• <b>Controls:</b> Web 1-Click Dashboard + Telegram /start & /stop"
