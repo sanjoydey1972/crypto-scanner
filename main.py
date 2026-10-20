@@ -322,7 +322,7 @@ def eval_crossover_setup(klines, ema9_series, ema20_series, ema50_series):
     if candle_range > 0 and (candle_body / candle_range) < 0.28:
         return None, 0
 
-    # 1. 🟢 BULLISH CROSSOVER CHECK (Price > 50 EMA)
+    # 🟢 BULLISH CROSSOVER CHECK (Price > 50 EMA)
     if curr_ema9 > curr_ema20 and is_curr_green and curr_close > curr_ema50:
         if prev1_ema9 <= prev1_ema20:
             return 'LONG', 0
@@ -331,7 +331,7 @@ def eval_crossover_setup(klines, ema9_series, ema20_series, ema50_series):
         elif prev3_ema9 <= prev3_ema20 and (klines[-2][4] > klines[-2][1]):
             return 'LONG', 2
 
-    # 2. 🔴 BEARISH CROSSOVER CHECK (Price < 50 EMA)
+    # 🔴 BEARISH CROSSOVER CHECK (Price < 50 EMA)
     if curr_ema9 < curr_ema20 and is_curr_red and curr_close < curr_ema50:
         if prev1_ema9 >= prev1_ema20:
             return 'SHORT', 0
@@ -547,7 +547,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=0.0, margin_inr=1000.0
             position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
             raw_qty = position_value_usdt / cmp if cmp > 0 else 0.1
 
-            # Precision normalization for all pairs (handles UNI, AVAX, PENDLE integer rules)
+            # Precision normalization for all pairs
             if raw_coin == 'BTC': quantity = round(max(0.001, raw_qty), 3)
             elif raw_coin in ['ETH', 'SOL']: quantity = round(max(0.1, raw_qty), 1)
             elif raw_coin in ['UNI', 'PENDLE', 'AVAX', 'AAVE', 'LINK', 'DOT']: 
@@ -846,7 +846,7 @@ def run_scan():
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
                             f"🛑 <b>Stop Loss (SL):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_dist_pct * lev_num:.1f}% ROE)\n"
                             f"🎯 <b>Target (TP1):</b> <code>${format_coin_price(tp1)}</code> (+{tp_dist_pct:.2f}% / +{tp_dist_pct * lev_num:.1f}% ROE)\n"
-                            f"⚡ <b>Hold Rule:</b> Ride until Target TP1 or Stop Loss (No panic exits)!\n\n"
+                            f"⚡ <b>Hold Rule:</b> Ride until Target TP1 or Reverse EMA Cross (No time limit)!\n\n"
                             f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
                             f"• Order ID: <code>{order_id}</code>\n"
                             f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
@@ -944,7 +944,7 @@ def run_scan():
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
                             f"🛑 <b>Stop Loss (SL):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_dist_pct * lev_num:.1f}% ROE)\n"
                             f"🎯 <b>Target (TP1):</b> <code>${format_coin_price(tp1)}</code> (+{tp_dist_pct:.2f}% / +{tp_dist_pct * lev_num:.1f}% ROE)\n"
-                            f"⚡ <b>Hold Rule:</b> Ride until Target TP1 or Stop Loss (No panic exits)!\n\n"
+                            f"⚡ <b>Hold Rule:</b> Ride until Target TP1 or Reverse EMA Cross (No time limit)!\n\n"
                             f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
                             f"• Order ID: <code>{order_id}</code>\n"
                             f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
@@ -978,16 +978,18 @@ def run_scan():
         except Exception: pass
 
 # ==============================================================================
-# 9. TRUE REVERSE CROSSOVER & TARGET/STOP-LOSS EXIT ENGINE
+# 9. TRUE REVERSE CROSSOVER & TARGET/STOP-LOSS EXIT ENGINE (NO TIME LIMIT)
 # ==============================================================================
 def monitor_active_positions():
     """
-    Monitors active positions with:
-    1. TARGET HIT (TP1): Exits in solid profit (+6% to +10% ROE)
-    2. STOP LOSS HIT (SL): Exchange protects capital cleanly (-3% to -5% ROE)
-    3. TRUE REVERSE EMA CROSSOVER: 9 EMA must clearly cross 20 EMA by at least 0.05%
-       (NO MORE 0.000004 MICRO-KISS EXITS!)
-    4. NO 9 EMA PANIC EXITS: Gives trades room to ride out normal wicks and hit target!
+    Rides the trend without any time limit!
+    Holds position as long as:
+    - LONG: Blue (9 EMA) stays >= Red (20 EMA)
+    - SHORT: Blue (9 EMA) stays <= Red (20 EMA)
+    Exits ONLY when:
+    1. TARGET HIT (TP1): Solid profit locked in (+6% to +10%+ ROE)
+    2. STOP LOSS HIT (SL): Exchange protects capital cleanly
+    3. TRUE REVERSE CROSS: Blue crosses Red line in reverse direction on closed candle
     """
     time.sleep(5)
     while True:
@@ -1065,7 +1067,7 @@ def monitor_active_positions():
                         raw_roe_pct = ((entry_p - cmp) / entry_p) * trade.get('leverage', 7) * 100.0
 
                     # ----------------------------------------------------------
-                    # A. HARD STOP LOSS HIT (Exchange level protection)
+                    # A. HARD STOP LOSS HIT (Exchange Protection)
                     # ----------------------------------------------------------
                     is_sl_hit = (side == "LONG" and cmp <= trade['sl']) or (side == "SHORT" and cmp >= trade['sl'])
                     if is_sl_hit:
@@ -1082,542 +1084,4 @@ def monitor_active_positions():
                         send_telegram_message(
                             f"🛑 <b>SCALP STOP LOSS HIT:</b>\n\n"
                             f"<b>Pair:</b> <code>{symbol}</code> ({side})\n"
-                            f"• <b>Exit Price:</b> <code>${format_coin_price(cmp)}</code>\n"
-                            f"• <b>Realized Loss:</b> <code>{raw_roe_pct:+.1f}% ROE</code>\n"
-                            f"🛡️ <i>Capital protected cleanly under 1M risk rule.</i>"
-                        )
-                        continue
-
-                    # ----------------------------------------------------------
-                    # B. PROFIT TARGET (TP1) HIT (The Main Goal!)
-                    # ----------------------------------------------------------
-                    is_tp_hit = (side == "LONG" and cmp >= trade['tp1']) or (side == "SHORT" and cmp <= trade['tp1'])
-                    if is_tp_hit:
-                        if sell_qty > 0:
-                            execute_coindcx_futures_trade(symbol=symbol, side=close_side, cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=sell_qty, is_close=True)
-                        with active_trades_lock: ACTIVE_TRADES.pop(symbol, None)
-                        save_active_trades()
-
-                        st = load_state()
-                        st[f"last_traded_{symbol}"] = time.time()
-                        save_state(st)
-
-                        log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": round(raw_roe_pct, 1), "sl_type": "PROFIT TARGET (TP1) 🚀", "side": side})
-                        send_telegram_message(
-                            f"🎯 <b>SCALP TARGET HIT (TP1)! 🚀</b>\n\n"
-                            f"<b>Pair:</b> <code>{symbol}</code> ({side})\n"
-                            f"• <b>Entry:</b> <code>${format_coin_price(entry_p)}</code> | <b>Exit:</b> <code>${format_coin_price(cmp)}</code>\n"
-                            f"• <b>Realized Gain:</b> <code>+{raw_roe_pct:.1f}% ROE</code> 💰"
-                        )
-                        continue
-
-                    # ----------------------------------------------------------
-                    # C. MINIMUM 90-SECOND BREATHING ROOM
-                    # ----------------------------------------------------------
-                    if pos_age < 90:
-                        continue
-
-                    # ----------------------------------------------------------
-                    # D. TRUE REVERSE EMA CROSSOVER (Requires Meaningful Spread)
-                    # ----------------------------------------------------------
-                    closed_klines = m1_klines[:-1]
-                    closed_closes = [k[4] for k in closed_klines]
-                    closed_ema9 = calculate_ema_series(closed_closes, 9)[-1]
-                    closed_ema20 = calculate_ema_series(closed_closes, 20)[-1]
-
-                    # Must have at least 0.05% clear crossover separation
-                    is_long_true_reverse = (side == "LONG" and closed_ema9 < closed_ema20 * 0.9995)
-                    is_short_true_reverse = (side == "SHORT" and closed_ema9 > closed_ema20 * 1.0005)
-
-                    if is_long_true_reverse or is_short_true_reverse:
-                        if sell_qty > 0:
-                            execute_coindcx_futures_trade(symbol=symbol, side=close_side, cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=sell_qty, is_close=True)
-                        with active_trades_lock: ACTIVE_TRADES.pop(symbol, None)
-                        save_active_trades()
-
-                        st = load_state()
-                        st[f"last_traded_{symbol}"] = time.time()
-                        save_state(st)
-
-                        exit_title = "TRUE REVERSE EMA CROSS EXIT (LONG) 🔄" if side == "LONG" else "TRUE REVERSE EMA CROSS EXIT (SHORT) 🔄"
-                        reason_desc = f"1M candle closed with confirmed reversal: 9 EMA (${format_coin_price(closed_ema9)}) crossed 20 EMA (${format_coin_price(closed_ema20)})"
-                        log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": round(raw_roe_pct, 1), "sl_type": exit_title, "side": side})
-                        send_telegram_message(
-                            f"🏁 <b>SCALP CLOSED: {exit_title}</b>\n\n"
-                            f"<b>Pair:</b> <code>{symbol}</code> ({side})\n"
-                            f"• <b>Reason:</b> {reason_desc}\n"
-                            f"• <b>Exit Price:</b> <code>${format_coin_price(cmp)}</code>\n"
-                            f"• <b>Realized:</b> <code>{raw_roe_pct:+.1f}% ROE</code>"
-                        )
-                        continue
-
-                    # ----------------------------------------------------------
-                    # E. 10-MINUTE STAGNATION TIME-STOP
-                    # ----------------------------------------------------------
-                    if pos_age >= 600:
-                        if sell_qty > 0:
-                            execute_coindcx_futures_trade(symbol=symbol, side=close_side, cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=sell_qty, is_close=True)
-                        with active_trades_lock: ACTIVE_TRADES.pop(symbol, None)
-                        save_active_trades()
-
-                        st = load_state()
-                        st[f"last_traded_{symbol}"] = time.time()
-                        save_state(st)
-
-                        log_trade_event(symbol, "CLOSED", {"cmp": cmp, "entry_p": entry_p, "realized_pnl_pct": round(raw_roe_pct, 1), "sl_type": "10-MIN STAGNATION TIME-STOP ⏱️", "side": side})
-                        send_telegram_message(
-                            f"⏱️ <b>10-MINUTE SCALP TIME-STOP EXECUTED!</b>\n\n"
-                            f"<b>Pair:</b> <code>{symbol}</code> ({side})\n"
-                            f"• <b>Exit Price:</b> <code>${format_coin_price(cmp)}</code>\n"
-                            f"• <b>Result:</b> <code>{raw_roe_pct:+.1f}% ROE</code>\n"
-                            f"• Released margin for fresh 1-minute opportunities."
-                        )
-                        continue
-
-                except Exception as e:
-                    print(f"Error monitoring scalp on {symbol}: {e}")
-        except Exception as e:
-            print(f"Monitor loop error: {e}")
-        time.sleep(2)
-
-# ==============================================================================
-# 10. FLASK WEB DASHBOARD & STATUS CONTROLS
-# ==============================================================================
-@app.route('/scan-now')
-def scan_now_endpoint():
-    try:
-        today_str = get_ist_now().strftime("%d-%m-%Y")
-        with active_trades_lock:
-            open_count = len(ACTIVE_TRADES)
-            open_names = list(ACTIVE_TRADES.keys())
-        
-        status_txt = "🟢 LIVE (ENABLED)" if AUTO_TRADING_ENABLED else "🛑 PAUSED (OFF)"
-        slot_txt = f"{open_count} / 2 Positions Open" + (f" ({', '.join(open_names)})" if open_names else " (Slots Available)")
-
-        report_lines = [
-            f"⚡ REAL-TIME 1M 9-20 EMA SCALPER DIAGNOSTICS ({today_str})",
-            f"Engine Status: {status_txt} | Active Slots: {slot_txt} | Strategy: Pure 9/20 EMA with Confirmed Exits",
-            f"{'='*105}",
-            f"{'SYMBOL':11s} | {'CMP':<10s} | {'9 EMA':<9s} | {'20 EMA':<9s} | {'50 EMA':<9s} | {'TREND':<10s} | {'SETUP'}",
-            f"{'-'*105}"
-        ]
-
-        scan_symbols = WATCHLIST[:45] if request.args.get('all') == 'true' else WATCHLIST[:20]
-
-        for symbol in scan_symbols:
-            try:
-                time.sleep(0.01)
-                m1 = fetch_klines(symbol, '1m', 65)
-                if not m1 or len(m1) < 52:
-                    report_lines.append(f"{symbol:11s} | {'SYNCING':<10s} | {'--':<9s} | {'--':<9s} | {'--':<9s} | {'CONNECTING':<10s} | 🔄 BUFFERING")
-                    continue
-                closes = [k[4] for k in m1]
-                cmp = closes[-1]
-                ema9_series = calculate_ema_series(closes, 9)
-                ema20_series = calculate_ema_series(closes, 20)
-                ema50_series = calculate_ema_series(closes, 50)
-                ema9 = ema9_series[-1]
-                ema20 = ema20_series[-1]
-                ema50 = ema50_series[-1]
-
-                if ema9 > ema20 * 1.00025 and cmp > ema50:
-                    trend_txt = "🟢 BULLISH"
-                elif ema9 < ema20 * 0.99975 and cmp < ema50:
-                    trend_txt = "🔴 BEARISH"
-                else:
-                    trend_txt = "⚪ CHOP"
-
-                signal_side, candles_after_cross = eval_crossover_setup(m1, ema9_series, ema20_series, ema50_series)
-                
-                if signal_side == 'LONG':
-                    candle_label = "CROSS NOW" if candles_after_cross == 0 else f"+{candles_after_cross} CANDLE"
-                    setup_txt = f"🔥 BUY READY ({candle_label})"
-                elif signal_side == 'SHORT':
-                    candle_label = "CROSS NOW" if candles_after_cross == 0 else f"+{candles_after_cross} CANDLE"
-                    setup_txt = f"🔥 SHORT READY ({candle_label})"
-                else:
-                    if trend_txt in ["🟢 BULLISH", "🔴 BEARISH"]:
-                        setup_txt = "⚪ WAITING (Trend Running)"
-                    else:
-                        setup_txt = "⚪ WAITING (Chop Filtered)"
-
-                cmp_str = format_coin_price(cmp)
-                ema9_str = format_coin_price(ema9)
-                ema20_str = format_coin_price(ema20)
-                ema50_str = format_coin_price(ema50)
-                report_lines.append(f"{symbol:11s} | {cmp_str:<10s} | {ema9_str:<9s} | {ema20_str:<9s} | {ema50_str:<9s} | {trend_txt:<10s} | {setup_txt}")
-            except Exception as e:
-                report_lines.append(f"{symbol:11s} | {'ERROR':<10s} | {'--':<9s} | {'--':<9s} | {'--':<9s} | {'ERROR':<10s} | ⚠️ {str(e)[:15]}")
-
-        nav_bar = f"<p><b>Status:</b> {status_txt} | <b>Active:</b> {slot_txt}</p><p><a href='/today'>⬅️ Back to Dashboard</a> | <a href='/scan-now'>🔄 Refresh Top 20</a> | <a href='/scan-now?all=true'>🌐 Scan All 45</a></p>"
-        return f"<h2>⚡ 1-Minute 9-20 EMA Scalper Diagnostics</h2>{nav_bar}<pre>" + "\n".join(report_lines) + "</pre>", 200
-    except Exception as e:
-        return f"<h3>⚠️ Scan Error: {e}</h3>", 500
-
-@app.route('/today')
-@app.route('/daily')
-@app.route('/report')
-def today_report_endpoint(date_override=None):
-    try:
-        global AUTO_TRADING_ENABLED
-        target_date = date_override if date_override else get_ist_now().strftime("%d-%m-%Y")
-        with trade_history_lock:
-            all_events = load_all_trade_events()
-
-        day_events = [e for e in all_events if e.get('date') == target_date]
-        executed = [e for e in day_events if e.get('type') == 'EXECUTED']
-        closed = [e for e in day_events if e.get('type') in ['CLOSED', 'CLOSED_MANUALLY']]
-
-        total_pnl = sum(c.get('details', {}).get('realized_pnl_pct', 0) for c in closed)
-        wins = [c for c in closed if c.get('details', {}).get('realized_pnl_pct', 0) > 0]
-        win_rate = (len(wins) / len(closed) * 100) if closed else (100.0 if executed else 0.0)
-
-        exec_rows = "".join([f"<tr><td>{e.get('timestamp','').split()[-2]} {e.get('timestamp','').split()[-1]}</td><td><b>{e.get('symbol')}</b> ({e.get('details',{}).get('side','LONG')})</td><td>${format_coin_price(e.get('details',{}).get('cmp', 0))}</td><td>{e.get('details',{}).get('quantity')}</td><td><code>{str(e.get('details',{}).get('order_id'))[:8]}</code></td><td>₹1,000</td></tr>" for e in executed]) if executed else "<tr><td colspan='6' style='text-align:center;'>No trades executed today yet</td></tr>"
-        closed_rows = "".join([f"<tr><td>{c.get('timestamp','').split()[-2]} {c.get('timestamp','').split()[-1]}</td><td><b>{c.get('symbol')}</b> ({c.get('details',{}).get('side','LONG')})</td><td><b style='color:{'#00c853' if c.get('details',{}).get('realized_pnl_pct',0)>=0 else '#d50000'};'>{c.get('details',{}).get('realized_pnl_pct',0):+.1f}% ROE</b></td><td>{c.get('details',{}).get('sl_type', 'MANUAL EXIT')}</td></tr>" for c in closed]) if closed else "<tr><td colspan='4' style='text-align:center;'>No closed trades today</td></tr>"
-
-        page = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>1-Min EMA Scalping Report ({target_date})</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0e14; color: #e1e4e8; padding: 20px; }}
-                .container {{ max-width: 900px; margin: 0 auto; background: #161b22; padding: 25px; border-radius: 12px; border: 1px solid #30363d; }}
-                h1, h2, h3 {{ color: #58a6ff; }}
-                .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 25px; }}
-                .stat-box {{ background: #21262d; padding: 15px; border-radius: 8px; border: 1px solid #30363d; text-align: center; }}
-                .stat-box .val {{ font-size: 24px; font-weight: bold; margin-top: 5px; }}
-                table {{ width: 100%; border-collapse: collapse; margin-top: 10px; margin-bottom: 25px; }}
-                th, td {{ padding: 10px; text-align: left; border-bottom: 1px solid #30363d; font-size: 14px; }}
-                th {{ background: #21262d; color: #8b949e; }}
-                code {{ background: #2d333b; padding: 3px 6px; border-radius: 4px; color: #ff7b72; }}
-                .btn {{ display: inline-block; padding: 8px 16px; background: #238636; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; margin-right: 10px; }}
-                .btn-blue {{ background: #1f6feb; }}
-                .btn-red {{ background: #da3633; }}
-                .ctrl-panel {{ background: {'#1b4725' if AUTO_TRADING_ENABLED else '#4c1d1d'}; padding: 15px 20px; border-radius: 8px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; border: 1px solid {'#2ea043' if AUTO_TRADING_ENABLED else '#f85149'}; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>⚡ 1-Minute 9 & 20 EMA Scalper</h1>
-                <p><b>Date:</b> {target_date} | <b>Strategy:</b> Pure 9/20 EMA with Confirmed Target Exits</p>
-
-                <div class="ctrl-panel">
-                    <div>
-                        <span style="font-size:16px;"><b>Scalping Engine:</b></span> 
-                        <b style="font-size:18px; margin-left:8px; color:{'#3fb950' if AUTO_TRADING_ENABLED else '#ff7b72'};">
-                            {'🟢 LIVE (ENABLED)' if AUTO_TRADING_ENABLED else '🛑 PAUSED (OFF)'}
-                        </b>
-                    </div>
-                    <div>
-                        <a href="/start" class="btn" style="background:#238636;">🟢 Turn ON</a>
-                        <a href="/stop" class="btn btn-red">🛑 Turn OFF</a>
-                    </div>
-                </div>
-
-                <div style="margin-bottom: 20px;">
-                    <a href="/today" class="btn">Today's Report</a>
-                    <a href="/scan-now" class="btn btn-blue">Live 1M Diagnostics</a>
-                    <a href="/sync-tpsl" class="btn" style="background:#8957e5;">Sync TP/SL</a>
-                </div>
-                <div class="stats-grid">
-                    <div class="stat-box"><div>Executed Today</div><div class="val" style="color:#58a6ff;">{len(executed)}</div></div>
-                    <div class="stat-box"><div>Win Rate</div><div class="val" style="color: #3fb950;">{win_rate:.1f}%</div></div>
-                    <div class="stat-box"><div>Realized Gain</div><div class="val" style="color: {'#3fb950' if total_pnl >= 0 else '#f85149'};">{total_pnl:+.1f}% ROE</div></div>
-                </div>
-                <h3>✅ Executed Scalps Today</h3>
-                <table><tr><th>Time</th><th>Pair</th><th>Entry Price</th><th>Quantity</th><th>Order ID</th><th>Margin</th></tr>{exec_rows}</table>
-                <h3>🏁 Closed Positions & Exits</h3>
-                <table><tr><th>Time</th><th>Pair</th><th>Gain / Loss</th><th>Exit Reason</th></tr>{closed_rows}</table>
-            </div>
-        </body>
-        </html>
-        """
-        return page, 200
-    except Exception as e:
-        return f"<h3>⚠️ Report Error: {e}</h3>", 500
-
-@app.route('/sync-tpsl')
-def sync_tpsl_endpoint():
-    try:
-        results = sync_all_open_positions_tpsl()
-        if not results: return "<h3>ℹ️ No active CoinDCX positions found to sync.</h3>", 200
-        rows = "".join([f"<li><b>{r['pair']}</b> ({r['symbol']}) - TP: ${format_coin_price(r['tp'])} | SL: ${format_coin_price(r['sl'])} -> {'<span style=\"color:green;\">✅ APPLIED</span>' if r['success'] else '<span style=\"color:red;\">❌ FAILED</span>'}</li>" for r in results])
-        return f"<h2>🎯 CoinDCX Native TP/SL Sync Summary</h2><ul>{rows}</ul><p><a href='/today'>Back to Dashboard</a></p>", 200
-    except Exception as e:
-        return f"<h3>⚠️ Error syncing TP/SL: {e}</h3>", 500
-
-@app.route('/status')
-def status_endpoint():
-    global AUTO_TRADING_ENABLED
-    daily_count = get_today_executed_trades_count()
-    with active_trades_lock:
-        active_list = list(ACTIVE_TRADES.keys())
-    return {
-        'auto_trading_enabled': AUTO_TRADING_ENABLED,
-        'strategy': '9-20 EMA 1-Minute Scalper (Clean Target Exits)',
-        'trades_executed_today': daily_count,
-        'active_positions': active_list
-    }, 200
-
-@app.route('/healthz')
-def healthz():
-    return "OK", 200
-
-@app.route('/test-telegram')
-def test_telegram_endpoint():
-    try:
-        ok = send_telegram_message("🔔 <b>TELEGRAM TEST ALERT FROM 1M EMA SCALPER!</b>\n\n• Status: 100% ONLINE\n• Signal Broadcast: ACTIVE\n• Timestamp: " + get_ist_now().strftime("%d-%m-%Y %I:%M:%S %p (IST)"))
-        return f"<h3>Telegram Ping Result: {'✅ SUCCESS (Check Telegram channel)' if ok else '❌ FAILED (Check Bot Token)'}</h3>", 200
-    except Exception as e:
-        return f"<h3>⚠️ Error: {e}</h3>", 500
-
-@app.route('/start')
-@app.route('/resume')
-@app.route('/on')
-def start_auto_trading():
-    global AUTO_TRADING_ENABLED
-    AUTO_TRADING_ENABLED = True
-    st = load_state()
-    st["auto_trading_enabled"] = True
-    save_state(st)
-    send_telegram_message(
-        "🟢 <b>1-MIN EMA SCALPER ACTIVATED!</b>\n\n"
-        "• Auto-order execution on CoinDCX is now <b>LIVE</b>.\n"
-        "• Trailing panic exit removed: trades now ride to Target (+1.0%) or Stop Loss.\n"
-        "• Turn OFF anytime via /stop or dashboard button."
-    )
-    return """
-    <html><head><meta http-equiv="refresh" content="2;url=/today"><style>body{background:#0b0e14;color:#e1e4e8;font-family:sans-serif;text-align:center;padding:50px;}</style></head>
-    <body><h2 style='color:#3fb950;'>🟢 Auto-Trading is now ENABLED & LIVE!</h2><p>Redirecting to dashboard in 2 seconds...</p><p><a href='/today' style='color:#58a6ff;'>Click here if not redirected</a></p></body></html>
-    """, 200
-
-@app.route('/stop')
-@app.route('/pause')
-@app.route('/off')
-def stop_auto_trading():
-    global AUTO_TRADING_ENABLED
-    AUTO_TRADING_ENABLED = False
-    st = load_state()
-    st["auto_trading_enabled"] = False
-    save_state(st)
-    send_telegram_message(
-        "🛑 <b>1-MIN EMA SCALPER PAUSED!</b>\n\n"
-        "• Auto-order execution on CoinDCX is now <b>OFF</b>.\n"
-        "• Scanner will only send notifications.\n"
-        "• Turn ON anytime via /start or dashboard button."
-    )
-    return """
-    <html><head><meta http-equiv="refresh" content="2;url=/today"><style>body{background:#0b0e14;color:#e1e4e8;font-family:sans-serif;text-align:center;padding:50px;}</style></head>
-    <body><h2 style='color:#ff7b72;'>🛑 Auto-Trading is now PAUSED (OFF)!</h2><p>Redirecting to dashboard in 2 seconds...</p><p><a href='/today' style='color:#58a6ff;'>Click here if not redirected</a></p></body></html>
-    """, 200
-
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def catch_all(path):
-    clean_p = path.strip().strip('/')
-    if clean_p.lower() in ['start', 'on', 'resume']: return start_auto_trading()
-    if clean_p.lower() in ['stop', 'off', 'pause']: return stop_auto_trading()
-    if clean_p.lower() == 'yesterday':
-        yesterday_str = (get_ist_now() - timedelta(days=1)).strftime("%d-%m-%Y")
-        return today_report_endpoint(date_override=yesterday_str)
-    if clean_p.lower() in ['today', 'daily', 'report']:
-        return today_report_endpoint()
-    if re.match(r'^\d{2}-\d{2}-\d{4}$', clean_p):
-        return today_report_endpoint(date_override=clean_p)
-
-    if scan_lock.acquire(blocking=False):
-        def async_scan():
-            try: run_scan()
-            finally: scan_lock.release()
-        threading.Thread(target=async_scan, daemon=True).start()
-        return "⚡ OK - 1M EMA Scalper Triggered via Keep-Alive/Ping", 200
-
-    return "⚡ OK - 1M EMA Scalper Active (Render Cloud Bot)", 200
-
-# ==============================================================================
-# 11. TELEGRAM COMMAND LISTENER
-# ==============================================================================
-def run_telegram_command_listener():
-    global AUTO_TRADING_ENABLED
-    clear_telegram_webhooks()
-    
-    candidate_tokens = list(dict.fromkeys([
-        TOKEN,
-        "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c",
-        "8788523087:AAGgfn0-JpnnIlqdxNDj-2an-pGp0WORnqA"
-    ]))
-    candidate_tokens = [t for t in candidate_tokens if t]
-    token_offsets = {t: 0 for t in candidate_tokens}
-    boot_time = time.time()
-    initialized = set()
-
-    def reply_user(tok, chat_id, text_reply):
-        try:
-            url = f"https://api.telegram.org/bot{tok}/sendMessage"
-            payload = {'chat_id': chat_id, 'text': text_reply, 'parse_mode': 'HTML', 'disable_web_page_preview': 'true'}
-            data = urllib.parse.urlencode(payload).encode('utf-8')
-            req = urllib.request.Request(url, data=data, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, context=ctx, timeout=6) as r: pass
-        except Exception:
-            try:
-                clean_reply = re.sub(r'<[^>]+>', '', text_reply)
-                url = f"https://api.telegram.org/bot{tok}/sendMessage"
-                payload = {'chat_id': chat_id, 'text': clean_reply, 'disable_web_page_preview': 'true'}
-                data = urllib.parse.urlencode(payload).encode('utf-8')
-                req = urllib.request.Request(url, data=data, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, context=ctx, timeout=6) as r: pass
-            except Exception: pass
-
-    while True:
-        for tok in candidate_tokens:
-            try:
-                url = f"https://api.telegram.org/bot{tok}/getUpdates?offset={token_offsets[tok]}&timeout=4"
-                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, context=ctx, timeout=6) as response:
-                    data = json.loads(response.read().decode('utf-8'))
-                    if not data.get('ok'): continue
-                    for update in data.get('result', []):
-                        token_offsets[tok] = max(token_offsets[tok], update['update_id'] + 1)
-                        msg = update.get('message') or update.get('channel_post') or update.get('edited_message')
-                        if not msg: continue
-
-                        msg_date = msg.get('date', 0)
-                        if tok not in initialized and msg_date and (msg_date < boot_time - 30):
-                            continue
-
-                        user_chat_id = msg.get('chat', {}).get('id', CHAT_ID)
-                        if user_chat_id:
-                            st_chat = load_state()
-                            if st_chat.get('last_telegram_chat_id') != str(user_chat_id):
-                                st_chat['last_telegram_chat_id'] = str(user_chat_id)
-                                save_state(st_chat)
-                        raw_text = msg.get('text', '').strip()
-                        if not raw_text: continue
-
-                        cmd = raw_text.lower().split()[0].split('@')[0]
-
-                        if cmd in ['/stop', 'stop', '/pause', 'pause', 'off']:
-                            AUTO_TRADING_ENABLED = False
-                            st = load_state()
-                            st["auto_trading_enabled"] = False
-                            save_state(st)
-                            reply_user(tok, user_chat_id, (
-                                "🛑 <b>1-MIN SCALPER PAUSED!</b>\n\n"
-                                "• Auto-order execution on CoinDCX is now <b>OFF</b>.\n"
-                                "• Send <code>/start</code> anytime to resume."
-                            ))
-                        elif cmd in ['/start', 'start', '/resume', 'resume', 'on']:
-                            AUTO_TRADING_ENABLED = True
-                            st = load_state()
-                            st["auto_trading_enabled"] = True
-                            save_state(st)
-                            reply_user(tok, user_chat_id, (
-                                "🟢 <b>1-MIN SCALPER ACTIVATED!</b>\n\n"
-                                "• Auto-execution on CoinDCX is now <b>LIVE</b>.\n"
-                                "• Trades will ride directly to Target (+1.0%) or Stop Loss.\n"
-                                "• Send <code>/stop</code> anytime to pause."
-                            ))
-                        elif cmd in ['/status', 'status']:
-                            daily_count = get_today_executed_trades_count()
-                            with active_trades_lock:
-                                active_list = [f"{s} ({ACTIVE_TRADES[s].get('side','LONG')})" for s in ACTIVE_TRADES]
-                            reply_user(tok, user_chat_id, (
-                                f"📊 <b>1-MIN EMA SCALPER STATUS:</b>\n\n"
-                                f"• <b>Auto-Trading:</b> {'🟢 ACTIVE (LIVE)' if AUTO_TRADING_ENABLED else '🛑 PAUSED'}\n"
-                                f"• <b>Strategy:</b> 9/20 EMA with Confirmed Target Exits\n"
-                                f"• <b>Today's Trades:</b> {daily_count}\n"
-                                f"• <b>Active Positions:</b> {', '.join(active_list) if active_list else 'None'}"
-                            ))
-                        elif cmd in ['/manual', 'manual']:
-                            with active_trades_lock:
-                                for s in ACTIVE_TRADES:
-                                    ACTIVE_TRADES[s]['manual_override'] = True
-                            save_active_trades()
-                            reply_user(tok, user_chat_id, (
-                                "👤 <b>MANUAL MODE ACTIVATED!</b>\n\n"
-                                "• System trailing and stoploss are <b>PAUSED</b>.\n"
-                                "• Your SL and TP set directly on CoinDCX will execute as per your wish."
-                            ))
-                        elif cmd in ['/today', '/daily', '/report', 'today', 'daily', 'report', '/history']:
-                            today_str = get_ist_now().strftime("%d-%m-%Y")
-                            with trade_history_lock:
-                                all_e = load_all_trade_events()
-                            day_e = [e for e in all_e if e.get('date') == today_str]
-                            closed_e = [e for e in day_e if e.get('type') in ['CLOSED', 'CLOSED_MANUALLY']]
-                            total_pnl = sum(c.get('details', {}).get('realized_pnl_pct', 0) for c in closed_e)
-                            reply_user(tok, user_chat_id, (
-                                f"📅 <b>TODAY'S SCALPING SUMMARY ({today_str}):</b>\n\n"
-                                f"• Total Closed Scalps: <b>{len(closed_e)}</b>\n"
-                                f"• Realized ROE PNL: <b>{total_pnl:+.1f}% ROE</b>\n"
-                                f"• Open Positions: <b>{len(ACTIVE_TRADES)}</b>\n\n"
-                                f"<i>View live charts & dashboard at /today</i>"
-                            ))
-                        elif cmd in ['/tpsl', 'tpsl', '/synctpsl', 'synctpsl']:
-                            reply_user(tok, user_chat_id, "🔄 <i>Syncing Native CoinDCX TP/SL for all active positions...</i>")
-                            threading.Thread(target=sync_all_open_positions_tpsl, daemon=True).start()
-                initialized.add(tok)
-            except Exception: pass
-            time.sleep(1)
-
-# ==============================================================================
-# 12. BACKGROUND THREADS & APPLICATION LAUNCHER
-# ==============================================================================
-def start_background_loop():
-    clear_telegram_webhooks()
-    recover_live_coindcx_positions()
-    threading.Thread(target=sync_all_open_positions_tpsl, daemon=True).start()
-
-    def run_scalp_scan_loop():
-        time.sleep(5)
-        while True:
-            try:
-                if scan_lock.acquire(blocking=False):
-                    try: run_scan()
-                    finally: scan_lock.release()
-            except Exception as e:
-                print(f"Scalp scan exception: {e}")
-            time.sleep(10)
-
-    def run_keep_alive_loop():
-        time.sleep(15)
-        url = "https://crypto-scanner-ok3t.onrender.com/"
-        while True:
-            try:
-                req = urllib.request.Request(url, headers={'User-Agent': 'KeepAlive/1.0'})
-                with urllib.request.urlopen(req, context=ctx, timeout=8) as r: pass
-            except Exception: pass
-            time.sleep(120)
-
-    def tpsl_sync_worker():
-        time.sleep(30)
-        while True:
-            try:
-                sync_all_open_positions_tpsl()
-            except Exception: pass
-            time.sleep(45)
-
-    threading.Thread(target=run_scalp_scan_loop, daemon=True).start()
-    threading.Thread(target=monitor_active_positions, daemon=True).start()
-    threading.Thread(target=run_keep_alive_loop, daemon=True).start()
-    threading.Thread(target=tpsl_sync_worker, daemon=True).start()
-    threading.Thread(target=run_telegram_command_listener, daemon=True).start()
-
-    send_telegram_message(
-        "⚡ <b>1-MINUTE 9 & 20 EMA SCALPING BOT DEPLOYED!</b>\n\n"
-        "• <b>Strategy:</b> 9-20 EMA Crossover + 50 EMA Macro Baseline\n"
-        "• <b>Entry:</b> High-probability setups only (Confirmed trend)\n"
-        "• <b>Exit System:</b> Trades ride directly to Target (+1.0%) or SL\n"
-        "• <b>Fix:</b> Removed 9 EMA panic trailing exits\n"
-        "• <b>Native TP/SL:</b> Bracket orders on CoinDCX\n"
-        "• <b>Margin:</b> ₹1,000 INR (7x Isolated Leverage)\n"
-        "• <b>Controls:</b> Web 1-Click Dashboard + Telegram /start & /stop"
-    )
-
-start_background_loop()
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    print(f"Starting 1-Minute EMA Scalping server on port {port}...")
-    app.run(host="0.0.0.0", port=port)
+                            f"• <b>Exit Price:</b> <code>
