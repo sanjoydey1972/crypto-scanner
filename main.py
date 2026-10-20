@@ -319,25 +319,13 @@ def eval_crossover_setup(klines, ema9_series, ema20_series):
     if spread_pct < 0.00025:
         return None, 0
 
-    # -------------------------------------------------------------------------
     # 🔴 BEARISH DEATH CROSSOVER (SHORT)
-    # - Candle -3: 9 EMA was >= 20 EMA
-    # - Candle -2 (closed): 9 EMA crossed strictly < 20 EMA
-    # - Closed candle was BEARISH (Red body)
-    # - 20 EMA is flat or sloping DOWN
-    # -------------------------------------------------------------------------
     if e9_prev >= e20_prev and e9_closed < e20_closed:
         if closed_close <= closed_open:
             if e20_closed <= e20_prev * 1.0002:
                 return 'SHORT', 0
 
-    # -------------------------------------------------------------------------
     # 🟢 BULLISH GOLDEN CROSSOVER (LONG)
-    # - Candle -3: 9 EMA was <= 20 EMA
-    # - Candle -2 (closed): 9 EMA crossed strictly > 20 EMA
-    # - Closed candle was BULLISH (Green body)
-    # - 20 EMA is flat or sloping UP
-    # -------------------------------------------------------------------------
     if e9_prev <= e20_prev and e9_closed > e20_closed:
         if closed_close >= closed_open:
             if e20_closed >= e20_prev * 0.9998:
@@ -371,11 +359,12 @@ def fetch_all_coindcx_live_positions():
         "https://api.coindcx.com/exchange/v1/derivatives/futures/positions",
         "https://api.coindcx.com/exchange/v1/derivatives/futures/positions/active"
     ]
+    ts_sec = int(time.time())
     ts_ms = int(time.time() * 1000)
     body_variants = [
+        {"timestamp": ts_sec},
         {"timestamp": ts_ms},
-        {"timestamp": ts_ms, "page": "1", "size": "50"},
-        {"timestamp": int(time.time())}
+        {"timestamp": ts_sec, "page": "1", "size": "50"}
     ]
     for url in endpoints:
         for body in body_variants:
@@ -502,7 +491,7 @@ def recover_live_coindcx_positions():
         print(f"✅ Successfully recovered {recovered_count} active position(s) from CoinDCX!")
 
 # ==============================================================================
-# 8. ORDER EXECUTION WITH LOT SIZE PRECISION NORMALIZATION
+# 8. ORDER EXECUTION WITH LOT SIZE PRECISION NORMALIZATION & NATIVE TP/SL
 # ==============================================================================
 def execute_coindcx_futures_trade(symbol, side="buy", cmp=0.0, margin_inr=1000.0, leverage=7, custom_quantity=None, is_close=False):
     if not COINDCX_API_KEY or not COINDCX_SECRET_KEY:
@@ -612,12 +601,42 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=0.0, margin_inr=1000.0
 def apply_coindcx_native_tpsl(pair, position_id, target_price, stop_loss_price):
     if not COINDCX_API_KEY or not COINDCX_SECRET_KEY: return False
     url = "https://api.coindcx.com/exchange/v1/derivatives/futures/positions/create_tpsl"
-    ts = int(time.time() * 1000)
+    ts_sec = int(time.time())
+    ts_ms = int(time.time() * 1000)
+
+    tp_str = str(round_coin_price(target_price))
+    sl_str = str(round_coin_price(stop_loss_price))
 
     payload_variants = [
-        {"timestamp": ts, "id": str(position_id), "take_profit": {"stop_price": float(target_price)}, "stop_loss": {"stop_price": float(stop_loss_price)}},
-        {"timestamp": ts, "position_id": str(position_id), "take_profit": {"stop_price": float(target_price)}, "stop_loss": {"stop_price": float(stop_loss_price)}},
-        {"timestamp": ts, "pair": pair, "id": str(position_id), "take_profit": {"stop_price": float(target_price)}, "stop_loss": {"stop_price": float(stop_loss_price)}}
+        # 1. Official CoinDCX schema: seconds timestamp, string stop_price, order_type
+        {
+            "timestamp": ts_sec,
+            "id": str(position_id),
+            "take_profit": {"stop_price": tp_str, "order_type": "take_profit_market"},
+            "stop_loss": {"stop_price": sl_str, "order_type": "stop_market"}
+        },
+        # 2. Float values with seconds timestamp
+        {
+            "timestamp": ts_sec,
+            "id": str(position_id),
+            "take_profit": {"stop_price": float(target_price), "order_type": "take_profit_market"},
+            "stop_loss": {"stop_price": float(stop_loss_price), "order_type": "stop_market"}
+        },
+        # 3. With pair included
+        {
+            "timestamp": ts_sec,
+            "pair": pair,
+            "id": str(position_id),
+            "take_profit": {"stop_price": tp_str, "order_type": "take_profit_market"},
+            "stop_loss": {"stop_price": sl_str, "order_type": "stop_market"}
+        },
+        # 4. Milliseconds fallback
+        {
+            "timestamp": ts_ms,
+            "id": str(position_id),
+            "take_profit": {"stop_price": tp_str, "order_type": "take_profit_market"},
+            "stop_loss": {"stop_price": sl_str, "order_type": "stop_market"}
+        }
     ]
     for body in payload_variants:
         try:
@@ -704,18 +723,15 @@ def run_scan():
             # 🟢 LONG ENTRY (Initial SL = Recent Swing Low)
             # ------------------------------------------------------------------
             if signal_side == 'LONG':
-                # Swing Low of last 8 candles with safety cushion
                 recent_swing_low = min(lows[-8:])
                 raw_sl = round_coin_price(recent_swing_low * 0.9995)
 
-                # Guardrails: Min 0.35%, Max 1.3% distance
                 if (cmp - raw_sl) < (cmp * 0.0035):
                     raw_sl = round_coin_price(cmp * 0.995)
                 elif (cmp - raw_sl) > (cmp * 0.013):
                     raw_sl = round_coin_price(cmp * 0.988)
 
-                # Target TP: Extended to allow trailing SL to ride past 5%, 7%, 10% ROE
-                tp1 = round_coin_price(cmp * 1.018)  # ~+12.6% ROE max target
+                tp1 = round_coin_price(cmp * 1.018)
 
                 sl_dist_pct = abs(cmp - raw_sl) / cmp * 100.0 if cmp > 0 else 0.8
                 sl_roe_pct = sl_dist_pct * lev_num
@@ -795,18 +811,15 @@ def run_scan():
             # 🔴 SHORT ENTRY (Initial SL = Recent Swing High)
             # ------------------------------------------------------------------
             elif signal_side == 'SHORT':
-                # Swing High of last 8 candles with safety cushion
                 recent_swing_high = max(highs[-8:])
                 raw_sl = round_coin_price(recent_swing_high * 1.0005)
 
-                # Guardrails: Min 0.35%, Max 1.3% distance
                 if (raw_sl - cmp) < (cmp * 0.0035):
                     raw_sl = round_coin_price(cmp * 1.005)
                 elif (raw_sl - cmp) > (cmp * 0.013):
                     raw_sl = round_coin_price(cmp * 1.012)
 
-                # Target TP: Extended to allow trailing SL to ride past 5%, 7%, 10% ROE
-                tp1 = round_coin_price(cmp * 0.982)  # ~+12.6% ROE max target
+                tp1 = round_coin_price(cmp * 0.982)
 
                 sl_dist_pct = abs(raw_sl - cmp) / cmp * 100.0 if cmp > 0 else 0.8
                 sl_roe_pct = sl_dist_pct * lev_num
