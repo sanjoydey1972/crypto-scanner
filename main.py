@@ -64,7 +64,7 @@ COINDCX_SECRET_KEY = os.environ.get("COINDCX_SECRET_KEY", "").strip() or os.envi
 ctx = ssl._create_unverified_context()
 
 # ==============================================================================
-# 2. WATCHLIST (70 TOP HIGH-LIQUIDITY COINS) & CRYPTO PAIR ALIASES
+# 2. WATCHLIST & CRYPTO PAIR ALIASES
 # ==============================================================================
 WATCHLIST = [
     # Top Tier & Majors
@@ -770,7 +770,7 @@ def run_scan():
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
                             f"🛑 <b>Stop Loss (Swing Low):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE)\n"
                             f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+1.8% / +12.6% ROE)\n"
-                            f"🔄 <b>Trailing Stop:</b> Auto-ratchet at +5%, +7%, and +10% ROE!\n\n"
+                            f"🔄 <b>Trailing Stop:</b> Breakeven at +5% ROE | Continuous Peak-Trailing (1.5% below peak) above +7% ROE!\n\n"
                             f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
                             f"• Order ID: <code>{order_id}</code>\n"
                             f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
@@ -861,7 +861,7 @@ def run_scan():
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
                             f"🛑 <b>Stop Loss (Swing High):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE)\n"
                             f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+1.8% / +12.6% ROE)\n"
-                            f"🔄 <b>Trailing Stop:</b> Auto-ratchet at +5%, +7%, and +10% ROE!\n\n"
+                            f"🔄 <b>Trailing Stop:</b> Breakeven at +5% ROE | Continuous Peak-Trailing (1.5% below peak) above +7% ROE!\n\n"
                             f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
                             f"• Order ID: <code>{order_id}</code>\n"
                             f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
@@ -884,16 +884,16 @@ def run_scan():
         except Exception: pass
 
 # ==============================================================================
-# 10. MULTI-TIER TRAILING STOP LOSS (5%, 7%, 10% ROE) & EXIT ENGINE
+# 10. CONTINUOUS PEAK-TRAILING STOP LOSS & EXIT ENGINE
 # ==============================================================================
 def monitor_active_positions():
     """
-    TRAILING STOP LOSS & PURE TREND-RIDER:
+    DYNAMIC PEAK-TRAILING STOP LOSS & PURE TREND-RIDER:
     1. Trailing SL Tier 1: At +5% ROE -> Moves SL to lock +2.0% ROE (Breakeven + fee profit)
-    2. Trailing SL Tier 2: At +7% ROE -> Moves SL to lock +4.5% ROE
-    3. Trailing SL Tier 3: At +10% ROE -> Moves SL to lock +7.5% ROE
-    4. Exits on Reverse Crossover (Blue 9 EMA crosses Red 20 EMA in reverse on closed candle)
-    5. Exits if Trailing/Initial SL or Target TP is reached.
+    2. Continuous Peak Trailing: Once ROE >= +7.0% -> Dynamically trails 1.5% ROE below the highest peak ROE reached!
+       (e.g., At +9.0% Peak -> SL trails to +7.5% ROE; at +12% Peak -> SL trails to +10.5% ROE)
+    3. Exits on Reverse Crossover (Blue 9 EMA crosses Red 20 EMA in reverse on closed candle)
+    4. Exits if Trailing/Initial SL or Target TP is reached.
     """
     time.sleep(5)
     while True:
@@ -946,65 +946,78 @@ def monitor_active_positions():
                     roe_pct = pnl_pct * lev
 
                     # ----------------------------------------------------------
-                    # 🔄 TRAILING STOP LOSS AT 5%, 7%, and 10% ROE
+                    # 🔄 CONTINUOUS PEAK-TRAILING STOP LOSS ENGINE
                     # ----------------------------------------------------------
                     trail_updated = False
                     new_sl_val = trade['sl']
                     tier_name = ""
 
                     if side == "LONG":
-                        # Tier 3: +10% ROE reached -> Lock +7.5% ROE
-                        if roe_pct >= 10.0 and current_tier < 3:
-                            target_sl = round_coin_price(entry_p * (1.0 + (0.075 / lev)))
-                            if target_sl > trade['sl']:
-                                new_sl_val = target_sl
-                                trade['trail_tier'] = 3
-                                tier_name = "TIER 3 (+10% ROE Reached ➔ Locked +7.5% ROE)"
-                                trail_updated = True
-                        # Tier 2: +7% ROE reached -> Lock +4.5% ROE
-                        elif roe_pct >= 7.0 and current_tier < 2:
-                            target_sl = round_coin_price(entry_p * (1.0 + (0.045 / lev)))
+                        # Track highest peak price reached
+                        if cmp > trade.get('highest_price', entry_p):
+                            trade['highest_price'] = cmp
+                        peak_p = trade['highest_price']
+                        peak_roe = ((peak_p - entry_p) / entry_p * 100.0) * lev
+                        last_notified_roe = trade.get('last_notified_roe', 0.0)
+
+                        # Peak-Trailing Engine: Trail 1.5% ROE below peak once peak >= 7.0%
+                        if peak_roe >= 7.0:
+                            target_locked_roe = peak_roe - 1.5
+                            target_sl = round_coin_price(entry_p * (1.0 + (target_locked_roe / 100.0) / lev))
                             if target_sl > trade['sl']:
                                 new_sl_val = target_sl
                                 trade['trail_tier'] = 2
-                                tier_name = "TIER 2 (+7% ROE Reached ➔ Locked +4.5% ROE)"
-                                trail_updated = True
-                        # Tier 1: +5% ROE reached -> Lock +2.0% ROE (Breakeven + fee cushion)
-                        elif roe_pct >= 5.0 and current_tier < 1:
+                                tier_name = f"PEAK-TRAIL (+{peak_roe:.1f}% Peak ➔ Locked +{target_locked_roe:.1f}% ROE)"
+                                if (target_locked_roe - last_notified_roe) >= 0.5 or trade.get('last_trail_type') != 'peak':
+                                    trade['last_notified_roe'] = target_locked_roe
+                                    trade['last_trail_type'] = 'peak'
+                                    trail_updated = True
+
+                        # Tier 1: At +5% ROE -> Lock +2.0% ROE (Breakeven + fee cushion)
+                        elif peak_roe >= 5.0 and current_tier < 1:
                             target_sl = round_coin_price(entry_p * (1.0 + (0.020 / lev)))
                             if target_sl > trade['sl']:
                                 new_sl_val = target_sl
                                 trade['trail_tier'] = 1
-                                tier_name = "TIER 1 (+5% ROE Reached ➔ Locked +2.0% ROE Breakeven)"
+                                trade['last_trail_type'] = 'tier1'
+                                trade['last_notified_roe'] = 2.0
+                                tier_name = "TIER 1 (+5.0% ROE Reached ➔ Locked +2.0% ROE Breakeven)"
                                 trail_updated = True
 
                     elif side == "SHORT":
-                        # Tier 3: +10% ROE reached -> Lock +7.5% ROE
-                        if roe_pct >= 10.0 and current_tier < 3:
-                            target_sl = round_coin_price(entry_p * (1.0 - (0.075 / lev)))
-                            if target_sl < trade['sl']:
-                                new_sl_val = target_sl
-                                trade['trail_tier'] = 3
-                                tier_name = "TIER 3 (+10% ROE Reached ➔ Locked +7.5% ROE)"
-                                trail_updated = True
-                        # Tier 2: +7% ROE reached -> Lock +4.5% ROE
-                        elif roe_pct >= 7.0 and current_tier < 2:
-                            target_sl = round_coin_price(entry_p * (1.0 - (0.045 / lev)))
+                        # Track lowest peak price reached
+                        if cmp < trade.get('lowest_price', entry_p):
+                            trade['lowest_price'] = cmp
+                        peak_p = trade['lowest_price']
+                        peak_roe = ((entry_p - peak_p) / entry_p * 100.0) * lev
+                        last_notified_roe = trade.get('last_notified_roe', 0.0)
+
+                        # Peak-Trailing Engine: Trail 1.5% ROE below peak once peak >= 7.0%
+                        if peak_roe >= 7.0:
+                            target_locked_roe = peak_roe - 1.5
+                            target_sl = round_coin_price(entry_p * (1.0 - (target_locked_roe / 100.0) / lev))
                             if target_sl < trade['sl']:
                                 new_sl_val = target_sl
                                 trade['trail_tier'] = 2
-                                tier_name = "TIER 2 (+7% ROE Reached ➔ Locked +4.5% ROE)"
-                                trail_updated = True
-                        # Tier 1: +5% ROE reached -> Lock +2.0% ROE (Breakeven + fee cushion)
-                        elif roe_pct >= 5.0 and current_tier < 1:
+                                tier_name = f"PEAK-TRAIL (+{peak_roe:.1f}% Peak ➔ Locked +{target_locked_roe:.1f}% ROE)"
+                                if (target_locked_roe - last_notified_roe) >= 0.5 or trade.get('last_trail_type') != 'peak':
+                                    trade['last_notified_roe'] = target_locked_roe
+                                    trade['last_trail_type'] = 'peak'
+                                    trail_updated = True
+
+                        # Tier 1: At +5% ROE -> Lock +2.0% ROE (Breakeven + fee cushion)
+                        elif peak_roe >= 5.0 and current_tier < 1:
                             target_sl = round_coin_price(entry_p * (1.0 - (0.020 / lev)))
                             if target_sl < trade['sl']:
                                 new_sl_val = target_sl
                                 trade['trail_tier'] = 1
-                                tier_name = "TIER 1 (+5% ROE Reached ➔ Locked +2.0% ROE Breakeven)"
+                                trade['last_trail_type'] = 'tier1'
+                                trade['last_notified_roe'] = 2.0
+                                tier_name = "TIER 1 (+5.0% ROE Reached ➔ Locked +2.0% ROE Breakeven)"
                                 trail_updated = True
 
-                    if trail_updated:
+                    # Ratchet update & exchange bracket synchronization
+                    if trade['sl'] != new_sl_val:
                         trade['sl'] = new_sl_val
                         save_active_trades()
                         # Update exchange native SL in background
@@ -1016,12 +1029,13 @@ def monitor_active_positions():
                                 daemon=True
                             ).start()
 
+                    if trail_updated:
                         send_telegram_message(
                             f"🛡️ <b>TRAILING STOP ACTIVATED: {symbol} ({side})</b>\n\n"
                             f"• <b>Trigger:</b> <code>{tier_name}</code>\n"
                             f"• <b>Current ROE:</b> <code>{roe_pct:+.1f}% ROE</code>\n"
                             f"• <b>New Trailing SL:</b> <code>${format_coin_price(new_sl_val)}</code>\n"
-                            f"✅ <i>Profits locked in. Downside risk completely eliminated!</i>"
+                            f"✅ <i>Profits dynamically locked! Trailing 1.5% below highest peak.</i>"
                         )
 
                     # ----------------------------------------------------------
@@ -1189,7 +1203,7 @@ def home():
         <div class="container">
             <div class="card">
                 <h1>⚡ 1-Minute 9 & 20 EMA Scalper</h1>
-                <p>Status: <b>{'🟢 RUNNING' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b> | Watchlist: <b>70 High-Liquidity Coins</b> | Trailing SL: <b>5%, 7%, 10% ROE Multi-Tier</b></p>
+                <p>Status: <b>{'🟢 RUNNING' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b> | Trailing SL: <b>Continuous Peak-Trailing (1.5% below peak above 7% ROE)</b></p>
                 <div>
                     <a href="/toggle-bot" class="btn {'btn-red' if AUTO_TRADING_ENABLED else 'btn-green'}">
                         {'PAUSE BOT' if AUTO_TRADING_ENABLED else 'RESUME BOT'}
@@ -1285,10 +1299,9 @@ def start_background_loop():
         "• <b>Strategy:</b> Pure 9/20 EMA Crossover Scalper\n"
         "• <b>Watchlist:</b> 70 Top High-Liquidity Coins\n"
         "• <b>Initial SL:</b> Recent Swing High (Short) / Swing Low (Long)\n"
-        "• <b>Multi-Tier Trailing SL:</b>\n"
+        "• <b>Continuous Peak-Trailing SL:</b>\n"
         "   └ 🥉 Tier 1: At +5% ROE ➔ Locks +2.0% ROE (Breakeven)\n"
-        "   └ 🥈 Tier 2: At +7% ROE ➔ Locks +4.5% ROE\n"
-        "   └ 🥇 Tier 3: At +10% ROE ➔ Locks +7.5% ROE\n"
+        "   └ 🚀 Peak-Trail: At ≥+7% ROE ➔ Continuously trails 1.5% ROE below highest peak!\n"
         "• <b>Exit:</b> Reverse Cross (Blue crosses Red) or Target\n"
         "• <b>Margin:</b> ₹1,000 INR (7x Isolated Leverage)\n"
         "• <b>Controls:</b> Web 1-Click Dashboard + Telegram /start & /stop"
