@@ -64,16 +64,33 @@ COINDCX_SECRET_KEY = os.environ.get("COINDCX_SECRET_KEY", "").strip() or os.envi
 ctx = ssl._create_unverified_context()
 
 # ==============================================================================
-# 2. WATCHLIST & CRYPTO PAIR ALIASES
+# 2. WATCHLIST (70 TOP HIGH-LIQUIDITY COINS) & CRYPTO PAIR ALIASES
 # ==============================================================================
 WATCHLIST = [
-    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'AVAX-USDT', 'DOGE-USDT', 
-    'XRP-USDT', 'ADA-USDT', 'LINK-USDT', 'NEAR-USDT', 'BCH-USDT', 
-    'SUI-USDT', 'LTC-USDT', 'DOT-USDT', 'PEPE-USDT', 'OP-USDT', 
-    'ARB-USDT', 'APT-USDT', 'RENDER-USDT', 'INJ-USDT', 'FET-USDT', 
-    'TIA-USDT', 'WIF-USDT', 'SHIB-USDT', 'AAVE-USDT', 'UNI-USDT', 
-    'BNB-USDT', 'ONDO-USDT', 'POL-USDT', 'TRX-USDT', 'TAO-USDT',
-    'CRV-USDT', 'ENA-USDT', 'FTM-USDT', 'SEI-USDT', 'STX-USDT'
+    # Top Tier & Majors
+    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT', 'XRP-USDT', 
+    'DOGE-USDT', 'ADA-USDT', 'AVAX-USDT', 'LINK-USDT', 'SUI-USDT',
+    'NEAR-USDT', 'BCH-USDT', 'LTC-USDT', 'DOT-USDT', 'TRX-USDT',
+    
+    # Layer 1 / Layer 2 / High Volume
+    'APT-USDT', 'ARB-USDT', 'OP-USDT', 'TIA-USDT', 'INJ-USDT',
+    'SEI-USDT', 'FTM-USDT', 'STX-USDT', 'POL-USDT', 'ATOM-USDT',
+    'ETC-USDT', 'FIL-USDT', 'ICP-USDT', 'KAS-USDT', 'STRK-USDT',
+    'MANTA-USDT', 'AR-USDT', 'EOS-USDT', 'CHZ-USDT', 'ALGO-USDT',
+    
+    # AI & Compute
+    'RENDER-USDT', 'FET-USDT', 'TAO-USDT', 'WLD-USDT',
+    
+    # DeFi & Infrastructure
+    'AAVE-USDT', 'UNI-USDT', 'CRV-USDT', 'ENA-USDT', 'ONDO-USDT',
+    'RUNE-USDT', 'DYDX-USDT', 'JUP-USDT', 'PYTH-USDT', 'PENDLE-USDT',
+    'LDO-USDT', 'MKR-USDT', 'SNX-USDT', 'KAVA-USDT', 'JTO-USDT',
+    'GRT-USDT', 'BLUR-USDT', 'VET-USDT', 'THETA-USDT',
+    
+    # High-Momentum & Meme Coins
+    'PEPE-USDT', 'SHIB-USDT', 'WIF-USDT', 'BONK-USDT', 'FLOKI-USDT',
+    'BOME-USDT', 'ORDI-USDT', 'GALA-USDT', 'SAND-USDT', 'MANA-USDT',
+    'AXS-USDT', 'IMX-USDT'
 ]
 
 COINDCX_PAIR_ALIASES = {
@@ -91,7 +108,8 @@ COINDCX_PAIR_ALIASES = {
     'LUNC': '1000LUNC',
     'BABYDOGE': '1000BABYDOGE',
     'WHY': '1000WHY',
-    'BTT': '1000BTT'
+    'BTT': '1000BTT',
+    'BOME': '1000BOME'
 }
 
 SYMBOL_COOLDOWN_SECONDS = 120
@@ -509,8 +527,8 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=0.0, margin_inr=1000.0
 
             # Precision normalization
             if raw_coin == 'BTC': quantity = round(max(0.001, raw_qty), 3)
-            elif raw_coin in ['ETH', 'SOL', 'BNB']: quantity = round(max(0.01, raw_qty), 2)
-            elif raw_coin in ['UNI', 'PENDLE', 'AVAX', 'AAVE', 'LINK', 'DOT', 'NEAR', 'SUI', 'APT', 'INJ', 'TIA']: 
+            elif raw_coin in ['ETH', 'SOL', 'BNB', 'MKR', 'TAO', 'AAVE', 'BCH']: quantity = round(max(0.01, raw_qty), 2)
+            elif raw_coin in ['UNI', 'PENDLE', 'AVAX', 'LINK', 'DOT', 'NEAR', 'SUI', 'APT', 'INJ', 'TIA', 'ATOM', 'FIL', 'ETC', 'RUNE', 'ORDI', 'ICP', 'AR']: 
                 quantity = float(max(1, int(round(raw_qty))))
             elif raw_qty >= 50: quantity = float(int(round(raw_qty)))
             elif raw_qty >= 1: quantity = round(raw_qty, 1)
@@ -1171,7 +1189,7 @@ def home():
         <div class="container">
             <div class="card">
                 <h1>⚡ 1-Minute 9 & 20 EMA Scalper</h1>
-                <p>Status: <b>{'🟢 RUNNING' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b> | Trailing SL: <b>5%, 7%, 10% ROE Multi-Tier</b></p>
+                <p>Status: <b>{'🟢 RUNNING' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b> | Watchlist: <b>70 High-Liquidity Coins</b> | Trailing SL: <b>5%, 7%, 10% ROE Multi-Tier</b></p>
                 <div>
                     <a href="/toggle-bot" class="btn {'btn-red' if AUTO_TRADING_ENABLED else 'btn-green'}">
                         {'PAUSE BOT' if AUTO_TRADING_ENABLED else 'RESUME BOT'}
@@ -1265,6 +1283,7 @@ def start_background_loop():
     send_telegram_message(
         "⚡ <b>1-MINUTE 9 & 20 EMA SCALPING BOT DEPLOYED!</b>\n\n"
         "• <b>Strategy:</b> Pure 9/20 EMA Crossover Scalper\n"
+        "• <b>Watchlist:</b> 70 Top High-Liquidity Coins\n"
         "• <b>Initial SL:</b> Recent Swing High (Short) / Swing Low (Long)\n"
         "• <b>Multi-Tier Trailing SL:</b>\n"
         "   └ 🥉 Tier 1: At +5% ROE ➔ Locks +2.0% ROE (Breakeven)\n"
