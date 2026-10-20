@@ -205,15 +205,19 @@ def send_telegram_message(text):
 # ==============================================================================
 def round_coin_price(price):
     if price >= 100.0: return round(price, 2)
-    elif price >= 1.0: return round(price, 4)
-    elif price >= 0.01: return round(price, 6)
+    elif price >= 10.0: return round(price, 3)
+    elif price >= 0.05: return round(price, 4)
+    elif price >= 0.005: return round(price, 5)
+    elif price >= 0.0001: return round(price, 6)
     elif price > 0: return round(price, 8)
     return 0.0
 
 def format_coin_price(price):
     if price >= 100.0: return f"{price:.2f}"
-    elif price >= 1.0: return f"{price:.4f}"
-    elif price >= 0.01: return f"{price:.6f}"
+    elif price >= 10.0: return f"{price:.3f}"
+    elif price >= 0.05: return f"{price:.4f}"
+    elif price >= 0.005: return f"{price:.5f}"
+    elif price >= 0.0001: return f"{price:.6f}"
     elif price > 0: return f"{price:.8f}".rstrip('0')
     return "0.00"
 
@@ -671,34 +675,43 @@ def apply_coindcx_native_tpsl(pair, position_id, target_price, stop_loss_price):
 
     tp_str = str(round_coin_price(target_price))
     sl_str = str(round_coin_price(stop_loss_price))
+    tp_fmt = format_coin_price(target_price)
+    sl_fmt = format_coin_price(stop_loss_price)
 
     payload_variants = [
-        # 1. Official CoinDCX schema: ms timestamp, string stop_price, order_type
+        # 1. Official CoinDCX schema: ms timestamp, formatted string stop_price, order_type
+        {
+            "timestamp": ts_ms,
+            "id": str(position_id),
+            "take_profit": {"stop_price": tp_fmt, "order_type": "take_profit_market"},
+            "stop_loss": {"stop_price": sl_fmt, "order_type": "stop_market"}
+        },
+        # 2. String of round_coin_price
         {
             "timestamp": ts_ms,
             "id": str(position_id),
             "take_profit": {"stop_price": tp_str, "order_type": "take_profit_market"},
             "stop_loss": {"stop_price": sl_str, "order_type": "stop_market"}
         },
-        # 2. Seconds timestamp
+        # 3. Seconds timestamp
         {
             "timestamp": ts_sec,
             "id": str(position_id),
-            "take_profit": {"stop_price": tp_str, "order_type": "take_profit_market"},
-            "stop_loss": {"stop_price": sl_str, "order_type": "stop_market"}
+            "take_profit": {"stop_price": tp_fmt, "order_type": "take_profit_market"},
+            "stop_loss": {"stop_price": sl_fmt, "order_type": "stop_market"}
         },
-        # 3. Stop loss only (in case TP target is outside allowed band)
+        # 4. Stop loss only (in case TP target is outside allowed band)
         {
             "timestamp": ts_ms,
             "id": str(position_id),
-            "stop_loss": {"stop_price": sl_str, "order_type": "stop_market"}
+            "stop_loss": {"stop_price": sl_fmt, "order_type": "stop_market"}
         },
-        # 4. Standard fields without explicit order_type
+        # 5. Standard fields without explicit order_type
         {
             "timestamp": ts_ms,
             "id": str(position_id),
-            "take_profit": {"stop_price": tp_str},
-            "stop_loss": {"stop_price": sl_str}
+            "take_profit": {"stop_price": tp_fmt},
+            "stop_loss": {"stop_price": sl_fmt}
         }
     ]
 
