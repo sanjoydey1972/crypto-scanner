@@ -452,7 +452,7 @@ def recover_live_coindcx_positions():
 
             with active_trades_lock:
                 if sym not in ACTIVE_TRADES:
-                    tp_dist = entry_p * 0.010
+                    tp_dist = entry_p * 0.018
                     tp_val = round_coin_price(entry_p - tp_dist if side == "SHORT" else entry_p + tp_dist)
                     sl_val = round_coin_price(entry_p + entry_p * 0.008 if side == "SHORT" else entry_p - entry_p * 0.008)
 
@@ -465,6 +465,7 @@ def recover_live_coindcx_positions():
                         'sl': sl_val,
                         'initial_tp': tp_val,
                         'initial_sl': sl_val,
+                        'trail_tier': 0,
                         'manual_override': False,
                         'entry_time': time.time(),
                         'highest_price': entry_p,
@@ -636,7 +637,7 @@ def auto_place_coindcx_native_tpsl(symbol, tp_price, sl_price, side="LONG"):
     return False
 
 # ==============================================================================
-# 9. SCANNER LOOP (PURE 9 & 20 EMA CROSSOVER)
+# 9. SCANNER LOOP (PURE 9 & 20 EMA CROSSOVER + SWING SL)
 # ==============================================================================
 def run_scan():
     today_str = get_ist_now().strftime("%d-%m-%Y")
@@ -667,6 +668,8 @@ def run_scan():
                 continue
 
             closes = [k[4] for k in m1_klines]
+            highs = [k[2] for k in m1_klines]
+            lows = [k[3] for k in m1_klines]
             cmp = closes[-1]
 
             ema9_series = calculate_ema_series(closes, 9)
@@ -680,11 +683,24 @@ def run_scan():
             lev_num = 7
 
             # ------------------------------------------------------------------
-            # 🟢 LONG ENTRY (Blue 9 EMA Crossed Above Red 20 EMA)
+            # 🟢 LONG ENTRY (Initial SL = Recent Swing Low)
             # ------------------------------------------------------------------
             if signal_side == 'LONG':
-                raw_sl = round_coin_price(cmp * 0.992)   # -0.8%
-                tp1 = round_coin_price(cmp * 1.010)      # +1.0%
+                # Swing Low of last 8 candles with safety cushion
+                recent_swing_low = min(lows[-8:])
+                raw_sl = round_coin_price(recent_swing_low * 0.9995)
+
+                # Guardrails: Min 0.35%, Max 1.3% distance
+                if (cmp - raw_sl) < (cmp * 0.0035):
+                    raw_sl = round_coin_price(cmp * 0.995)
+                elif (cmp - raw_sl) > (cmp * 0.013):
+                    raw_sl = round_coin_price(cmp * 0.988)
+
+                # Target TP: Extended to allow trailing SL to ride past 5%, 7%, 10% ROE
+                tp1 = round_coin_price(cmp * 1.018)  # ~+12.6% ROE max target
+
+                sl_dist_pct = abs(cmp - raw_sl) / cmp * 100.0 if cmp > 0 else 0.8
+                sl_roe_pct = sl_dist_pct * lev_num
 
                 setup_title = "9-20 EMA GOLDEN CROSSOVER 🚀 (Immediate Confirmed Candle)"
 
@@ -712,6 +728,7 @@ def run_scan():
                                 'sl': raw_sl,
                                 'initial_tp': tp1,
                                 'initial_sl': raw_sl,
+                                'trail_tier': 0,
                                 'manual_override': False,
                                 'highest_price': cmp,
                                 'lowest_price': cmp,
@@ -733,9 +750,9 @@ def run_scan():
                             f"⚙️ <b>Trade Parameters:</b>\n"
                             f"• <b>Direction:</b> <code>LONG</code> (7x Isolated)\n"
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
-                            f"🛑 <b>Stop Loss (SL):</b> <code>${format_coin_price(raw_sl)}</code> (-0.8% / -5.6% ROE)\n"
-                            f"🎯 <b>Target (TP1):</b> <code>${format_coin_price(tp1)}</code> (+1.0% / +7.0% ROE)\n"
-                            f"⚡ <b>Hold Rule:</b> Ride until Target or Reverse Cross (Blue crosses below Red)!\n\n"
+                            f"🛑 <b>Stop Loss (Swing Low):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE)\n"
+                            f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+1.8% / +12.6% ROE)\n"
+                            f"🔄 <b>Trailing Stop:</b> Auto-ratchet at +5%, +7%, and +10% ROE!\n\n"
                             f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
                             f"• Order ID: <code>{order_id}</code>\n"
                             f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
@@ -757,11 +774,24 @@ def run_scan():
                 continue
 
             # ------------------------------------------------------------------
-            # 🔴 SHORT ENTRY (Blue 9 EMA Crossed Below Red 20 EMA)
+            # 🔴 SHORT ENTRY (Initial SL = Recent Swing High)
             # ------------------------------------------------------------------
             elif signal_side == 'SHORT':
-                raw_sl = round_coin_price(cmp * 1.008)   # +0.8%
-                tp1 = round_coin_price(cmp * 0.990)      # -1.0%
+                # Swing High of last 8 candles with safety cushion
+                recent_swing_high = max(highs[-8:])
+                raw_sl = round_coin_price(recent_swing_high * 1.0005)
+
+                # Guardrails: Min 0.35%, Max 1.3% distance
+                if (raw_sl - cmp) < (cmp * 0.0035):
+                    raw_sl = round_coin_price(cmp * 1.005)
+                elif (raw_sl - cmp) > (cmp * 0.013):
+                    raw_sl = round_coin_price(cmp * 1.012)
+
+                # Target TP: Extended to allow trailing SL to ride past 5%, 7%, 10% ROE
+                tp1 = round_coin_price(cmp * 0.982)  # ~+12.6% ROE max target
+
+                sl_dist_pct = abs(raw_sl - cmp) / cmp * 100.0 if cmp > 0 else 0.8
+                sl_roe_pct = sl_dist_pct * lev_num
 
                 setup_title = "9-20 EMA DEATH CROSSOVER 📉 (Immediate Confirmed Candle)"
 
@@ -789,6 +819,7 @@ def run_scan():
                                 'sl': raw_sl,
                                 'initial_tp': tp1,
                                 'initial_sl': raw_sl,
+                                'trail_tier': 0,
                                 'manual_override': False,
                                 'highest_price': cmp,
                                 'lowest_price': cmp,
@@ -810,9 +841,9 @@ def run_scan():
                             f"⚙️ <b>Trade Parameters:</b>\n"
                             f"• <b>Direction:</b> <code>SHORT</code> (7x Isolated)\n"
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
-                            f"🛑 <b>Stop Loss (SL):</b> <code>${format_coin_price(raw_sl)}</code> (-0.8% / -5.6% ROE)\n"
-                            f"🎯 <b>Target (TP1):</b> <code>${format_coin_price(tp1)}</code> (+1.0% / +7.0% ROE)\n"
-                            f"⚡ <b>Hold Rule:</b> Ride until Target or Reverse Cross (Blue crosses above Red)!\n\n"
+                            f"🛑 <b>Stop Loss (Swing High):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE)\n"
+                            f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+1.8% / +12.6% ROE)\n"
+                            f"🔄 <b>Trailing Stop:</b> Auto-ratchet at +5%, +7%, and +10% ROE!\n\n"
                             f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
                             f"• Order ID: <code>{order_id}</code>\n"
                             f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
@@ -835,16 +866,16 @@ def run_scan():
         except Exception: pass
 
 # ==============================================================================
-# 10. PURE TREND-RIDING EXIT ENGINE (REVERSE CROSSOVER + TARGET/SL)
+# 10. MULTI-TIER TRAILING STOP LOSS (5%, 7%, 10% ROE) & EXIT ENGINE
 # ==============================================================================
 def monitor_active_positions():
     """
-    EXACT CHART-MATCHED EXIT ENGINE:
-    - Holds SHORT as long as Blue (9 EMA) stays <= Red (20 EMA).
-    - Exits SHORT the instant Blue (9 EMA) crosses ABOVE Red (20 EMA) on a closed candle.
-    - Holds LONG as long as Blue (9 EMA) stays >= Red (20 EMA).
-    - Exits LONG the instant Blue (9 EMA) crosses BELOW Red (20 EMA) on a closed candle.
-    - Also exits if Target (+1.0%) or Hard Stop Loss is hit.
+    TRAILING STOP LOSS & PURE TREND-RIDER:
+    1. Trailing SL Tier 1: At +5% ROE -> Moves SL to lock +2.0% ROE (Breakeven + fee profit)
+    2. Trailing SL Tier 2: At +7% ROE -> Moves SL to lock +4.5% ROE
+    3. Trailing SL Tier 3: At +10% ROE -> Moves SL to lock +7.5% ROE
+    4. Exits on Reverse Crossover (Blue 9 EMA crosses Red 20 EMA in reverse on closed candle)
+    5. Exits if Trailing/Initial SL or Target TP is reached.
     """
     time.sleep(5)
     while True:
@@ -864,7 +895,9 @@ def monitor_active_positions():
                     close_side = "sell" if side == "LONG" else "buy"
                     entry_p = trade['entry_price']
                     entry_time = trade.get('entry_time', time.time())
+                    lev = trade.get('leverage', 7)
                     pos_age = time.time() - entry_time
+                    current_tier = trade.get('trail_tier', 0)
 
                     # 1. Check if closed manually on CoinDCX
                     live_qty = fetch_coindcx_live_position_qty(symbol)
@@ -875,8 +908,8 @@ def monitor_active_positions():
                         log_trade_event(symbol, "CLOSED_MANUALLY", {"status": "Closed manually on CoinDCX"})
                         continue
 
-                    # 45-second minimum hold to eliminate initial order spread
-                    if pos_age < 45:
+                    # 30-second minimum hold before evaluation
+                    if pos_age < 30:
                         continue
 
                     m1_klines = fetch_klines(symbol, '1m', 35)
@@ -892,21 +925,109 @@ def monitor_active_positions():
                     e20_closed = ema20_series[-2]
 
                     pnl_pct = ((cmp - entry_p) / entry_p * 100) if side == "LONG" else ((entry_p - cmp) / entry_p * 100)
-                    roe_pct = pnl_pct * trade.get('leverage', 7)
+                    roe_pct = pnl_pct * lev
 
+                    # ----------------------------------------------------------
+                    # 🔄 TRAILING STOP LOSS AT 5%, 7%, and 10% ROE
+                    # ----------------------------------------------------------
+                    trail_updated = False
+                    new_sl_val = trade['sl']
+                    tier_name = ""
+
+                    if side == "LONG":
+                        # Tier 3: +10% ROE reached -> Lock +7.5% ROE
+                        if roe_pct >= 10.0 and current_tier < 3:
+                            target_sl = round_coin_price(entry_p * (1.0 + (0.075 / lev)))
+                            if target_sl > trade['sl']:
+                                new_sl_val = target_sl
+                                trade['trail_tier'] = 3
+                                tier_name = "TIER 3 (+10% ROE Reached ➔ Locked +7.5% ROE)"
+                                trail_updated = True
+                        # Tier 2: +7% ROE reached -> Lock +4.5% ROE
+                        elif roe_pct >= 7.0 and current_tier < 2:
+                            target_sl = round_coin_price(entry_p * (1.0 + (0.045 / lev)))
+                            if target_sl > trade['sl']:
+                                new_sl_val = target_sl
+                                trade['trail_tier'] = 2
+                                tier_name = "TIER 2 (+7% ROE Reached ➔ Locked +4.5% ROE)"
+                                trail_updated = True
+                        # Tier 1: +5% ROE reached -> Lock +2.0% ROE (Breakeven + fee cushion)
+                        elif roe_pct >= 5.0 and current_tier < 1:
+                            target_sl = round_coin_price(entry_p * (1.0 + (0.020 / lev)))
+                            if target_sl > trade['sl']:
+                                new_sl_val = target_sl
+                                trade['trail_tier'] = 1
+                                tier_name = "TIER 1 (+5% ROE Reached ➔ Locked +2.0% ROE Breakeven)"
+                                trail_updated = True
+
+                    elif side == "SHORT":
+                        # Tier 3: +10% ROE reached -> Lock +7.5% ROE
+                        if roe_pct >= 10.0 and current_tier < 3:
+                            target_sl = round_coin_price(entry_p * (1.0 - (0.075 / lev)))
+                            if target_sl < trade['sl']:
+                                new_sl_val = target_sl
+                                trade['trail_tier'] = 3
+                                tier_name = "TIER 3 (+10% ROE Reached ➔ Locked +7.5% ROE)"
+                                trail_updated = True
+                        # Tier 2: +7% ROE reached -> Lock +4.5% ROE
+                        elif roe_pct >= 7.0 and current_tier < 2:
+                            target_sl = round_coin_price(entry_p * (1.0 - (0.045 / lev)))
+                            if target_sl < trade['sl']:
+                                new_sl_val = target_sl
+                                trade['trail_tier'] = 2
+                                tier_name = "TIER 2 (+7% ROE Reached ➔ Locked +4.5% ROE)"
+                                trail_updated = True
+                        # Tier 1: +5% ROE reached -> Lock +2.0% ROE (Breakeven + fee cushion)
+                        elif roe_pct >= 5.0 and current_tier < 1:
+                            target_sl = round_coin_price(entry_p * (1.0 - (0.020 / lev)))
+                            if target_sl < trade['sl']:
+                                new_sl_val = target_sl
+                                trade['trail_tier'] = 1
+                                tier_name = "TIER 1 (+5% ROE Reached ➔ Locked +2.0% ROE Breakeven)"
+                                trail_updated = True
+
+                    if trail_updated:
+                        trade['sl'] = new_sl_val
+                        save_active_trades()
+                        # Update exchange native SL in background
+                        pos_info = fetch_coindcx_position_details(symbol)
+                        if pos_info and pos_info.get('position_id'):
+                            threading.Thread(
+                                target=apply_coindcx_native_tpsl,
+                                args=(pos_info['pair'], pos_info['position_id'], trade['tp1'], new_sl_val),
+                                daemon=True
+                            ).start()
+
+                        send_telegram_message(
+                            f"🛡️ <b>TRAILING STOP ACTIVATED: {symbol} ({side})</b>\n\n"
+                            f"• <b>Trigger:</b> <code>{tier_name}</code>\n"
+                            f"• <b>Current ROE:</b> <code>{roe_pct:+.1f}% ROE</code>\n"
+                            f"• <b>New Trailing SL:</b> <code>${format_coin_price(new_sl_val)}</code>\n"
+                            f"✅ <i>Profits locked in. Downside risk completely eliminated!</i>"
+                        )
+
+                    # ----------------------------------------------------------
+                    # 🏁 EXIT EVALUATION
+                    # ----------------------------------------------------------
                     exit_reason = None
 
-                    # 1. Take Profit (+1.0% Target Hit)
+                    # 1. Target TP reached
                     if side == "LONG" and cmp >= trade['tp1']:
-                        exit_reason = f"🎯 TARGET 1 HIT (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
+                        exit_reason = f"🎯 TARGET REACHED (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
                     elif side == "SHORT" and cmp <= trade['tp1']:
-                        exit_reason = f"🎯 TARGET 1 HIT (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
+                        exit_reason = f"🎯 TARGET REACHED (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
 
-                    # 2. Hard Stop Loss Protection (-0.8%)
+                    # 2. Stop Loss (Trailing SL or Initial SL)
                     elif side == "LONG" and cmp <= trade['sl']:
-                        exit_reason = f"🛑 STOP LOSS HIT ({pnl_pct:.2f}% | {roe_pct:.1f}% ROE)"
+                        if trade.get('trail_tier', 0) > 0:
+                            exit_reason = f"🔒 TRAILING STOP HIT (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
+                        else:
+                            exit_reason = f"🛑 INITIAL SWING SL HIT ({pnl_pct:.2f}% | {roe_pct:.1f}% ROE)"
                     elif side == "SHORT" and cmp >= trade['sl']:
-                        exit_reason = f"🛑 STOP LOSS HIT ({pnl_pct:.2f}% | {roe_pct:.1f}% ROE)"
+                        if trade.get('trail_tier', 0) > 0:
+                            exit_reason = f"🔒 TRAILING STOP HIT (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
+                        else:
+                            exit_reason = f"🛑 INITIAL SWING SL HIT ({pnl_pct:.2f}% | {roe_pct:.1f}% ROE)"
 
                     # 3. REVERSE CROSSOVER: Blue line crosses Red line
                     elif side == "LONG" and e9_closed < e20_closed:
@@ -916,7 +1037,7 @@ def monitor_active_positions():
 
                     if exit_reason:
                         if sell_qty > 0:
-                            execute_coindcx_futures_trade(symbol=symbol, side=close_side, cmp=cmp, leverage=trade.get('leverage', 7), custom_quantity=sell_qty, is_close=True)
+                            execute_coindcx_futures_trade(symbol=symbol, side=close_side, cmp=cmp, leverage=lev, custom_quantity=sell_qty, is_close=True)
                         with active_trades_lock:
                             ACTIVE_TRADES.pop(symbol, None)
                         save_active_trades()
@@ -1050,7 +1171,7 @@ def home():
         <div class="container">
             <div class="card">
                 <h1>⚡ 1-Minute 9 & 20 EMA Scalper</h1>
-                <p>Status: <b>{'🟢 RUNNING' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b> | Strategy: <b>Pure 9/20 EMA Cross (Immediate Top/Bottom Timing)</b></p>
+                <p>Status: <b>{'🟢 RUNNING' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b> | Trailing SL: <b>5%, 7%, 10% ROE Multi-Tier</b></p>
                 <div>
                     <a href="/toggle-bot" class="btn {'btn-red' if AUTO_TRADING_ENABLED else 'btn-green'}">
                         {'PAUSE BOT' if AUTO_TRADING_ENABLED else 'RESUME BOT'}
@@ -1143,11 +1264,13 @@ def start_background_loop():
 
     send_telegram_message(
         "⚡ <b>1-MINUTE 9 & 20 EMA SCALPING BOT DEPLOYED!</b>\n\n"
-        "• <b>Strategy:</b> Pure 9/20 EMA Crossover (Immediate Top/Bottom Timing)\n"
-        "• <b>Entry:</b> Closed Candle Crossover with Slope & Candle Confirmation\n"
-        "• <b>Exit:</b> Reverse Cross (Blue crosses Red) or Target TP1 (+1.0%)\n"
-        "• <b>Anti-Late Entry:</b> Strict Fresh-Cross check (No shorting at bottom support!)\n"
-        "• <b>Native TP/SL:</b> Bracket safety orders on CoinDCX\n"
+        "• <b>Strategy:</b> Pure 9/20 EMA Crossover Scalper\n"
+        "• <b>Initial SL:</b> Recent Swing High (Short) / Swing Low (Long)\n"
+        "• <b>Multi-Tier Trailing SL:</b>\n"
+        "   └ 🥉 Tier 1: At +5% ROE ➔ Locks +2.0% ROE (Breakeven)\n"
+        "   └ 🥈 Tier 2: At +7% ROE ➔ Locks +4.5% ROE\n"
+        "   └ 🥇 Tier 3: At +10% ROE ➔ Locks +7.5% ROE\n"
+        "• <b>Exit:</b> Reverse Cross (Blue crosses Red) or Target\n"
         "• <b>Margin:</b> ₹1,000 INR (7x Isolated Leverage)\n"
         "• <b>Controls:</b> Web 1-Click Dashboard + Telegram /start & /stop"
     )
