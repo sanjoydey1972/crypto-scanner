@@ -53,11 +53,11 @@ def save_active_trades():
         st["auto_trading_enabled"] = AUTO_TRADING_ENABLED
         save_state(st)
 
-# Telegram Bot Credentials (with Old main.py fallback tokens)
+# Telegram Bot Credentials (with fallback tokens)
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip() or os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() or "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip() or "8938527650"
 
-# CoinDCX API Credentials (with Old main.py fallback keys)
+# CoinDCX API Credentials (with fallback keys)
 COINDCX_API_KEY = os.environ.get("COINDCX_API_KEY", "").strip() or "64bfdbfc9bda7637e21610a48525a1b66d45f10fcf7ed5e1"
 COINDCX_SECRET_KEY = os.environ.get("COINDCX_SECRET_KEY", "").strip() or os.environ.get("COINDCX_API_SECRET", "").strip() or "8f47f4505a911f33444d5dabf95cccd62e9928e018bb0e38ba1b6a8ddcafe920"
 
@@ -95,7 +95,7 @@ COINDCX_PAIR_ALIASES = {
 }
 
 SYMBOL_COOLDOWN_SECONDS = 120
-MAX_ACTIVE_TRADES = 1  # 1 trade at a time to prevent overexposure
+MAX_ACTIVE_TRADES = 1  # 1 position at a time to prevent overexposure
 
 # ==============================================================================
 # 3. PERMANENT AUDIT JOURNAL & HISTORY LOGGER
@@ -271,47 +271,64 @@ def calculate_ema_series(prices, period):
         ema_vals.append(new_ema)
     return ema_vals
 
-def eval_crossover_setup(klines, ema9_series, ema20_series, ema50_series):
-    if len(klines) < 10 or len(ema9_series) < 10 or len(ema20_series) < 10 or len(ema50_series) < 10:
+# ==============================================================================
+# 6. PURE 9 & 20 EMA CROSSOVER ENGINE (ELIMINATING BAD / LATE TRADES)
+# ==============================================================================
+def eval_crossover_setup(klines, ema9_series, ema20_series):
+    """
+    STRICT 9 & 20 EMA CROSSOVER RULES:
+    1. Evaluated on the LAST CLOSED CANDLE (klines[-2]) to eliminate intra-candle noise.
+    2. Crossover MUST BE FRESH: occurred precisely between candle -3 and candle -2.
+       Never enter late in the middle of a dump or at bottom support!
+    3. 20 EMA slope must agree with trade direction (rejecting flat sideways chop).
+    4. Closed candle body must confirm direction (Red candle for Short, Green for Long).
+    5. Minimum EMA separation (>0.03%) to ignore glued, zero-momentum EMAs.
+    """
+    if len(klines) < 10 or len(ema9_series) < 10 or len(ema20_series) < 10:
         return None, 0
 
-    curr_close = klines[-1][4]
-    curr_open = klines[-1][1]
-    curr_high = klines[-1][2]
-    curr_low = klines[-1][3]
+    closed_close = klines[-2][4]
+    closed_open = klines[-2][1]
 
-    curr_ema9 = ema9_series[-1]
-    curr_ema20 = ema20_series[-1]
-    curr_ema50 = ema50_series[-1]
-    prev1_ema9 = ema9_series[-2]
-    prev1_ema20 = ema20_series[-2]
-    prev2_ema9 = ema9_series[-3]
-    prev2_ema20 = ema20_series[-3]
-    prev3_ema9 = ema9_series[-4]
-    prev3_ema20 = ema20_series[-4]
+    e9_closed = ema9_series[-2]
+    e20_closed = ema20_series[-2]
 
-    # 🟢 BULLISH CROSSOVER CHECK (Price > 50 EMA)
-    if curr_ema9 > curr_ema20 and curr_close > curr_ema50:
-        if prev1_ema9 <= prev1_ema20:
-            return 'LONG', 0
-        elif prev2_ema9 <= prev2_ema20:
-            return 'LONG', 1
-        elif prev3_ema9 <= prev3_ema20:
-            return 'LONG', 2
+    e9_prev = ema9_series[-3]
+    e20_prev = ema20_series[-3]
 
-    # 🔴 BEARISH CROSSOVER CHECK (Price < 50 EMA)
-    if curr_ema9 < curr_ema20 and curr_close < curr_ema50:
-        if prev1_ema9 >= prev1_ema20:
-            return 'SHORT', 0
-        elif prev2_ema9 >= prev2_ema20:
-            return 'SHORT', 1
-        elif prev3_ema9 >= prev3_ema20:
-            return 'SHORT', 2
+    # Minimum separation to prevent flat chop wicks
+    spread_pct = abs(e9_closed - e20_closed) / e20_closed if e20_closed > 0 else 0
+    if spread_pct < 0.00025:
+        return None, 0
+
+    # -------------------------------------------------------------------------
+    # 🔴 BEARISH DEATH CROSSOVER (SHORT)
+    # - Candle -3: 9 EMA was >= 20 EMA
+    # - Candle -2 (closed): 9 EMA crossed strictly < 20 EMA
+    # - Closed candle was BEARISH (Red body)
+    # - 20 EMA is flat or sloping DOWN
+    # -------------------------------------------------------------------------
+    if e9_prev >= e20_prev and e9_closed < e20_closed:
+        if closed_close <= closed_open:
+            if e20_closed <= e20_prev * 1.0002:
+                return 'SHORT', 0
+
+    # -------------------------------------------------------------------------
+    # 🟢 BULLISH GOLDEN CROSSOVER (LONG)
+    # - Candle -3: 9 EMA was <= 20 EMA
+    # - Candle -2 (closed): 9 EMA crossed strictly > 20 EMA
+    # - Closed candle was BULLISH (Green body)
+    # - 20 EMA is flat or sloping UP
+    # -------------------------------------------------------------------------
+    if e9_prev <= e20_prev and e9_closed > e20_closed:
+        if closed_close >= closed_open:
+            if e20_closed >= e20_prev * 0.9998:
+                return 'LONG', 0
 
     return None, 0
 
 # ==============================================================================
-# 6. COINDCX FUTURES POSITION INSPECTION & RECOVERY
+# 7. COINDCX FUTURES POSITION INSPECTION & RECOVERY
 # ==============================================================================
 def extract_pos_qty(p):
     if not isinstance(p, dict): return 0.0
@@ -466,7 +483,7 @@ def recover_live_coindcx_positions():
         print(f"✅ Successfully recovered {recovered_count} active position(s) from CoinDCX!")
 
 # ==============================================================================
-# 7. ORDER EXECUTION WITH LOT SIZE PRECISION NORMALIZATION
+# 8. ORDER EXECUTION WITH LOT SIZE PRECISION NORMALIZATION
 # ==============================================================================
 def execute_coindcx_futures_trade(symbol, side="buy", cmp=0.0, margin_inr=1000.0, leverage=7, custom_quantity=None, is_close=False):
     if not COINDCX_API_KEY or not COINDCX_SECRET_KEY:
@@ -489,7 +506,7 @@ def execute_coindcx_futures_trade(symbol, side="buy", cmp=0.0, margin_inr=1000.0
             position_value_usdt = (margin_inr * leverage) / usdt_inr_rate
             raw_qty = position_value_usdt / cmp if cmp > 0 else 0.1
 
-            # Complete Precision Normalization for All Supported Pairs
+            # Precision normalization
             if raw_coin == 'BTC': quantity = round(max(0.001, raw_qty), 3)
             elif raw_coin in ['ETH', 'SOL', 'BNB']: quantity = round(max(0.01, raw_qty), 2)
             elif raw_coin in ['UNI', 'PENDLE', 'AVAX', 'AAVE', 'LINK', 'DOT', 'NEAR', 'SUI', 'APT', 'INJ', 'TIA']: 
@@ -619,7 +636,7 @@ def auto_place_coindcx_native_tpsl(symbol, tp_price, sl_price, side="LONG"):
     return False
 
 # ==============================================================================
-# 8. 9 EMA & 20 EMA 1-MINUTE SCALPING ENGINE
+# 9. SCANNER LOOP (PURE 9 & 20 EMA CROSSOVER)
 # ==============================================================================
 def run_scan():
     today_str = get_ist_now().strftime("%d-%m-%Y")
@@ -645,8 +662,8 @@ def run_scan():
             if time.time() - last_traded < SYMBOL_COOLDOWN_SECONDS:
                 continue
 
-            m1_klines = fetch_klines(symbol, '1m', 65)
-            if not m1_klines or len(m1_klines) < 52:
+            m1_klines = fetch_klines(symbol, '1m', 40)
+            if not m1_klines or len(m1_klines) < 30:
                 continue
 
             closes = [k[4] for k in m1_klines]
@@ -654,11 +671,8 @@ def run_scan():
 
             ema9_series = calculate_ema_series(closes, 9)
             ema20_series = calculate_ema_series(closes, 20)
-            ema50_series = calculate_ema_series(closes, 50)
 
-            curr_ema50 = ema50_series[-1]
-
-            signal_side, candles_after_cross = eval_crossover_setup(m1_klines, ema9_series, ema20_series, ema50_series)
+            signal_side, candles_after_cross = eval_crossover_setup(m1_klines, ema9_series, ema20_series)
             if not signal_side:
                 continue
 
@@ -666,14 +680,13 @@ def run_scan():
             lev_num = 7
 
             # ------------------------------------------------------------------
-            # 🟢 LONG ENTRY (Above 50 EMA + 9 EMA Crossed Above 20 EMA)
+            # 🟢 LONG ENTRY (Blue 9 EMA Crossed Above Red 20 EMA)
             # ------------------------------------------------------------------
             if signal_side == 'LONG':
                 raw_sl = round_coin_price(cmp * 0.992)   # -0.8%
                 tp1 = round_coin_price(cmp * 1.010)      # +1.0%
 
-                candle_str = "Immediate Crossover Candle" if candles_after_cross == 0 else f"{candles_after_cross} Green Candle(s) After Cross"
-                setup_title = f"9-20 EMA GOLDEN CROSSOVER 🚀 ({candle_str})"
+                setup_title = "9-20 EMA GOLDEN CROSSOVER 🚀 (Immediate Confirmed Candle)"
 
                 with pending_orders_lock:
                     PENDING_ORDERS.add(symbol)
@@ -716,13 +729,13 @@ def run_scan():
                             f"🟢 <b>1-MIN EMA SCALP SIGNAL! (LONG)</b>\n\n"
                             f"<b>Pair:</b> <code>{symbol}</code> (Futures)\n"
                             f"<b>Setup:</b> <b>{setup_title}</b>\n"
-                            f"🔥 <b>Trend:</b> <code>Confirmed > 50 EMA (${format_coin_price(curr_ema50)})</code>\n\n"
+                            f"🌊 <b>Trend:</b> <code>Blue (9 EMA) crossed above Red (20 EMA)</code>\n\n"
                             f"⚙️ <b>Trade Parameters:</b>\n"
                             f"• <b>Direction:</b> <code>LONG</code> (7x Isolated)\n"
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
                             f"🛑 <b>Stop Loss (SL):</b> <code>${format_coin_price(raw_sl)}</code> (-0.8% / -5.6% ROE)\n"
                             f"🎯 <b>Target (TP1):</b> <code>${format_coin_price(tp1)}</code> (+1.0% / +7.0% ROE)\n"
-                            f"⚡ <b>Hold Rule:</b> Ride until Target TP1 or Reverse EMA Cross (No time limit)!\n\n"
+                            f"⚡ <b>Hold Rule:</b> Ride until Target or Reverse Cross (Blue crosses below Red)!\n\n"
                             f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
                             f"• Order ID: <code>{order_id}</code>\n"
                             f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
@@ -744,14 +757,13 @@ def run_scan():
                 continue
 
             # ------------------------------------------------------------------
-            # 🔴 SHORT ENTRY (Below 50 EMA + 9 EMA Crossed Below 20 EMA)
+            # 🔴 SHORT ENTRY (Blue 9 EMA Crossed Below Red 20 EMA)
             # ------------------------------------------------------------------
             elif signal_side == 'SHORT':
                 raw_sl = round_coin_price(cmp * 1.008)   # +0.8%
                 tp1 = round_coin_price(cmp * 0.990)      # -1.0%
 
-                candle_str = "Immediate Crossover Candle" if candles_after_cross == 0 else f"{candles_after_cross} Red Candle(s) After Cross"
-                setup_title = f"9-20 EMA DEATH CROSSOVER 📉 ({candle_str})"
+                setup_title = "9-20 EMA DEATH CROSSOVER 📉 (Immediate Confirmed Candle)"
 
                 with pending_orders_lock:
                     PENDING_ORDERS.add(symbol)
@@ -794,13 +806,13 @@ def run_scan():
                             f"🔴 <b>1-MIN EMA SCALP SIGNAL! (SHORT)</b>\n\n"
                             f"<b>Pair:</b> <code>{symbol}</code> (Futures)\n"
                             f"<b>Setup:</b> <b>{setup_title}</b>\n"
-                            f"🔥 <b>Trend:</b> <code>Confirmed < 50 EMA (${format_coin_price(curr_ema50)})</code>\n\n"
+                            f"🌊 <b>Trend:</b> <code>Blue (9 EMA) crossed below Red (20 EMA)</code>\n\n"
                             f"⚙️ <b>Trade Parameters:</b>\n"
                             f"• <b>Direction:</b> <code>SHORT</code> (7x Isolated)\n"
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
                             f"🛑 <b>Stop Loss (SL):</b> <code>${format_coin_price(raw_sl)}</code> (-0.8% / -5.6% ROE)\n"
                             f"🎯 <b>Target (TP1):</b> <code>${format_coin_price(tp1)}</code> (+1.0% / +7.0% ROE)\n"
-                            f"⚡ <b>Hold Rule:</b> Ride until Target TP1 or Reverse EMA Cross (No time limit)!\n\n"
+                            f"⚡ <b>Hold Rule:</b> Ride until Target or Reverse Cross (Blue crosses above Red)!\n\n"
                             f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
                             f"• Order ID: <code>{order_id}</code>\n"
                             f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
@@ -823,15 +835,16 @@ def run_scan():
         except Exception: pass
 
 # ==============================================================================
-# 9. PURE TREND-RIDING EXIT ENGINE (NO TIME LIMITS)
+# 10. PURE TREND-RIDING EXIT ENGINE (REVERSE CROSSOVER + TARGET/SL)
 # ==============================================================================
 def monitor_active_positions():
     """
-    PURE TREND RIDER:
-    - Never exits purely on a 10m time limit.
-    - Long is held as long as Blue (9 EMA) >= Red (20 EMA).
-    - Short is held as long as Blue (9 EMA) <= Red (20 EMA).
-    - Exits strictly on TP1 Target (+1.0%), Hard SL (-0.8%), or Reverse EMA Crossover.
+    EXACT CHART-MATCHED EXIT ENGINE:
+    - Holds SHORT as long as Blue (9 EMA) stays <= Red (20 EMA).
+    - Exits SHORT the instant Blue (9 EMA) crosses ABOVE Red (20 EMA) on a closed candle.
+    - Holds LONG as long as Blue (9 EMA) stays >= Red (20 EMA).
+    - Exits LONG the instant Blue (9 EMA) crosses BELOW Red (20 EMA) on a closed candle.
+    - Also exits if Target (+1.0%) or Hard Stop Loss is hit.
     """
     time.sleep(5)
     while True:
@@ -853,7 +866,7 @@ def monitor_active_positions():
                     entry_time = trade.get('entry_time', time.time())
                     pos_age = time.time() - entry_time
 
-                    # Check if position was closed manually on CoinDCX
+                    # 1. Check if closed manually on CoinDCX
                     live_qty = fetch_coindcx_live_position_qty(symbol)
                     if live_qty <= 0.0:
                         with active_trades_lock:
@@ -862,8 +875,8 @@ def monitor_active_positions():
                         log_trade_event(symbol, "CLOSED_MANUALLY", {"status": "Closed manually on CoinDCX"})
                         continue
 
-                    # 60-second hold minimum to eliminate momentary noise
-                    if pos_age < 60:
+                    # 45-second minimum hold to eliminate initial order spread
+                    if pos_age < 45:
                         continue
 
                     m1_klines = fetch_klines(symbol, '1m', 35)
@@ -875,8 +888,8 @@ def monitor_active_positions():
 
                     ema9_series = calculate_ema_series(closes, 9)
                     ema20_series = calculate_ema_series(closes, 20)
-                    e9 = ema9_series[-1]
-                    e20 = ema20_series[-1]
+                    e9_closed = ema9_series[-2]
+                    e20_closed = ema20_series[-2]
 
                     pnl_pct = ((cmp - entry_p) / entry_p * 100) if side == "LONG" else ((entry_p - cmp) / entry_p * 100)
                     roe_pct = pnl_pct * trade.get('leverage', 7)
@@ -895,11 +908,11 @@ def monitor_active_positions():
                     elif side == "SHORT" and cmp >= trade['sl']:
                         exit_reason = f"🛑 STOP LOSS HIT ({pnl_pct:.2f}% | {roe_pct:.1f}% ROE)"
 
-                    # 3. PURE TREND REVERSAL: Blue (9 EMA) Crosses Red (20 EMA) in Reverse
-                    elif side == "LONG" and e9 < e20:
-                        exit_reason = f"🔄 9/20 EMA REVERSE CROSSOVER (Blue crossed below Red) ({pnl_pct:+.2f}%)"
-                    elif side == "SHORT" and e9 > e20:
-                        exit_reason = f"🔄 9/20 EMA REVERSE CROSSOVER (Blue crossed above Red) ({pnl_pct:+.2f}%)"
+                    # 3. REVERSE CROSSOVER: Blue line crosses Red line
+                    elif side == "LONG" and e9_closed < e20_closed:
+                        exit_reason = f"🔄 REVERSE CROSSOVER (Blue 9 EMA crossed below Red 20 EMA) ({pnl_pct:+.2f}%)"
+                    elif side == "SHORT" and e9_closed > e20_closed:
+                        exit_reason = f"🔄 REVERSE CROSSOVER (Blue 9 EMA crossed above Red 20 EMA) ({pnl_pct:+.2f}%)"
 
                     if exit_reason:
                         if sell_qty > 0:
@@ -925,13 +938,13 @@ def monitor_active_positions():
                         )
                 except Exception as e:
                     print(f"Error checking position {symbol}: {e}")
-            time.sleep(4)
+            time.sleep(3)
         except Exception as e:
             print(f"Error in monitor_active_positions: {e}")
             time.sleep(5)
 
 # ==============================================================================
-# 10. TELEGRAM COMMAND LISTENER (/start, /stop, /status)
+# 11. TELEGRAM COMMAND LISTENER (/start, /stop, /status)
 # ==============================================================================
 def run_telegram_command_listener():
     global AUTO_TRADING_ENABLED
@@ -977,7 +990,7 @@ def run_telegram_command_listener():
         time.sleep(3)
 
 # ==============================================================================
-# 11. FLASK DASHBOARD & WEB ROUTES
+# 12. FLASK DASHBOARD & WEB ROUTES
 # ==============================================================================
 @app.route('/')
 def home():
@@ -1037,7 +1050,7 @@ def home():
         <div class="container">
             <div class="card">
                 <h1>⚡ 1-Minute 9 & 20 EMA Scalper</h1>
-                <p>Status: <b>{'🟢 RUNNING' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b> | Strategy: <b>Pure Trend-Rider (No Time Limits)</b></p>
+                <p>Status: <b>{'🟢 RUNNING' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b> | Strategy: <b>Pure 9/20 EMA Cross (Immediate Top/Bottom Timing)</b></p>
                 <div>
                     <a href="/toggle-bot" class="btn {'btn-red' if AUTO_TRADING_ENABLED else 'btn-green'}">
                         {'PAUSE BOT' if AUTO_TRADING_ENABLED else 'RESUME BOT'}
@@ -1096,7 +1109,7 @@ def manual_close(symbol):
     return "<script>window.location.href='/';</script>"
 
 # ==============================================================================
-# 12. BACKGROUND WORKERS & SERVER STARTUP
+# 13. BACKGROUND WORKERS & SERVER STARTUP
 # ==============================================================================
 def start_background_loop():
     def run_scalp_scan_loop():
@@ -1108,7 +1121,7 @@ def start_background_loop():
                     finally: scan_lock.release()
             except Exception as e:
                 print(f"Scalp scan exception: {e}")
-            time.sleep(10)
+            time.sleep(8)
 
     def run_keep_alive_loop():
         time.sleep(15)
@@ -1130,10 +1143,11 @@ def start_background_loop():
 
     send_telegram_message(
         "⚡ <b>1-MINUTE 9 & 20 EMA SCALPING BOT DEPLOYED!</b>\n\n"
-        "• <b>Strategy:</b> 9-20 EMA Crossover + 50 EMA Macro Baseline\n"
-        "• <b>Trend-Rider:</b> No time limit! Position stays open while Blue > Red\n"
-        "• <b>Exit:</b> Target TP1 (+1.0%), Hard SL, or Blue crosses Red in reverse\n"
-        "• <b>Native TP/SL:</b> Bracket orders on CoinDCX\n"
+        "• <b>Strategy:</b> Pure 9/20 EMA Crossover (Immediate Top/Bottom Timing)\n"
+        "• <b>Entry:</b> Closed Candle Crossover with Slope & Candle Confirmation\n"
+        "• <b>Exit:</b> Reverse Cross (Blue crosses Red) or Target TP1 (+1.0%)\n"
+        "• <b>Anti-Late Entry:</b> Strict Fresh-Cross check (No shorting at bottom support!)\n"
+        "• <b>Native TP/SL:</b> Bracket safety orders on CoinDCX\n"
         "• <b>Margin:</b> ₹1,000 INR (7x Isolated Leverage)\n"
         "• <b>Controls:</b> Web 1-Click Dashboard + Telegram /start & /stop"
     )
