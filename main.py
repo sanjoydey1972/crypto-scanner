@@ -113,7 +113,7 @@ COINDCX_PAIR_ALIASES = {
 }
 
 SYMBOL_COOLDOWN_SECONDS = 120
-MAX_ACTIVE_TRADES = 1  # 1 position at a time to prevent overexposure
+MAX_ACTIVE_TRADES = 2  # Allows up to 2 concurrent scalps so one coin doesn't freeze the whole watchlist
 
 # ==============================================================================
 # 3. PERMANENT AUDIT JOURNAL & HISTORY LOGGER
@@ -1055,13 +1055,18 @@ def monitor_active_positions():
                     lev = trade.get('leverage', 7)
                     pos_age = time.time() - entry_time
 
-                    # 1. Check if closed manually on CoinDCX
+                    # 1. Check if closed on CoinDCX (native TP/SL or manual close)
                     live_qty = fetch_coindcx_live_position_qty(symbol)
                     if live_qty <= 0.0:
                         with active_trades_lock:
                             ACTIVE_TRADES.pop(symbol, None)
                         save_active_trades()
-                        log_trade_event(symbol, "CLOSED_MANUALLY", {"status": "Closed manually on CoinDCX"})
+                        log_trade_event(symbol, "CLOSED_ON_EXCHANGE", {"status": "Closed on CoinDCX (Native TP/SL or manual exit)"})
+                        send_telegram_message(
+                            f"🔔 <b>POSITION CLOSED ON COINDCX: {symbol}</b>\n\n"
+                            f"• <b>Status:</b> Position was executed/closed directly on CoinDCX (Native TP/SL hit)!\n"
+                            f"• <b>Capacity:</b> Trade slot freed. Scanner actively watching 70 coins for the next crossover."
+                        )
                         continue
 
                     # 30-second minimum hold before evaluation
@@ -1229,21 +1234,22 @@ def run_telegram_command_listener():
                 for item in data.get("result", []):
                     last_update_id = item["update_id"]
                     msg = item.get("message", {})
-                    text = msg.get("text", "").strip()
+                    raw_text = msg.get("text", "").strip()
                     chat_id = str(msg.get("chat", {}).get("id", ""))
 
                     if chat_id != str(CHAT_ID) and chat_id != "8938527650":
                         continue
 
-                    if text == "/start":
+                    cmd = raw_text.lower()
+                    if cmd in ["/start", "start"]:
                         AUTO_TRADING_ENABLED = True
                         save_active_trades()
                         send_telegram_message("▶️ <b>Auto-trading RESUMED.</b> Scanning 1M charts for crossovers.")
-                    elif text == "/stop":
+                    elif cmd in ["/stop", "stop"]:
                         AUTO_TRADING_ENABLED = False
                         save_active_trades()
                         send_telegram_message("⏸️ <b>Auto-trading PAUSED.</b> Signals will be broadcast only.")
-                    elif text == "/status":
+                    elif cmd in ["/status", "status"]:
                         with active_trades_lock:
                             count = len(ACTIVE_TRADES)
                             summary = ""
@@ -1252,7 +1258,8 @@ def run_telegram_command_listener():
                         send_telegram_message(
                             f"🤖 <b>BOT STATUS</b>\n"
                             f"• Auto-Trading: {'🟢 ACTIVE' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}\n"
-                            f"• Active Scalps: {count}/{MAX_ACTIVE_TRADES}{summary}"
+                            f"• Active Scalps: {count}/{MAX_ACTIVE_TRADES}{summary}\n"
+                            f"• Watchlist: 70 Top Coins (1-Min 9/20 EMA)"
                         )
         except Exception:
             pass
@@ -1419,6 +1426,7 @@ def start_background_loop():
         "   └ 🚀 Trails 1.5% ROE below highest peak continuously from +5.0% ROE! (Locks +3.5% ROE immediately at 5% peak)\n"
         "• <b>Exit:</b> Reverse Cross (Blue crosses Red) or Target\n"
         "• <b>Margin:</b> ₹1,000 INR (7x Isolated Leverage)\n"
+        "• <b>Capacity:</b> Up to 2 Concurrent Scalps Active\n"
         "• <b>Controls:</b> Web 1-Click Dashboard + Telegram /start & /stop"
     )
 
