@@ -221,14 +221,15 @@ def format_coin_price(price):
     elif price > 0: return f"{price:.8f}".rstrip('0')
     return "0.00"
 
-def fetch_klines(symbol, interval='1m', limit=65):
+def fetch_klines(symbol, interval='3m', limit=65):
     raw_coin = symbol.split('-')[0].upper()
     futures_coin = COINDCX_PAIR_ALIASES.get(raw_coin, raw_coin).upper()
     binance_sym = symbol.replace('-', '').upper()
+    bybit_interval = interval.replace('m', '') if interval.endswith('m') else interval
 
     endpoints = [
         ("binance_vision", f"https://data-api.binance.vision/api/v3/klines?symbol={binance_sym}&interval={interval}&limit={limit}"),
-        ("bybit", f"https://api.bybit.com/v5/market/kline?category=linear&symbol={binance_sym}&interval=1&limit={limit}"),
+        ("bybit", f"https://api.bybit.com/v5/market/kline?category=linear&symbol={binance_sym}&interval={bybit_interval}&limit={limit}"),
         ("coindcx", f"https://public.coindcx.com/market_data/candles?pair=B-{futures_coin}_USDT&interval={interval}&limit={limit}"),
         ("binance_fapi", f"https://fapi.binance.com/fapi/v1/klines?symbol={binance_sym}&interval={interval}&limit={limit}"),
         ("binance_spot", f"https://api.binance.com/api/v3/klines?symbol={binance_sym}&interval={interval}&limit={limit}")
@@ -830,19 +831,19 @@ def run_scan():
             if time.time() - last_traded < SYMBOL_COOLDOWN_SECONDS:
                 continue
 
-            m1_klines = fetch_klines(symbol, '1m', 40)
-            if not m1_klines or len(m1_klines) < 30:
+            m3_klines = fetch_klines(symbol, '3m', 40)
+            if not m3_klines or len(m3_klines) < 30:
                 continue
 
-            closes = [k[4] for k in m1_klines]
-            highs = [k[2] for k in m1_klines]
-            lows = [k[3] for k in m1_klines]
+            closes = [k[4] for k in m3_klines]
+            highs = [k[2] for k in m3_klines]
+            lows = [k[3] for k in m3_klines]
             cmp = closes[-1]
 
             ema9_series = calculate_ema_series(closes, 9)
             ema20_series = calculate_ema_series(closes, 20)
 
-            signal_side, candles_after_cross = eval_crossover_setup(m1_klines, ema9_series, ema20_series)
+            signal_side, candles_after_cross = eval_crossover_setup(m3_klines, ema9_series, ema20_series)
             if not signal_side:
                 continue
 
@@ -857,19 +858,19 @@ def run_scan():
                 recent_swing_low = min(lows[-8:])
                 raw_sl = round_coin_price(recent_swing_low * 0.9995)
 
-                # Guardrails: Min 0.35%, Max 1.3% distance
-                if (cmp - raw_sl) < (cmp * 0.0035):
-                    raw_sl = round_coin_price(cmp * 0.995)
-                elif (cmp - raw_sl) > (cmp * 0.013):
-                    raw_sl = round_coin_price(cmp * 0.988)
+                # Guardrails: Min 0.40%, Max 1.8% distance
+                if (cmp - raw_sl) < (cmp * 0.0040):
+                    raw_sl = round_coin_price(cmp * 0.994)
+                elif (cmp - raw_sl) > (cmp * 0.018):
+                    raw_sl = round_coin_price(cmp * 0.985)
 
-                # Target TP: Extended to allow trailing SL to ride past 5%, 7%, 10% ROE
-                tp1 = round_coin_price(cmp * 1.018)  # ~+12.6% ROE max target
+                # Target TP: Extended to allow trailing SL to ride past 5%, 7%, 10%, 15% ROE
+                tp1 = round_coin_price(cmp * 1.025)  # ~+17.5% ROE max target
 
                 sl_dist_pct = abs(cmp - raw_sl) / cmp * 100.0 if cmp > 0 else 0.8
                 sl_roe_pct = sl_dist_pct * lev_num
 
-                setup_title = "9-20 EMA GOLDEN CROSSOVER 🚀 (Immediate Confirmed Candle)"
+                setup_title = "9-20 EMA GOLDEN CROSSOVER 🚀 (3-Min Confirmed Candle)"
 
                 with pending_orders_lock:
                     PENDING_ORDERS.add(symbol)
@@ -910,7 +911,7 @@ def run_scan():
                         threading.Thread(target=auto_place_coindcx_native_tpsl, args=(symbol, tp1, raw_sl, "LONG"), daemon=True).start()
 
                         msg = (
-                            f"🟢 <b>1-MIN EMA SCALP SIGNAL! (LONG)</b>\n\n"
+                            f"🟢 <b>3-MIN EMA SCALP SIGNAL! (LONG)</b>\n\n"
                             f"<b>Pair:</b> <code>{symbol}</code> (Futures)\n"
                             f"<b>Setup:</b> <b>{setup_title}</b>\n"
                             f"🌊 <b>Trend:</b> <code>Blue (9 EMA) crossed above Red (20 EMA)</code>\n\n"
@@ -918,7 +919,7 @@ def run_scan():
                             f"• <b>Direction:</b> <code>LONG</code> (7x Isolated)\n"
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
                             f"🛑 <b>Stop Loss (Swing Low):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE)\n"
-                            f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+1.8% / +12.6% ROE)\n"
+                            f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+2.5% / +17.5% ROE)\n"
                             f"🔄 <b>Trailing Stop:</b> Trails 1.5% ROE below peak continuously from +5.0% ROE! (Locks +3.5% ROE at 5% peak)\n\n"
                             f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
                             f"• Order ID: <code>{order_id}</code>\n"
@@ -948,19 +949,19 @@ def run_scan():
                 recent_swing_high = max(highs[-8:])
                 raw_sl = round_coin_price(recent_swing_high * 1.0005)
 
-                # Guardrails: Min 0.35%, Max 1.3% distance
-                if (raw_sl - cmp) < (cmp * 0.0035):
-                    raw_sl = round_coin_price(cmp * 1.005)
-                elif (raw_sl - cmp) > (cmp * 0.013):
-                    raw_sl = round_coin_price(cmp * 1.012)
+                # Guardrails: Min 0.40%, Max 1.8% distance
+                if (raw_sl - cmp) < (cmp * 0.0040):
+                    raw_sl = round_coin_price(cmp * 1.006)
+                elif (raw_sl - cmp) > (cmp * 0.018):
+                    raw_sl = round_coin_price(cmp * 1.015)
 
-                # Target TP: Extended to allow trailing SL to ride past 5%, 7%, 10% ROE
-                tp1 = round_coin_price(cmp * 0.982)  # ~+12.6% ROE max target
+                # Target TP: Extended to allow trailing SL to ride past 5%, 7%, 10%, 15% ROE
+                tp1 = round_coin_price(cmp * 0.975)  # ~+17.5% ROE max target
 
                 sl_dist_pct = abs(raw_sl - cmp) / cmp * 100.0 if cmp > 0 else 0.8
                 sl_roe_pct = sl_dist_pct * lev_num
 
-                setup_title = "9-20 EMA DEATH CROSSOVER 📉 (Immediate Confirmed Candle)"
+                setup_title = "9-20 EMA DEATH CROSSOVER 📉 (3-Min Confirmed Candle)"
 
                 with pending_orders_lock:
                     PENDING_ORDERS.add(symbol)
@@ -1001,7 +1002,7 @@ def run_scan():
                         threading.Thread(target=auto_place_coindcx_native_tpsl, args=(symbol, tp1, raw_sl, "SHORT"), daemon=True).start()
 
                         msg = (
-                            f"🔴 <b>1-MIN EMA SCALP SIGNAL! (SHORT)</b>\n\n"
+                            f"🔴 <b>3-MIN EMA SCALP SIGNAL! (SHORT)</b>\n\n"
                             f"<b>Pair:</b> <code>{symbol}</code> (Futures)\n"
                             f"<b>Setup:</b> <b>{setup_title}</b>\n"
                             f"🌊 <b>Trend:</b> <code>Blue (9 EMA) crossed below Red (20 EMA)</code>\n\n"
@@ -1009,7 +1010,7 @@ def run_scan():
                             f"• <b>Direction:</b> <code>SHORT</code> (7x Isolated)\n"
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
                             f"🛑 <b>Stop Loss (Swing High):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE)\n"
-                            f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+1.8% / +12.6% ROE)\n"
+                            f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+2.5% / +17.5% ROE)\n"
                             f"🔄 <b>Trailing Stop:</b> Trails 1.5% ROE below peak continuously from +5.0% ROE! (Locks +3.5% ROE at 5% peak)\n\n"
                             f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
                             f"• Order ID: <code>{order_id}</code>\n"
@@ -1086,10 +1087,10 @@ def monitor_active_positions():
                     if pos_age < 30:
                         continue
 
-                    m1_klines = fetch_klines(symbol, '1m', 35)
-                    if not m1_klines or len(m1_klines) < 25: continue
+                    m3_klines = fetch_klines(symbol, '3m', 35)
+                    if not m3_klines or len(m3_klines) < 25: continue
 
-                    closes = [k[4] for k in m1_klines]
+                    closes = [k[4] for k in m3_klines]
                     cmp = closes[-1]
                     sell_qty = min(live_qty, trade.get('remaining_qty', live_qty))
 
@@ -1195,11 +1196,11 @@ def monitor_active_positions():
                         else:
                             exit_reason = f"🛑 INITIAL SWING SL HIT ({pnl_pct:.2f}% | {roe_pct:.1f}% ROE)"
 
-                    # 3. REVERSE CROSSOVER: Blue line crosses Red line
+                    # 3. REVERSE CROSSOVER: Blue line crosses Red line on 3M candle
                     elif side == "LONG" and e9_closed < e20_closed:
-                        exit_reason = f"🔄 REVERSE CROSSOVER (Blue 9 EMA crossed below Red 20 EMA) ({pnl_pct:+.2f}%)"
+                        exit_reason = f"🔄 REVERSE CROSSOVER (3M: Blue 9 EMA crossed below Red 20 EMA) ({pnl_pct:+.2f}%)"
                     elif side == "SHORT" and e9_closed > e20_closed:
-                        exit_reason = f"🔄 REVERSE CROSSOVER (Blue 9 EMA crossed above Red 20 EMA) ({pnl_pct:+.2f}%)"
+                        exit_reason = f"🔄 REVERSE CROSSOVER (3M: Blue 9 EMA crossed above Red 20 EMA) ({pnl_pct:+.2f}%)"
 
                     if exit_reason:
                         if sell_qty > 0:
@@ -1257,7 +1258,7 @@ def run_telegram_command_listener():
                     if cmd in ["/start", "start"]:
                         AUTO_TRADING_ENABLED = True
                         save_active_trades()
-                        send_telegram_message("▶️ <b>Auto-trading RESUMED.</b> Scanning 1M charts for crossovers.")
+                        send_telegram_message("▶️ <b>Auto-trading RESUMED.</b> Scanning 3M charts for crossovers.")
                     elif cmd in ["/stop", "stop"]:
                         AUTO_TRADING_ENABLED = False
                         save_active_trades()
@@ -1272,7 +1273,7 @@ def run_telegram_command_listener():
                             f"🤖 <b>BOT STATUS</b>\n"
                             f"• Auto-Trading: {'🟢 ACTIVE' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}\n"
                             f"• Active Scalps: {count}/{MAX_ACTIVE_TRADES}{summary}\n"
-                            f"• Watchlist: 70 Top Coins (1-Min 9/20 EMA)"
+                            f"• Watchlist: 70 Top Coins (3-Min 9/20 EMA)"
                         )
         except Exception:
             pass
@@ -1321,7 +1322,7 @@ def home():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>1-Min EMA Scalping Bot</title>
+        <title>3-Min EMA Scalping Bot</title>
         <meta http-equiv="refresh" content="10">
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0e1118; color: #e0e0e0; margin: 0; padding: 20px; }}
@@ -1338,7 +1339,7 @@ def home():
     <body>
         <div class="container">
             <div class="card">
-                <h1>⚡ 1-Minute 9 & 20 EMA Scalper</h1>
+                <h1>⚡ 3-Minute 9 & 20 EMA Scalper</h1>
                 <p>Status: <b>{'🟢 RUNNING' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b> | Trailing SL: <b>Continuous Peak-Trailing (1.5% below peak from 5% ROE)</b></p>
                 <div>
                     <a href="/toggle-bot" class="btn {'btn-red' if AUTO_TRADING_ENABLED else 'btn-green'}">
@@ -1431,8 +1432,8 @@ def start_background_loop():
     threading.Thread(target=run_telegram_command_listener, daemon=True).start()
 
     send_telegram_message(
-        "⚡ <b>1-MINUTE 9 & 20 EMA SCALPING BOT DEPLOYED!</b>\n\n"
-        "• <b>Strategy:</b> Pure 9/20 EMA Crossover Scalper\n"
+        "⚡ <b>3-MINUTE 9 & 20 EMA SCALPING BOT DEPLOYED!</b>\n\n"
+        "• <b>Strategy:</b> Pure 3-Minute 9/20 EMA Crossover Scalper\n"
         "• <b>Watchlist:</b> 70 Top High-Liquidity Coins\n"
         "• <b>Initial SL:</b> Recent Swing High (Short) / Swing Low (Long)\n"
         "• <b>Continuous Peak-Trailing SL:</b>\n"
@@ -1446,5 +1447,5 @@ start_background_loop()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    print(f"Starting 1-Minute EMA Scalping server on port {port}...")
+    print(f"Starting 3-Minute EMA Scalping server on port {port}...")
     app.run(host="0.0.0.0", port=port)
