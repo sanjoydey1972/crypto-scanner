@@ -259,7 +259,7 @@ def send_telegram_message(text):
 # ==============================================================================
 def round_coin_price(price):
     if price >= 100.0: return round(price, 2)
-    elif price >= 10.0: return round(price, 3)
+    elif price >= 1.0: return round(price, 3)
     elif price >= 0.05: return round(price, 4)
     elif price >= 0.005: return round(price, 5)
     elif price >= 0.0001: return round(price, 6)
@@ -268,7 +268,7 @@ def round_coin_price(price):
 
 def format_coin_price(price):
     if price >= 100.0: return f"{price:.2f}"
-    elif price >= 10.0: return f"{price:.3f}"
+    elif price >= 1.0: return f"{price:.3f}"
     elif price >= 0.05: return f"{price:.4f}"
     elif price >= 0.005: return f"{price:.5f}"
     elif price >= 0.0001: return f"{price:.6f}"
@@ -734,44 +734,43 @@ def apply_coindcx_native_tpsl(pair, position_id, target_price, stop_loss_price):
     sl_fmt = format_coin_price(stop_loss_price)
 
     payload_variants = [
-        # 1. Official CoinDCX schema: seconds timestamp, stop_loss_market & take_profit_market
+        # 1. Official CoinDCX schema: seconds timestamp, take_profit_market & stop_market
+        {
+            "timestamp": ts_sec,
+            "id": str(position_id),
+            "take_profit": {"stop_price": tp_fmt, "order_type": "take_profit_market"},
+            "stop_loss": {"stop_price": sl_fmt, "order_type": "stop_market"}
+        },
+        # 2. Alternative schema: take_profit_market & stop_loss_market
         {
             "timestamp": ts_sec,
             "id": str(position_id),
             "take_profit": {"stop_price": tp_fmt, "order_type": "take_profit_market"},
             "stop_loss": {"stop_price": sl_fmt, "order_type": "stop_loss_market"}
         },
-        # 2. Milliseconds timestamp with stop_loss_market & take_profit_market
+        # 3. Stop-loss ONLY with stop_market (critical if TP already accepted by exchange and only SL needs attaching)
+        {
+            "timestamp": ts_sec,
+            "id": str(position_id),
+            "stop_loss": {"stop_price": sl_fmt, "order_type": "stop_market"}
+        },
+        # 4. Stop-loss ONLY with stop_loss_market
+        {
+            "timestamp": ts_sec,
+            "id": str(position_id),
+            "stop_loss": {"stop_price": sl_fmt, "order_type": "stop_loss_market"}
+        },
+        # 5. Milliseconds timestamp with stop_market
         {
             "timestamp": ts_ms,
             "id": str(position_id),
             "take_profit": {"stop_price": tp_fmt, "order_type": "take_profit_market"},
-            "stop_loss": {"stop_price": sl_fmt, "order_type": "stop_loss_market"}
+            "stop_loss": {"stop_price": sl_fmt, "order_type": "stop_market"}
         },
-        # 3. Seconds timestamp with round_coin_price string
-        {
-            "timestamp": ts_sec,
-            "id": str(position_id),
-            "take_profit": {"stop_price": tp_str, "order_type": "take_profit_market"},
-            "stop_loss": {"stop_price": sl_str, "order_type": "stop_loss_market"}
-        },
-        # 4. Stop-loss only with stop_loss_market (in case TP target is rejected by exchange band)
-        {
-            "timestamp": ts_sec,
-            "id": str(position_id),
-            "stop_loss": {"stop_price": sl_fmt, "order_type": "stop_loss_market"}
-        },
-        # 5. Milliseconds timestamp with stop-loss only
+        # 6. Milliseconds timestamp with stop-loss only
         {
             "timestamp": ts_ms,
             "id": str(position_id),
-            "stop_loss": {"stop_price": sl_fmt, "order_type": "stop_loss_market"}
-        },
-        # 6. Fallback: stop_market (for legacy liquidity pairs)
-        {
-            "timestamp": ts_sec,
-            "id": str(position_id),
-            "take_profit": {"stop_price": tp_fmt, "order_type": "take_profit_market"},
             "stop_loss": {"stop_price": sl_fmt, "order_type": "stop_market"}
         },
         # 7. Fallback: stop_limit with limit_price
