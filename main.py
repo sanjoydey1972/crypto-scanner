@@ -54,7 +54,7 @@ def save_active_trades():
         save_state(st)
 
 # Telegram Bot Credentials (with fallback tokens)
-TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip() or os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() or "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
+TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip() or os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() or "8961205774:AAHx4psKuhzxCiZp1CRo50zN5tKZjLXW_24"
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip() or "8938527650"
 
 # CoinDCX API Credentials (with fallback keys)
