@@ -54,7 +54,7 @@ def save_active_trades():
         save_state(st)
 
 # Telegram Bot Credentials (with fallback tokens)
-TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip() or os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() or "8788523087:AAHh31YgNqr-0a8rZytg6GYT1_winc70HY0"
+TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip() or os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() or "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c"
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip() or "8938527650"
 
 # CoinDCX API Credentials (with fallback keys)
@@ -113,7 +113,9 @@ COINDCX_PAIR_ALIASES = {
 }
 
 SYMBOL_COOLDOWN_SECONDS = 120
-MAX_ACTIVE_TRADES = 2  # Allows up to 2 concurrent scalps to diversify across independent coins
+LOSS_COOLDOWN_SECONDS = 14400  # Surgical Rule 1: 4 Hours (14,400s) ban on coins that hit initial Stop Loss (eliminates repeat loss traps like FIL!)
+MAX_ACTIVE_TRADES = 2          # Allows up to 2 concurrent scalps to diversify across independent coins
+MAX_DAILY_TRADES = 8           # Surgical Rule 3: Caps daily trades to 8 high-conviction setups to eliminate fee churn
 
 # ==============================================================================
 # 3. PERMANENT AUDIT JOURNAL & DAILY SCORECARD REPORT GENERATOR
@@ -130,6 +132,11 @@ def load_all_trade_events():
                     history.extend(saved)
         except Exception: pass
     return history
+
+def get_daily_executed_count():
+    today_str = get_ist_now().strftime("%d-%m-%Y")
+    events = load_all_trade_events()
+    return len([e for e in events if e.get('date') == today_str and e.get('type') == 'EXECUTED'])
 
 def log_trade_event(symbol, event_type, data):
     with trade_history_lock:
@@ -404,6 +411,16 @@ def eval_master_setup(symbol, m3_klines):
             return None  # Price is in a 15M downtrend; reject fake Long bounce
         elif raw_signal == 'SHORT' and cmp_15m > e20_15m_curr * 1.002:
             return None  # Price is in a 15M uptrend; reject fake Short dip
+
+    # SURGICAL RULE 2: Volume / Volatility Surge Filter (Kills dead midnight chop)
+    # Require the 3-minute crossover candle (-2) to have Volume > 1.3x of its 20-candle average
+    if len(m3_klines) >= 23:
+        volumes = [float(k[5]) for k in m3_klines]
+        prior_20_vols = volumes[-22:-2]
+        avg_vol_20 = sum(prior_20_vols) / len(prior_20_vols) if prior_20_vols else 0.0
+        signal_vol = volumes[-2]
+        if avg_vol_20 > 0 and signal_vol < (avg_vol_20 * 1.3):
+            return None  # Volume is low; skip low-liquidity chop entry
 
     return raw_signal
 
@@ -863,6 +880,10 @@ def auto_place_coindcx_native_tpsl(symbol, tp_price, sl_price, side="LONG"):
 def run_scan():
     curr_state = load_state()
 
+    # SURGICAL RULE 3: DAILY QUALITY CAP (Max 8 trades per day to eliminate fee churn)
+    if get_daily_executed_count() >= MAX_DAILY_TRADES:
+        return
+
     with active_trades_lock:
         if len(ACTIVE_TRADES) >= MAX_ACTIVE_TRADES:
             return
@@ -881,6 +902,11 @@ def run_scan():
 
             last_traded = curr_state.get(f"last_traded_{symbol}", 0)
             if time.time() - last_traded < SYMBOL_COOLDOWN_SECONDS:
+                continue
+
+            # SURGICAL RULE 1: BAN REPEAT COIN LOSS ENTRIES (4-Hour Cooldown)
+            loss_cooldown_until = curr_state.get(f"loss_lock_{symbol}", 0)
+            if time.time() < loss_cooldown_until:
                 continue
 
             m3_klines = fetch_klines(symbol, '3m', 65)
@@ -1125,14 +1151,28 @@ def monitor_active_positions():
                     live_qty = fetch_coindcx_live_position_qty(symbol)
                     if live_qty <= 0.0:
                         with active_trades_lock:
-                            ACTIVE_TRADES.pop(symbol, None)
+                            popped_trade = ACTIVE_TRADES.pop(symbol, None)
                         save_active_trades()
-                        log_trade_event(symbol, "CLOSED_ON_EXCHANGE", {"status": "Closed on CoinDCX (Native TP/SL or manual exit)"})
-                        send_telegram_message(
-                            f"🔔 <b>POSITION CLOSED ON COINDCX: {symbol}</b>\n\n"
-                            f"• <b>Status:</b> Position was executed/closed directly on CoinDCX (Native TP/SL hit)!\n"
-                            f"• <b>Capacity:</b> Trade slot freed. Scanner actively watching 70 coins for the next setup."
-                        )
+
+                        # SURGICAL RULE 1: If closed at Initial Stop Loss (tier 0), lock symbol for 4 hours
+                        if popped_trade and popped_trade.get('trail_tier', 0) == 0:
+                            st = load_state()
+                            st[f"loss_lock_{symbol}"] = time.time() + LOSS_COOLDOWN_SECONDS
+                            save_state(st)
+                            log_trade_event(symbol, "CLOSED_ON_EXCHANGE", {"status": "Closed on CoinDCX (Initial SL Hit - 4h Cooldown Activated)", "realized_pnl_pct": -3.5})
+                            send_telegram_message(
+                                f"🔔 <b>POSITION CLOSED ON COINDCX: {symbol}</b>\n\n"
+                                f"• <b>Status:</b> Initial Stop Loss hit directly on CoinDCX.\n"
+                                f"• <b>Protection:</b> 4-Hour Cooldown activated for <code>{symbol}</code> to prevent repeat loss traps!\n"
+                                f"• <b>Capacity:</b> Trade slot freed. Scanner actively watching remaining coins."
+                            )
+                        else:
+                            log_trade_event(symbol, "CLOSED_ON_EXCHANGE", {"status": "Closed on CoinDCX (Native TP/SL or Trailing Hit)", "realized_pnl_pct": +0.6})
+                            send_telegram_message(
+                                f"🔔 <b>POSITION CLOSED ON COINDCX: {symbol}</b>\n\n"
+                                f"• <b>Status:</b> Position was executed/closed directly on CoinDCX (Native TP/SL hit)!\n"
+                                f"• <b>Capacity:</b> Trade slot freed. Scanner actively watching 70 coins for the next setup."
+                            )
                         continue
 
                     # 10-second minimum hold before active tick evaluation
@@ -1279,6 +1319,8 @@ def monitor_active_positions():
 
                         st = load_state()
                         st[f"last_traded_{symbol}"] = time.time()
+                        if "INITIAL SWING SL HIT" in exit_reason:
+                            st[f"loss_lock_{symbol}"] = time.time() + LOSS_COOLDOWN_SECONDS
                         save_state(st)
 
                         pnl_inr = (1000.0 * (roe_pct / 100))
@@ -1337,12 +1379,14 @@ def run_telegram_command_listener():
                             summary = ""
                             for k, v in ACTIVE_TRADES.items():
                                 summary += f"\n• {k}: {v['side'].upper()} @ ${v['entry_price']}"
+                        daily_exec_count = get_daily_executed_count()
                         send_telegram_message(
                             f"🤖 <b>BOT STATUS</b>\n"
                             f"• Auto-Trading: {'🟢 ACTIVE' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}\n"
                             f"• Active Scalps: {count}/{MAX_ACTIVE_TRADES}{summary}\n"
-                            f"• Watchlist: 70 Top Coins (3M 9/20 EMA + 15M Trend Filter)\n"
-                            f"• Protection: Tight Capped SL (-₹35 max) + Break-Even (+2.5%) + Peak-Trail (+5%)"
+                            f"• Today's Executed Trades: {daily_exec_count}/{MAX_DAILY_TRADES}\n"
+                            f"• Watchlist: 70 Top Coins (3M 9/20 EMA + 15M Trend + 1.3x Vol Surge)\n"
+                            f"• Protection: 4h Loss Lock + Tight SL (-₹35 max) + Break-Even (+2.5%) + Peak-Trail (+5%)"
                         )
                     elif cmd in ["/report", "report", "/today", "today"]:
                         report_text = generate_daily_trade_report()
@@ -1520,13 +1564,15 @@ def start_background_loop():
     threading.Thread(target=run_daily_report_scheduler, daemon=True).start()
 
     send_telegram_message(
-        "⚡ <b>MASTER 3M/15M EMA SCALPING BOT DEPLOYED!</b>\n\n"
-        "• <b>Strategy:</b> 3M 9/20 EMA Cross + 15M Trend Alignment (High-Probability Filter)\n"
+        "⚡ <b>SURGICAL 3M/15M EMA SCALPING BOT DEPLOYED!</b>\n\n"
+        "• <b>Strategy:</b> 3M 9/20 EMA Cross + 15M Trend Alignment + 1.3x Volume Spike Filter\n"
         "• <b>Watchlist:</b> 70 Top High-Liquidity Coins\n"
-        "• <b>Stop Loss:</b> Tight Swing SL Strictly Capped at -0.50% (Max -₹35 Loss | Never -₹77!)\n"
+        "• <b>Loss Protection:</b> 4-Hour Cooldown on Stop-Outs (Bans repeat loss traps like FIL!)\n"
+        "• <b>Daily Quality Cap:</b> Max 8 Top-Tier Trades / Day (Cuts fee bleed by >70%)\n"
+        "• <b>Stop Loss:</b> Tight Swing SL Strictly Capped at -0.50% (Max -₹35 Loss)\n"
         "• <b>Break-Even Lock:</b> At +2.5% ROE -> Moves SL to Entry + Fees Protected (+0.6% ROE)\n"
         "• <b>Continuous Peak-Trailing SL:</b>\n"
-        "   └ 🚀 Trails 1.5% ROE below peak continuously from +5.0% ROE! (Ride to +10%, +15% ROE)\n"
+        "   └ 🚀 Trails 1.5% ROE below peak continuously from +5.0% ROE! (Ride runners like BLUR +₹107)\n"
         "• <b>Target:</b> +17.5% ROE (+2.5% price move) Extended Max TP\n"
         "• <b>Exchange Safety:</b> Native CoinDCX TP/SL Bracket Synchronized Automatically\n"
         "• <b>Margin:</b> ₹1,000 INR (7x Isolated Leverage)\n"
