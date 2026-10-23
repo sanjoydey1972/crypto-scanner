@@ -114,7 +114,7 @@ COINDCX_PAIR_ALIASES = {
 
 SYMBOL_COOLDOWN_SECONDS = 120
 MAX_ACTIVE_TRADES = 2         # Allows up to 2 concurrent scalps to diversify across independent coins
-DAILY_MAX_TRADES = 8          # Surgical Quality Cap: Max 8 top-tier trades per day to cut fee bleed by >70%
+DAILY_MAX_TRADES = 999          # Surgical Quality Cap: Max 999 top-tier trades per day to cut fee bleed by >70%
 STOP_OUT_COOLDOWN_HOURS = 4    # 4-Hour Cooldown on Stop-Outs (Bans repeat coin loss traps like FIL!)
 MAX_EMA_DISTANCE_PCT = 0.0035 # 0.35% Max Distance from 20 EMA (Eliminates ETH-like late chase traps!)
 
