@@ -113,9 +113,10 @@ COINDCX_PAIR_ALIASES = {
 }
 
 SYMBOL_COOLDOWN_SECONDS = 120
-MAX_ACTIVE_TRADES = 2       # Allows up to 2 concurrent scalps to diversify across independent coins
-DAILY_MAX_TRADES = 8        # Surgical Quality Cap: Max 8 top-tier trades per day to cut fee bleed by >70%
-STOP_OUT_COOLDOWN_HOURS = 4  # 4-Hour Cooldown on Stop-Outs (Bans repeat coin loss traps like FIL!)
+MAX_ACTIVE_TRADES = 2         # Allows up to 2 concurrent scalps to diversify across independent coins
+DAILY_MAX_TRADES = 8          # Surgical Quality Cap: Max 8 top-tier trades per day to cut fee bleed by >70%
+STOP_OUT_COOLDOWN_HOURS = 4    # 4-Hour Cooldown on Stop-Outs (Bans repeat coin loss traps like FIL!)
+MAX_EMA_DISTANCE_PCT = 0.0035 # 0.35% Max Distance from 20 EMA (Eliminates ETH-like late chase traps!)
 
 # ==============================================================================
 # 3. PERMANENT AUDIT JOURNAL & DAILY SCORECARD REPORT GENERATOR
@@ -194,7 +195,7 @@ def generate_daily_trade_report(date_str=None):
     win_rate = (wins / len(closed_trades) * 100.0) if closed_trades else 0.0
     
     report_text = (
-        f"📊 <b>SURGICAL AUTO-TRADE SCORECARD ({date_str})</b>\n\n"
+        f"📊 <b>SURGICAL V2 AUTO-TRADE SCORECARD ({date_str})</b>\n\n"
         f"• <b>Total Executed Trades:</b> {total_executed} / {DAILY_MAX_TRADES} (Daily Cap)\n"
         f"• <b>Closed Trades:</b> {len(closed_trades)} (Wins: {wins} | Losses: {losses})\n"
         f"• <b>Win Rate:</b> {win_rate:.1f}%\n"
@@ -352,11 +353,11 @@ def calculate_ema_series(prices, period):
     return ema_vals
 
 # ==============================================================================
-# 6. SURGICAL SIGNAL ENGINE (3M EMA CROSS + 15M TREND + 1.3x VOLUME FILTER)
+# 6. SURGICAL SIGNAL ENGINE (3M EMA CROSS + 15M TREND + 1.3x VOL + PROXIMITY)
 # ==============================================================================
 def eval_master_setup(symbol, m3_klines):
     """
-    SURGICAL MULTI-TIMEFRAME ENTRY SYSTEM:
+    SURGICAL MULTI-TIMEFRAME ENTRY SYSTEM V2:
     1. 3M Crossover: Fresh Golden / Death Cross confirmed on closed candle (-2).
     2. 15M Trend Filter:
        - For LONG: Current price MUST be strictly ABOVE the 15M 20 EMA.
@@ -364,8 +365,12 @@ def eval_master_setup(symbol, m3_klines):
     3. 1.3x Volume Spike Filter:
        - Closed crossover candle volume MUST be > 1.3x of the preceding 20-candle average.
        - Kills low-liquidity midnight chop and fakeouts!
-    4. Closed candle body agrees with trade direction (Green for Long, Red for Short).
-    5. 20 EMA slope agrees with trade direction.
+    4. NEW: EMA Proximity Filter (No-Chase Rule <= 0.35% from 20 EMA):
+       - Distance between closed crossover candle and 20 EMA MUST be <= 0.35%.
+       - Eliminates shorting at the tail end of massive drops (like ETH $2384 vs $2401 EMA).
+       - Ensures trades only enter fresh, early breakouts near support/resistance!
+    5. Closed candle body agrees with trade direction (Green for Long, Red for Short).
+    6. 20 EMA slope agrees with trade direction.
     """
     if len(m3_klines) < 25:
         return None
@@ -405,6 +410,12 @@ def eval_master_setup(symbol, m3_klines):
         crossover_vol = volumes_3m[-2]
         if avg_vol_20 > 0 and crossover_vol < (1.3 * avg_vol_20):
             return None  # Volume too low: reject chop trade
+
+    # Surgical Rule 2: No-Chase EMA Proximity Filter (<= 0.35% from 20 EMA)
+    # Eliminates chasing over-stretched candles (e.g. ETH at $2384 when EMA was at $2401 = 0.71% away)
+    ema_distance_pct = abs(closed_close - e20_closed) / e20_closed if e20_closed > 0 else 0.0
+    if ema_distance_pct > MAX_EMA_DISTANCE_PCT:
+        return None  # Candle overextended: reject chase trade to prevent mean-reversion stop-outs!
 
     # Higher Timeframe Confirmation: 15-Minute Trend Alignment
     m15_klines = fetch_klines(symbol, '15m', 30)
@@ -873,7 +884,7 @@ def auto_place_coindcx_native_tpsl(symbol, tp_price, sl_price, side="LONG"):
     return False
 
 # ==============================================================================
-# 9. SCANNER LOOP (3M CROSSOVER + 15M TREND + 1.3x VOL + COOLDOWN PROTECT)
+# 9. SCANNER LOOP (3M CROSSOVER + 15M TREND + 1.3x VOL + PROXIMITY CONFIRMED)
 # ==============================================================================
 def run_scan():
     curr_state = load_state()
@@ -882,7 +893,7 @@ def run_scan():
         if len(ACTIVE_TRADES) >= MAX_ACTIVE_TRADES:
             return
 
-    # Surgical Rule 2: Daily Quality Cap (Max 8 Top-Tier Trades / Day)
+    # Surgical Rule: Daily Quality Cap (Max 8 Top-Tier Trades / Day)
     events = load_all_trade_events()
     today_str = get_ist_now().strftime("%d-%m-%Y")
     today_executed = [e for e in events if e.get('date') == today_str and e.get('type') == 'EXECUTED']
@@ -901,7 +912,7 @@ def run_scan():
                 if symbol in PENDING_ORDERS:
                     continue
 
-            # Surgical Rule 3: 4-Hour Cooldown on Stop-Outs (Bans repeat loss traps like FIL!)
+            # Surgical Rule: 4-Hour Cooldown on Stop-Outs (Bans repeat loss traps like FIL!)
             loss_cooldown_until = curr_state.get(f"loss_cooldown_{symbol}", 0)
             if time.time() < loss_cooldown_until:
                 continue
@@ -914,7 +925,7 @@ def run_scan():
             if not m3_klines or len(m3_klines) < 30:
                 continue
 
-            # Evaluate Master Setup: 3M Crossover with 15M Trend & 1.3x Volume Spike Confirmation
+            # Evaluate Master Setup: 3M Crossover with 15M Trend, 1.3x Vol Spike & <=0.35% EMA Proximity
             signal_side = eval_master_setup(symbol, m3_klines)
             if not signal_side:
                 continue
@@ -948,7 +959,7 @@ def run_scan():
                 sl_dist_pct = abs(cmp - raw_sl) / cmp * 100.0 if cmp > 0 else 0.5
                 sl_roe_pct = sl_dist_pct * lev_num
 
-                setup_title = "9-20 EMA GOLDEN CROSSOVER 🚀 (15M Trend & 1.3x Vol Confirmed)"
+                setup_title = "9-20 EMA GOLDEN CROSSOVER 🚀 (15M Trend + 1.3x Vol + Proximity Confirmed)"
 
                 with pending_orders_lock:
                     PENDING_ORDERS.add(symbol)
@@ -992,13 +1003,17 @@ def run_scan():
                             f"🟢 <b>3-MIN EMA SCALP SIGNAL! (LONG)</b>\n\n"
                             f"<b>Pair:</b> <code>{symbol}</code> (Futures)\n"
                             f"<b>Setup:</b> <b>{setup_title}</b>\n"
-                            f"🌊 <b>Trend:</b> <code>15M Bullish + 3M Golden Cross + 1.3x Vol Spike</code>\n\n"
+                            f"🌊 <b>Trend:</b> <code>15M Bullish + 3M Golden Cross + 1.3x Vol + Proximity OK</code>\n\n"
                             f"⚙️ <b>Trade Parameters:</b>\n"
                             f"• <b>Direction:</b> <code>LONG</code> (7x Isolated)\n"
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
                             f"🛑 <b>Stop Loss (Tight Capped):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE | Max -₹35)\n"
-                            f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+2.5% / +17.5% ROE)\n"
-                            f"🔄 <b>Trailing Stop:</b> Break-Even at +2.5% ROE! Trails 1.5% below peak from +5.0% ROE!\n\n"
+                            f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+2.5% / +17.5% ROE)\n\n"
+                            f"🔄 <b>Progressive Profit Ladder:</b>\n"
+                            f"• +2.0% ROE: Break-Even (+0.6% Fees Protected)\n"
+                            f"• +3.0% ROE: Locks +1.8% ROE (+₹18.00 Cash)\n"
+                            f"• +4.0% ROE: Locks +2.8% ROE (+₹28.00 Cash)\n"
+                            f"• From +5.0% ROE: Continuous Trail 1.2% below peak!\n\n"
                             f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
                             f"• Order ID: <code>{order_id}</code>\n"
                             f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
@@ -1040,7 +1055,7 @@ def run_scan():
                 sl_dist_pct = abs(raw_sl - cmp) / cmp * 100.0 if cmp > 0 else 0.5
                 sl_roe_pct = sl_dist_pct * lev_num
 
-                setup_title = "9-20 EMA DEATH CROSSOVER 📉 (15M Trend & 1.3x Vol Confirmed)"
+                setup_title = "9-20 EMA DEATH CROSSOVER 📉 (15M Trend + 1.3x Vol + Proximity Confirmed)"
 
                 with pending_orders_lock:
                     PENDING_ORDERS.add(symbol)
@@ -1084,13 +1099,17 @@ def run_scan():
                             f"🔴 <b>3-MIN EMA SCALP SIGNAL! (SHORT)</b>\n\n"
                             f"<b>Pair:</b> <code>{symbol}</code> (Futures)\n"
                             f"<b>Setup:</b> <b>{setup_title}</b>\n"
-                            f"🌊 <b>Trend:</b> <code>15M Bearish + 3M Death Cross + 1.3x Vol Spike</code>\n\n"
+                            f"🌊 <b>Trend:</b> <code>15M Bearish + 3M Death Cross + 1.3x Vol + Proximity OK</code>\n\n"
                             f"⚙️ <b>Trade Parameters:</b>\n"
                             f"• <b>Direction:</b> <code>SHORT</code> (7x Isolated)\n"
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
                             f"🛑 <b>Stop Loss (Tight Capped):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE | Max -₹35)\n"
-                            f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+2.5% / +17.5% ROE)\n"
-                            f"🔄 <b>Trailing Stop:</b> Break-Even at +2.5% ROE! Trails 1.5% below peak from +5.0% ROE!\n\n"
+                            f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+2.5% / +17.5% ROE)\n\n"
+                            f"🔄 <b>Progressive Profit Ladder:</b>\n"
+                            f"• +2.0% ROE: Break-Even (+0.6% Fees Protected)\n"
+                            f"• +3.0% ROE: Locks +1.8% ROE (+₹18.00 Cash)\n"
+                            f"• +4.0% ROE: Locks +2.8% ROE (+₹28.00 Cash)\n"
+                            f"• From +5.0% ROE: Continuous Trail 1.2% below peak!\n\n"
                             f"⚡ <b>AUTO-TRADE EXECUTED ON COINDCX!</b>\n"
                             f"• Order ID: <code>{order_id}</code>\n"
                             f"• Quantity: <code>{qty}</code> | Margin: ₹{coin_margin:.0f}\n"
@@ -1113,19 +1132,22 @@ def run_scan():
         except Exception: pass
 
 # ==============================================================================
-# 10. CONTINUOUS PEAK-TRAILING STOP LOSS & BRACKET EXIT ENGINE
+# 10. PROGRESSIVE MULTI-TIER PROFIT RATCHET & BRACKET EXIT ENGINE
 # ==============================================================================
 def monitor_active_positions():
     """
-    DYNAMIC NATIVE BRACKET MONITORING & CONTINUOUS PEAK-TRAILING ENGINE:
+    PROGRESSIVE 4-STEP PROFIT RATCHET ENGINE:
     1. Pure Trend-Riding: NO premature 'Reverse Crossover' exits.
-       Normal pullbacks are allowed to retest support while tight Swing SL guarantees capital safety.
-    2. Break-Even Lock at +2.5% ROE (+0.35% price move):
-       Moves SL to Entry + 0.6% ROE (covers round-trip exchange fees & GST completely).
-    3. Continuous Peak-Trailing from +5.0% ROE:
-       Trails 1.5% ROE below highest peak price reached continuously.
-    4. Auto-synchronizes new SL directly to CoinDCX native position bracket.
-    5. Exits strictly on: Target TP, Trailing/Break-Even SL, or Initial Swing SL.
+    2. Step 1: Early Break-Even Lock at +2.0% ROE (+0.28% price move)
+       - Moves SL to Entry + 0.6% ROE (covers round-trip exchange fees & GST completely).
+    3. Step 2: Profit Lock 1 at +3.0% ROE (+0.42% price move)
+       - Moves SL to Entry + 1.8% ROE (+₹18.00 cash profit locked!).
+       - Prevents giving back profits on trades like STX (+3.1%) and SEI (+2.8%).
+    4. Step 3: Profit Lock 2 at +4.0% ROE (+0.57% price move)
+       - Moves SL to Entry + 2.8% ROE (+₹28.00 cash profit locked!).
+    5. Step 4: Continuous Peak-Trailing from +5.0% ROE:
+       - Trails 1.2% ROE below peak continuously (rides runners like APT +14.1%!).
+    6. Auto-synchronizes every ratchet directly to CoinDCX native bracket.
     """
     time.sleep(5)
     while True:
@@ -1177,11 +1199,12 @@ def monitor_active_positions():
                     roe_pct = pnl_pct * lev
 
                     # ----------------------------------------------------------
-                    # 🔄 DYNAMIC BREAK-EVEN & PEAK-TRAILING STOP LOSS ENGINE
+                    # 🔄 PROGRESSIVE 4-STEP PROFIT RATCHET LOGIC
                     # ----------------------------------------------------------
                     trail_updated = False
                     new_sl_val = trade['sl']
                     tier_name = ""
+                    curr_tier = trade.get('trail_tier', 0)
 
                     if side == "LONG":
                         # Track highest peak price reached
@@ -1191,9 +1214,8 @@ def monitor_active_positions():
                         peak_roe = ((peak_p - entry_p) / entry_p * 100.0) * lev
                         last_notified_roe = trade.get('last_notified_roe', 0.0)
 
-                        # Step 1: Early Break-Even Lock at +2.5% ROE (+0.35% price move)
-                        # Moves SL to Entry + 0.6% ROE (covers ₹9 round-trip fees so risk is 0)
-                        if peak_roe >= 2.5 and trade.get('trail_tier', 0) < 1:
+                        # Step 1: Early Break-Even Lock at +2.0% ROE
+                        if peak_roe >= 2.0 and curr_tier < 1:
                             be_sl = round_coin_price(entry_p * (1.0 + (0.6 / 100.0) / lev))
                             if be_sl > trade['sl']:
                                 new_sl_val = be_sl
@@ -1203,13 +1225,35 @@ def monitor_active_positions():
                                 trade['last_trail_type'] = 'be'
                                 trail_updated = True
 
-                        # Step 2: Continuous Peak-Trailing: Trail 1.5% ROE below peak once peak >= 5.0%
+                        # Step 2: Profit Lock 1 at +3.0% ROE (Locks +1.8% ROE | +₹18.00)
+                        if peak_roe >= 3.0 and curr_tier < 2:
+                            lock1_sl = round_coin_price(entry_p * (1.0 + (1.8 / 100.0) / lev))
+                            if lock1_sl > trade['sl']:
+                                new_sl_val = lock1_sl
+                                trade['trail_tier'] = 2
+                                tier_name = f"PROFIT LOCK 1 (+{peak_roe:.1f}% Peak ➔ Locked +1.8% ROE | +₹18.00)"
+                                trade['last_notified_roe'] = 1.8
+                                trade['last_trail_type'] = 'lock1'
+                                trail_updated = True
+
+                        # Step 3: Profit Lock 2 at +4.0% ROE (Locks +2.8% ROE | +₹28.00)
+                        if peak_roe >= 4.0 and curr_tier < 3:
+                            lock2_sl = round_coin_price(entry_p * (1.0 + (2.8 / 100.0) / lev))
+                            if lock2_sl > trade['sl']:
+                                new_sl_val = lock2_sl
+                                trade['trail_tier'] = 3
+                                tier_name = f"PROFIT LOCK 2 (+{peak_roe:.1f}% Peak ➔ Locked +2.8% ROE | +₹28.00)"
+                                trade['last_notified_roe'] = 2.8
+                                trade['last_trail_type'] = 'lock2'
+                                trail_updated = True
+
+                        # Step 4: Continuous Peak-Trailing from +5.0% ROE (Trails 1.2% below peak)
                         if peak_roe >= 5.0:
-                            target_locked_roe = peak_roe - 1.5
+                            target_locked_roe = peak_roe - 1.2
                             target_sl = round_coin_price(entry_p * (1.0 + (target_locked_roe / 100.0) / lev))
                             if target_sl > trade['sl']:
                                 new_sl_val = target_sl
-                                trade['trail_tier'] = 2
+                                trade['trail_tier'] = 4
                                 tier_name = f"PEAK-TRAIL (+{peak_roe:.1f}% Peak ➔ Locked +{target_locked_roe:.1f}% ROE)"
                                 if (target_locked_roe - last_notified_roe) >= 0.5 or trade.get('last_trail_type') != 'peak':
                                     trade['last_notified_roe'] = target_locked_roe
@@ -1224,8 +1268,8 @@ def monitor_active_positions():
                         peak_roe = ((entry_p - peak_p) / entry_p * 100.0) * lev
                         last_notified_roe = trade.get('last_notified_roe', 0.0)
 
-                        # Step 1: Early Break-Even Lock at +2.5% ROE (+0.35% price move)
-                        if peak_roe >= 2.5 and trade.get('trail_tier', 0) < 1:
+                        # Step 1: Early Break-Even Lock at +2.0% ROE
+                        if peak_roe >= 2.0 and curr_tier < 1:
                             be_sl = round_coin_price(entry_p * (1.0 - (0.6 / 100.0) / lev))
                             if be_sl < trade['sl']:
                                 new_sl_val = be_sl
@@ -1235,13 +1279,35 @@ def monitor_active_positions():
                                 trade['last_trail_type'] = 'be'
                                 trail_updated = True
 
-                        # Step 2: Continuous Peak-Trailing: Trail 1.5% ROE below peak once peak >= 5.0%
+                        # Step 2: Profit Lock 1 at +3.0% ROE (Locks +1.8% ROE | +₹18.00)
+                        if peak_roe >= 3.0 and curr_tier < 2:
+                            lock1_sl = round_coin_price(entry_p * (1.0 - (1.8 / 100.0) / lev))
+                            if lock1_sl < trade['sl']:
+                                new_sl_val = lock1_sl
+                                trade['trail_tier'] = 2
+                                tier_name = f"PROFIT LOCK 1 (+{peak_roe:.1f}% Peak ➔ Locked +1.8% ROE | +₹18.00)"
+                                trade['last_notified_roe'] = 1.8
+                                trade['last_trail_type'] = 'lock1'
+                                trail_updated = True
+
+                        # Step 3: Profit Lock 2 at +4.0% ROE (Locks +2.8% ROE | +₹28.00)
+                        if peak_roe >= 4.0 and curr_tier < 3:
+                            lock2_sl = round_coin_price(entry_p * (1.0 - (2.8 / 100.0) / lev))
+                            if lock2_sl < trade['sl']:
+                                new_sl_val = lock2_sl
+                                trade['trail_tier'] = 3
+                                tier_name = f"PROFIT LOCK 2 (+{peak_roe:.1f}% Peak ➔ Locked +2.8% ROE | +₹28.00)"
+                                trade['last_notified_roe'] = 2.8
+                                trade['last_trail_type'] = 'lock2'
+                                trail_updated = True
+
+                        # Step 4: Continuous Peak-Trailing from +5.0% ROE (Trails 1.2% below peak)
                         if peak_roe >= 5.0:
-                            target_locked_roe = peak_roe - 1.5
+                            target_locked_roe = peak_roe - 1.2
                             target_sl = round_coin_price(entry_p * (1.0 - (target_locked_roe / 100.0) / lev))
                             if target_sl < trade['sl']:
                                 new_sl_val = target_sl
-                                trade['trail_tier'] = 2
+                                trade['trail_tier'] = 4
                                 tier_name = f"PEAK-TRAIL (+{peak_roe:.1f}% Peak ➔ Locked +{target_locked_roe:.1f}% ROE)"
                                 if (target_locked_roe - last_notified_roe) >= 0.5 or trade.get('last_trail_type') != 'peak':
                                     trade['last_notified_roe'] = target_locked_roe
@@ -1263,10 +1329,10 @@ def monitor_active_positions():
 
                     if trail_updated:
                         send_telegram_message(
-                            f"🛡️ <b>TRAILING STOP ACTIVATED: {symbol} ({side})</b>\n\n"
+                            f"🛡️ <b>PROFIT RATCHET ACTIVATED: {symbol} ({side})</b>\n\n"
                             f"• <b>Trigger:</b> <code>{tier_name}</code>\n"
                             f"• <b>Current ROE:</b> <code>{roe_pct:+.1f}% ROE</code>\n"
-                            f"• <b>New Trailing SL:</b> <code>${format_coin_price(new_sl_val)}</code>\n"
+                            f"• <b>New Locked SL:</b> <code>${format_coin_price(new_sl_val)}</code>\n"
                             f"✅ <i>Profits dynamically locked! Exchange order synchronized on CoinDCX.</i>"
                         )
 
@@ -1281,18 +1347,28 @@ def monitor_active_positions():
                     elif side == "SHORT" and cmp <= trade['tp1']:
                         exit_reason = f"🎯 TARGET REACHED (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
 
-                    # 2. Stop Loss (Break-Even, Trailing SL, or Initial Swing SL)
+                    # 2. Stop Loss (Peak Trail, Profit Locks, Break-Even, or Initial Swing SL)
                     elif side == "LONG" and cmp <= trade['sl']:
-                        if trade.get('trail_tier', 0) == 2:
-                            exit_reason = f"🔒 TRAILING STOP HIT (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
-                        elif trade.get('trail_tier', 0) == 1:
+                        tier = trade.get('trail_tier', 0)
+                        if tier == 4:
+                            exit_reason = f"🔒 PEAK TRAILING STOP HIT (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
+                        elif tier == 3:
+                            exit_reason = f"💎 PROFIT LOCK 2 HIT (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
+                        elif tier == 2:
+                            exit_reason = f"💰 PROFIT LOCK 1 HIT (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
+                        elif tier == 1:
                             exit_reason = f"🛡️ BREAK-EVEN HIT (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
                         else:
                             exit_reason = f"🛑 INITIAL SWING SL HIT ({pnl_pct:.2f}% | {roe_pct:.1f}% ROE)"
                     elif side == "SHORT" and cmp >= trade['sl']:
-                        if trade.get('trail_tier', 0) == 2:
-                            exit_reason = f"🔒 TRAILING STOP HIT (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
-                        elif trade.get('trail_tier', 0) == 1:
+                        tier = trade.get('trail_tier', 0)
+                        if tier == 4:
+                            exit_reason = f"🔒 PEAK TRAILING STOP HIT (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
+                        elif tier == 3:
+                            exit_reason = f"💎 PROFIT LOCK 2 HIT (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
+                        elif tier == 2:
+                            exit_reason = f"💰 PROFIT LOCK 1 HIT (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
+                        elif tier == 1:
                             exit_reason = f"🛡️ BREAK-EVEN HIT (+{pnl_pct:.2f}% | +{roe_pct:.1f}% ROE)"
                         else:
                             exit_reason = f"🛑 INITIAL SWING SL HIT ({pnl_pct:.2f}% | {roe_pct:.1f}% ROE)"
@@ -1306,7 +1382,7 @@ def monitor_active_positions():
 
                         st = load_state()
                         st[f"last_traded_{symbol}"] = time.time()
-                        # Loss Protection: If Initial Swing SL hit, lock coin for 4 hours
+                        # Loss Protection: Only true Initial Swing SL hits trigger the 4-hour cooldown
                         if "INITIAL SWING SL HIT" in exit_reason:
                             st[f"loss_cooldown_{symbol}"] = time.time() + (STOP_OUT_COOLDOWN_HOURS * 3600)
                         save_state(st)
@@ -1356,7 +1432,7 @@ def run_telegram_command_listener():
                     if cmd in ["/start", "start"]:
                         AUTO_TRADING_ENABLED = True
                         save_active_trades()
-                        send_telegram_message("▶️ <b>Auto-trading RESUMED.</b> Scanning 3M/15M charts for surgical setups with 1.3x volume filter.")
+                        send_telegram_message("▶️ <b>Auto-trading RESUMED.</b> Scanning 3M/15M charts with Proximity & Progressive Profit Ratchet.")
                     elif cmd in ["/stop", "stop"]:
                         AUTO_TRADING_ENABLED = False
                         save_active_trades()
@@ -1371,12 +1447,13 @@ def run_telegram_command_listener():
                         today_str = get_ist_now().strftime("%d-%m-%Y")
                         today_executed = [e for e in events if e.get('date') == today_str and e.get('type') == 'EXECUTED']
                         send_telegram_message(
-                            f"🤖 <b>SURGICAL BOT STATUS</b>\n"
+                            f"🤖 <b>SURGICAL BOT V2 STATUS</b>\n"
                             f"• Auto-Trading: {'🟢 ACTIVE' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}\n"
                             f"• Active Scalps: {count}/{MAX_ACTIVE_TRADES}{summary}\n"
                             f"• Daily Quality Cap: {len(today_executed)} / {DAILY_MAX_TRADES} Trades Taken Today\n"
-                            f"• Filters: 3M 9/20 EMA Cross + 15M Trend Alignment + 1.3x Volume Spike\n"
-                            f"• Risk Safety: 4-Hr Stop-Out Lock + Capped SL (-₹35 max) + Break-Even (+2.5%) + Peak-Trail (+5%)"
+                            f"• Proximity Filter: Strictly <= 0.35% from 20 EMA (Eliminates Chase Traps!)\n"
+                            f"• Profit Ladder: BE @ +2% | Lock @ +3% (+1.8%) | Lock @ +4% (+2.8%) | Trail @ +5%\n"
+                            f"• Risk Safety: 4-Hr Stop-Out Lock + Capped SL (-₹35 max)"
                         )
                     elif cmd in ["/report", "report", "/today", "today"]:
                         report_text = generate_daily_trade_report()
@@ -1431,7 +1508,7 @@ def home():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Surgical 3M/15M EMA Scalper</title>
+        <title>Surgical 3M/15M EMA Scalper V2</title>
         <meta http-equiv="refresh" content="10">
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0e1118; color: #e0e0e0; margin: 0; padding: 20px; }}
@@ -1448,8 +1525,9 @@ def home():
     <body>
         <div class="container">
             <div class="card">
-                <h1>⚡ Surgical 3M/15M EMA Scalper</h1>
-                <p>Status: <b>{'🟢 RUNNING' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b> | Daily Quality Cap: <b>{len(today_executed)} / {DAILY_MAX_TRADES}</b> | Protection: <b>4-Hr Stop-Out Lock + 1.3x Vol Filter + Tight Capped SL (-₹35 max) + Break-Even (+2.5%) + Peak-Trail (+5%)</b></p>
+                <h1>⚡ Surgical 3M/15M EMA Scalper V2</h1>
+                <p>Status: <b>{'🟢 RUNNING' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b> | Daily Quality Cap: <b>{len(today_executed)} / {DAILY_MAX_TRADES}</b> | Proximity: <b>&le; 0.35% from 20 EMA</b></p>
+                <p>Ladder: <b>BE @ +2.0% | Lock @ +3.0% (+1.8%) | Lock @ +4.0% (+2.8%) | Trail @ +5.0%</b></p>
                 <div>
                     <a href="/toggle-bot" class="btn {'btn-red' if AUTO_TRADING_ENABLED else 'btn-green'}">
                         {'PAUSE BOT' if AUTO_TRADING_ENABLED else 'RESUME BOT'}
@@ -1492,7 +1570,7 @@ def toggle_bot():
 
 @app.route('/test-telegram')
 def test_telegram():
-    send_telegram_message("🔔 <b>Crypto-Scanner Test Alert</b>\nSurgical bot connection is fully functional and live!")
+    send_telegram_message("🔔 <b>Crypto-Scanner Test Alert</b>\nSurgical V2 bot connection is fully functional and live!")
     return "Telegram alert sent successfully! <a href='/'>Back to Dashboard</a>"
 
 @app.route('/close/<symbol>')
@@ -1557,15 +1635,18 @@ def start_background_loop():
     threading.Thread(target=run_daily_report_scheduler, daemon=True).start()
 
     send_telegram_message(
-        "⚡ <b>SURGICAL 3M/15M EMA SCALPING BOT DEPLOYED!</b>\n\n"
+        "⚡ <b>SURGICAL 3M/15M EMA SCALPING BOT V2 DEPLOYED!</b>\n\n"
         "• <b>Strategy:</b> 3M 9/20 EMA Cross + 15M Trend Alignment + 1.3x Volume Spike Filter\n"
+        "• <b>Proximity Filter:</b> Strictly <= 0.35% from 20 EMA (Eliminates ETH-like Chase Traps!)\n"
+        "• <b>Progressive Profit Ladder:</b>\n"
+        "   └ 🛡️ +2.0% ROE Peak ➔ Break-Even (+0.6% ROE Fees Protected)\n"
+        "   └ 💰 +3.0% ROE Peak ➔ Locks +1.8% ROE (+₹18.00 Cash in Pocket!)\n"
+        "   └ 💎 +4.0% ROE Peak ➔ Locks +2.8% ROE (+₹28.00 Cash in Pocket!)\n"
+        "   └ 🚀 +5.0% ROE & Above ➔ Continuous Peak Trail (1.2% below peak, ride runners like APT +14%!)\n"
         "• <b>Watchlist:</b> 70 Top High-Liquidity Coins\n"
         "• <b>Loss Protection:</b> 4-Hour Cooldown on Stop-Outs (Bans repeat loss traps like FIL!)\n"
         "• <b>Daily Quality Cap:</b> Max 8 Top-Tier Trades / Day (Cuts fee bleed by >70%)\n"
         "• <b>Stop Loss:</b> Tight Swing SL Strictly Capped at -0.50% (Max -₹35 Loss)\n"
-        "• <b>Break-Even Lock:</b> At +2.5% ROE -> Moves SL to Entry + Fees Protected (+0.6% ROE)\n"
-        "• <b>Continuous Peak-Trailing SL:</b>\n"
-        "   └ 🚀 Trails 1.5% ROE below peak continuously from +5.0% ROE! (Ride runners like BLUR +₹107)\n"
         "• <b>Target:</b> +17.5% ROE (+2.5% price move) Extended Max TP\n"
         "• <b>Exchange Safety:</b> Native CoinDCX TP/SL Bracket Synchronized Automatically\n"
         "• <b>Margin:</b> ₹1,000 INR (7x Isolated Leverage)\n"
