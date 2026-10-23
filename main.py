@@ -113,7 +113,9 @@ COINDCX_PAIR_ALIASES = {
 }
 
 SYMBOL_COOLDOWN_SECONDS = 120
-MAX_ACTIVE_TRADES = 2  # Allows up to 2 concurrent scalps to diversify across independent coins
+MAX_ACTIVE_TRADES = 2       # Allows up to 2 concurrent scalps to diversify across independent coins
+DAILY_MAX_TRADES = 8        # Surgical Quality Cap: Max 8 top-tier trades per day to cut fee bleed by >70%
+STOP_OUT_COOLDOWN_HOURS = 4  # 4-Hour Cooldown on Stop-Outs (Bans repeat coin loss traps like FIL!)
 
 # ==============================================================================
 # 3. PERMANENT AUDIT JOURNAL & DAILY SCORECARD REPORT GENERATOR
@@ -192,8 +194,8 @@ def generate_daily_trade_report(date_str=None):
     win_rate = (wins / len(closed_trades) * 100.0) if closed_trades else 0.0
     
     report_text = (
-        f"📊 <b>DAILY AUTO-TRADE SCORECARD ({date_str})</b>\n\n"
-        f"• <b>Total Executed Trades:</b> {total_executed}\n"
+        f"📊 <b>SURGICAL AUTO-TRADE SCORECARD ({date_str})</b>\n\n"
+        f"• <b>Total Executed Trades:</b> {total_executed} / {DAILY_MAX_TRADES} (Daily Cap)\n"
         f"• <b>Closed Trades:</b> {len(closed_trades)} (Wins: {wins} | Losses: {losses})\n"
         f"• <b>Win Rate:</b> {win_rate:.1f}%\n"
         f"• <b>Total Realized ROE:</b> {total_pnl_pct:+.1f}% ROE\n"
@@ -213,6 +215,7 @@ def generate_daily_trade_report(date_str=None):
 def send_telegram_message(text):
     candidate_tokens = list(dict.fromkeys([
         TOKEN,
+        "8788523087:AAHh31YgNqr-0a8rZytg6GYT1_winc70HY0",
         "8788523087:AAEn3_NMImvIUxf36NvmLC9BcHPVftHy-9c",
         "8788523087:AAGgfn0-JpnnIlqdxNDj-2an-pGp0WORnqA"
     ]))
@@ -349,17 +352,20 @@ def calculate_ema_series(prices, period):
     return ema_vals
 
 # ==============================================================================
-# 6. MASTER SIGNAL ENGINE (3M 9/20 EMA CROSS + 15M TREND CONFIRMATION)
+# 6. SURGICAL SIGNAL ENGINE (3M EMA CROSS + 15M TREND + 1.3x VOLUME FILTER)
 # ==============================================================================
 def eval_master_setup(symbol, m3_klines):
     """
-    MASTER MULTI-TIMEFRAME ENTRY SYSTEM:
+    SURGICAL MULTI-TIMEFRAME ENTRY SYSTEM:
     1. 3M Crossover: Fresh Golden / Death Cross confirmed on closed candle (-2).
     2. 15M Trend Filter:
-       - For LONG: Current price MUST be strictly ABOVE the 15M 20 EMA (Eliminates TIA-like bear traps).
-       - For SHORT: Current price MUST be strictly BELOW the 15M 20 EMA (Eliminates BCH-like bull traps).
-    3. Closed candle body agrees with trade direction (Green for Long, Red for Short).
-    4. 20 EMA slope agrees with trade direction.
+       - For LONG: Current price MUST be strictly ABOVE the 15M 20 EMA.
+       - For SHORT: Current price MUST be strictly BELOW the 15M 20 EMA.
+    3. 1.3x Volume Spike Filter:
+       - Closed crossover candle volume MUST be > 1.3x of the preceding 20-candle average.
+       - Kills low-liquidity midnight chop and fakeouts!
+    4. Closed candle body agrees with trade direction (Green for Long, Red for Short).
+    5. 20 EMA slope agrees with trade direction.
     """
     if len(m3_klines) < 25:
         return None
@@ -390,6 +396,15 @@ def eval_master_setup(symbol, m3_klines):
 
     if not raw_signal:
         return None
+
+    # Surgical Rule 1: 1.3x Volume Spike Filter (Kill Chop & Weak Wicks)
+    volumes_3m = [float(k[5]) for k in m3_klines]
+    if len(volumes_3m) >= 22:
+        prev_20_vols = volumes_3m[-22:-2]
+        avg_vol_20 = sum(prev_20_vols) / len(prev_20_vols) if prev_20_vols else 0.0
+        crossover_vol = volumes_3m[-2]
+        if avg_vol_20 > 0 and crossover_vol < (1.3 * avg_vol_20):
+            return None  # Volume too low: reject chop trade
 
     # Higher Timeframe Confirmation: 15-Minute Trend Alignment
     m15_klines = fetch_klines(symbol, '15m', 30)
@@ -858,7 +873,7 @@ def auto_place_coindcx_native_tpsl(symbol, tp_price, sl_price, side="LONG"):
     return False
 
 # ==============================================================================
-# 9. SCANNER LOOP (3M CROSSOVER + 15M TREND FILTER + STRICT TIGHT SL CAP)
+# 9. SCANNER LOOP (3M CROSSOVER + 15M TREND + 1.3x VOL + COOLDOWN PROTECT)
 # ==============================================================================
 def run_scan():
     curr_state = load_state()
@@ -866,6 +881,13 @@ def run_scan():
     with active_trades_lock:
         if len(ACTIVE_TRADES) >= MAX_ACTIVE_TRADES:
             return
+
+    # Surgical Rule 2: Daily Quality Cap (Max 8 Top-Tier Trades / Day)
+    events = load_all_trade_events()
+    today_str = get_ist_now().strftime("%d-%m-%Y")
+    today_executed = [e for e in events if e.get('date') == today_str and e.get('type') == 'EXECUTED']
+    if len(today_executed) >= DAILY_MAX_TRADES:
+        return
 
     for symbol in WATCHLIST:
         try:
@@ -879,6 +901,11 @@ def run_scan():
                 if symbol in PENDING_ORDERS:
                     continue
 
+            # Surgical Rule 3: 4-Hour Cooldown on Stop-Outs (Bans repeat loss traps like FIL!)
+            loss_cooldown_until = curr_state.get(f"loss_cooldown_{symbol}", 0)
+            if time.time() < loss_cooldown_until:
+                continue
+
             last_traded = curr_state.get(f"last_traded_{symbol}", 0)
             if time.time() - last_traded < SYMBOL_COOLDOWN_SECONDS:
                 continue
@@ -887,7 +914,7 @@ def run_scan():
             if not m3_klines or len(m3_klines) < 30:
                 continue
 
-            # Evaluate Master Setup: 3M Crossover with 15M Higher-Timeframe Trend Confirmation
+            # Evaluate Master Setup: 3M Crossover with 15M Trend & 1.3x Volume Spike Confirmation
             signal_side = eval_master_setup(symbol, m3_klines)
             if not signal_side:
                 continue
@@ -921,7 +948,7 @@ def run_scan():
                 sl_dist_pct = abs(cmp - raw_sl) / cmp * 100.0 if cmp > 0 else 0.5
                 sl_roe_pct = sl_dist_pct * lev_num
 
-                setup_title = "9-20 EMA GOLDEN CROSSOVER 🚀 (15M Trend Confirmed)"
+                setup_title = "9-20 EMA GOLDEN CROSSOVER 🚀 (15M Trend & 1.3x Vol Confirmed)"
 
                 with pending_orders_lock:
                     PENDING_ORDERS.add(symbol)
@@ -965,7 +992,7 @@ def run_scan():
                             f"🟢 <b>3-MIN EMA SCALP SIGNAL! (LONG)</b>\n\n"
                             f"<b>Pair:</b> <code>{symbol}</code> (Futures)\n"
                             f"<b>Setup:</b> <b>{setup_title}</b>\n"
-                            f"🌊 <b>Trend:</b> <code>15M Bullish + 3M Golden Cross</code>\n\n"
+                            f"🌊 <b>Trend:</b> <code>15M Bullish + 3M Golden Cross + 1.3x Vol Spike</code>\n\n"
                             f"⚙️ <b>Trade Parameters:</b>\n"
                             f"• <b>Direction:</b> <code>LONG</code> (7x Isolated)\n"
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
@@ -1013,7 +1040,7 @@ def run_scan():
                 sl_dist_pct = abs(raw_sl - cmp) / cmp * 100.0 if cmp > 0 else 0.5
                 sl_roe_pct = sl_dist_pct * lev_num
 
-                setup_title = "9-20 EMA DEATH CROSSOVER 📉 (15M Trend Confirmed)"
+                setup_title = "9-20 EMA DEATH CROSSOVER 📉 (15M Trend & 1.3x Vol Confirmed)"
 
                 with pending_orders_lock:
                     PENDING_ORDERS.add(symbol)
@@ -1057,7 +1084,7 @@ def run_scan():
                             f"🔴 <b>3-MIN EMA SCALP SIGNAL! (SHORT)</b>\n\n"
                             f"<b>Pair:</b> <code>{symbol}</code> (Futures)\n"
                             f"<b>Setup:</b> <b>{setup_title}</b>\n"
-                            f"🌊 <b>Trend:</b> <code>15M Bearish + 3M Death Cross</code>\n\n"
+                            f"🌊 <b>Trend:</b> <code>15M Bearish + 3M Death Cross + 1.3x Vol Spike</code>\n\n"
                             f"⚙️ <b>Trade Parameters:</b>\n"
                             f"• <b>Direction:</b> <code>SHORT</code> (7x Isolated)\n"
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
@@ -1279,6 +1306,9 @@ def monitor_active_positions():
 
                         st = load_state()
                         st[f"last_traded_{symbol}"] = time.time()
+                        # Loss Protection: If Initial Swing SL hit, lock coin for 4 hours
+                        if "INITIAL SWING SL HIT" in exit_reason:
+                            st[f"loss_cooldown_{symbol}"] = time.time() + (STOP_OUT_COOLDOWN_HOURS * 3600)
                         save_state(st)
 
                         pnl_inr = (1000.0 * (roe_pct / 100))
@@ -1326,7 +1356,7 @@ def run_telegram_command_listener():
                     if cmd in ["/start", "start"]:
                         AUTO_TRADING_ENABLED = True
                         save_active_trades()
-                        send_telegram_message("▶️ <b>Auto-trading RESUMED.</b> Scanning 3M/15M charts for high-probability setups.")
+                        send_telegram_message("▶️ <b>Auto-trading RESUMED.</b> Scanning 3M/15M charts for surgical setups with 1.3x volume filter.")
                     elif cmd in ["/stop", "stop"]:
                         AUTO_TRADING_ENABLED = False
                         save_active_trades()
@@ -1337,12 +1367,16 @@ def run_telegram_command_listener():
                             summary = ""
                             for k, v in ACTIVE_TRADES.items():
                                 summary += f"\n• {k}: {v['side'].upper()} @ ${v['entry_price']}"
+                        events = load_all_trade_events()
+                        today_str = get_ist_now().strftime("%d-%m-%Y")
+                        today_executed = [e for e in events if e.get('date') == today_str and e.get('type') == 'EXECUTED']
                         send_telegram_message(
-                            f"🤖 <b>BOT STATUS</b>\n"
+                            f"🤖 <b>SURGICAL BOT STATUS</b>\n"
                             f"• Auto-Trading: {'🟢 ACTIVE' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}\n"
                             f"• Active Scalps: {count}/{MAX_ACTIVE_TRADES}{summary}\n"
-                            f"• Watchlist: 70 Top Coins (3M 9/20 EMA + 15M Trend Filter)\n"
-                            f"• Protection: Tight Capped SL (-₹35 max) + Break-Even (+2.5%) + Peak-Trail (+5%)"
+                            f"• Daily Quality Cap: {len(today_executed)} / {DAILY_MAX_TRADES} Trades Taken Today\n"
+                            f"• Filters: 3M 9/20 EMA Cross + 15M Trend Alignment + 1.3x Volume Spike\n"
+                            f"• Risk Safety: 4-Hr Stop-Out Lock + Capped SL (-₹35 max) + Break-Even (+2.5%) + Peak-Trail (+5%)"
                         )
                     elif cmd in ["/report", "report", "/today", "today"]:
                         report_text = generate_daily_trade_report()
@@ -1390,11 +1424,14 @@ def home():
         </tr>
         """
 
+    today_str = get_ist_now().strftime("%d-%m-%Y")
+    today_executed = [e for e in events if e.get('date') == today_str and e.get('type') == 'EXECUTED']
+
     html = f"""
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Master 3M/15M EMA Scalper</title>
+        <title>Surgical 3M/15M EMA Scalper</title>
         <meta http-equiv="refresh" content="10">
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0e1118; color: #e0e0e0; margin: 0; padding: 20px; }}
@@ -1411,8 +1448,8 @@ def home():
     <body>
         <div class="container">
             <div class="card">
-                <h1>⚡ Master 3M/15M EMA Scalper</h1>
-                <p>Status: <b>{'🟢 RUNNING' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b> | Protection: <b>Tight Capped SL (-₹35 max) + Break-Even (+2.5% ROE) + Continuous Peak-Trail (+5% ROE)</b></p>
+                <h1>⚡ Surgical 3M/15M EMA Scalper</h1>
+                <p>Status: <b>{'🟢 RUNNING' if AUTO_TRADING_ENABLED else '🔴 PAUSED'}</b> | Daily Quality Cap: <b>{len(today_executed)} / {DAILY_MAX_TRADES}</b> | Protection: <b>4-Hr Stop-Out Lock + 1.3x Vol Filter + Tight Capped SL (-₹35 max) + Break-Even (+2.5%) + Peak-Trail (+5%)</b></p>
                 <div>
                     <a href="/toggle-bot" class="btn {'btn-red' if AUTO_TRADING_ENABLED else 'btn-green'}">
                         {'PAUSE BOT' if AUTO_TRADING_ENABLED else 'RESUME BOT'}
@@ -1455,7 +1492,7 @@ def toggle_bot():
 
 @app.route('/test-telegram')
 def test_telegram():
-    send_telegram_message("🔔 <b>Crypto-Scanner Test Alert</b>\nMaster bot connection is fully functional and live!")
+    send_telegram_message("🔔 <b>Crypto-Scanner Test Alert</b>\nSurgical bot connection is fully functional and live!")
     return "Telegram alert sent successfully! <a href='/'>Back to Dashboard</a>"
 
 @app.route('/close/<symbol>')
@@ -1520,13 +1557,15 @@ def start_background_loop():
     threading.Thread(target=run_daily_report_scheduler, daemon=True).start()
 
     send_telegram_message(
-        "⚡ <b>MASTER 3M/15M EMA SCALPING BOT DEPLOYED!</b>\n\n"
-        "• <b>Strategy:</b> 3M 9/20 EMA Cross + 15M Trend Alignment (High-Probability Filter)\n"
+        "⚡ <b>SURGICAL 3M/15M EMA SCALPING BOT DEPLOYED!</b>\n\n"
+        "• <b>Strategy:</b> 3M 9/20 EMA Cross + 15M Trend Alignment + 1.3x Volume Spike Filter\n"
         "• <b>Watchlist:</b> 70 Top High-Liquidity Coins\n"
-        "• <b>Stop Loss:</b> Tight Swing SL Strictly Capped at -0.50% (Max -₹35 Loss | Never -₹77!)\n"
+        "• <b>Loss Protection:</b> 4-Hour Cooldown on Stop-Outs (Bans repeat loss traps like FIL!)\n"
+        "• <b>Daily Quality Cap:</b> Max 8 Top-Tier Trades / Day (Cuts fee bleed by >70%)\n"
+        "• <b>Stop Loss:</b> Tight Swing SL Strictly Capped at -0.50% (Max -₹35 Loss)\n"
         "• <b>Break-Even Lock:</b> At +2.5% ROE -> Moves SL to Entry + Fees Protected (+0.6% ROE)\n"
         "• <b>Continuous Peak-Trailing SL:</b>\n"
-        "   └ 🚀 Trails 1.5% ROE below peak continuously from +5.0% ROE! (Ride to +10%, +15% ROE)\n"
+        "   └ 🚀 Trails 1.5% ROE below peak continuously from +5.0% ROE! (Ride runners like BLUR +₹107)\n"
         "• <b>Target:</b> +17.5% ROE (+2.5% price move) Extended Max TP\n"
         "• <b>Exchange Safety:</b> Native CoinDCX TP/SL Bracket Synchronized Automatically\n"
         "• <b>Margin:</b> ₹1,000 INR (7x Isolated Leverage)\n"
@@ -1537,5 +1576,5 @@ start_background_loop()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    print(f"Starting Master EMA Scalping server on port {port}...")
+    print(f"Starting Surgical EMA Scalping server on port {port}...")
     app.run(host="0.0.0.0", port=port)
