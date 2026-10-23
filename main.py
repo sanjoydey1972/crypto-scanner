@@ -594,7 +594,7 @@ def recover_live_coindcx_positions():
                         'entry_time': time.time(),
                         'highest_price': entry_p,
                         'lowest_price': entry_p,
-                        'leverage': 7
+                        'leverage': 8
                     }
                     recovered_count += 1
 
@@ -610,7 +610,7 @@ def recover_live_coindcx_positions():
 # ==============================================================================
 # 8. ORDER EXECUTION WITH LOT SIZE PRECISION NORMALIZATION
 # ==============================================================================
-def execute_coindcx_futures_trade(symbol, side="buy", cmp=0.0, margin_inr=1000.0, leverage=7, custom_quantity=None, is_close=False):
+def execute_coindcx_futures_trade(symbol, side="buy", cmp=0.0, margin_inr=1000.0, leverage=8, custom_quantity=None, is_close=False):
     if not COINDCX_API_KEY or not COINDCX_SECRET_KEY:
         return {'success': False, 'error': 'CoinDCX API Keys not configured.'}
 
@@ -936,7 +936,7 @@ def run_scan():
             cmp = closes[-1]
 
             coin_margin = 1000.0
-            lev_num = 7
+            lev_num = 8
 
             # ------------------------------------------------------------------
             # 🟢 LONG ENTRY (Initial SL = Tight Swing Low, STRICTLY CAPPED AT -₹35 MAX LOSS)
@@ -1005,7 +1005,7 @@ def run_scan():
                             f"<b>Setup:</b> <b>{setup_title}</b>\n"
                             f"🌊 <b>Trend:</b> <code>15M Bullish + 3M Golden Cross + 1.3x Vol + Proximity OK</code>\n\n"
                             f"⚙️ <b>Trade Parameters:</b>\n"
-                            f"• <b>Direction:</b> <code>LONG</code> (7x Isolated)\n"
+                            f"• <b>Direction:</b> <code>LONG</code> (8x Isolated)\n"
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
                             f"🛑 <b>Stop Loss (Tight Capped):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE | Max -₹35)\n"
                             f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+2.5% / +17.5% ROE)\n\n"
@@ -1101,7 +1101,7 @@ def run_scan():
                             f"<b>Setup:</b> <b>{setup_title}</b>\n"
                             f"🌊 <b>Trend:</b> <code>15M Bearish + 3M Death Cross + 1.3x Vol + Proximity OK</code>\n\n"
                             f"⚙️ <b>Trade Parameters:</b>\n"
-                            f"• <b>Direction:</b> <code>SHORT</code> (7x Isolated)\n"
+                            f"• <b>Direction:</b> <code>SHORT</code> (8x Isolated)\n"
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
                             f"🛑 <b>Stop Loss (Tight Capped):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE | Max -₹35)\n"
                             f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+2.5% / +17.5% ROE)\n\n"
@@ -1167,7 +1167,7 @@ def monitor_active_positions():
                     close_side = "sell" if side == "LONG" else "buy"
                     entry_p = trade['entry_price']
                     entry_time = trade.get('entry_time', time.time())
-                    lev = trade.get('leverage', 7)
+                    lev = trade.get('leverage', 8)
                     pos_age = time.time() - entry_time
 
                     # 1. Check if closed on CoinDCX (native TP/SL or manual close)
@@ -1649,7 +1649,7 @@ def start_background_loop():
         "• <b>Stop Loss:</b> Tight Swing SL Strictly Capped at -0.50% (Max -₹35 Loss)\n"
         "• <b>Target:</b> +17.5% ROE (+2.5% price move) Extended Max TP\n"
         "• <b>Exchange Safety:</b> Native CoinDCX TP/SL Bracket Synchronized Automatically\n"
-        "• <b>Margin:</b> ₹1,000 INR (7x Isolated Leverage)\n"
+        "• <b>Margin:</b> ₹1,000 INR (8x Isolated Leverage)\n"
         "• <b>Controls:</b> Web 1-Click Dashboard + Telegram /start, /stop, /status & /report"
     )
 
