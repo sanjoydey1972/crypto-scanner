@@ -1007,7 +1007,7 @@ def run_scan():
                             f"⚙️ <b>Trade Parameters:</b>\n"
                             f"• <b>Direction:</b> <code>LONG</code> (8x Isolated)\n"
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
-                            f"🛑 <b>Stop Loss (Tight Capped):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE | Max -₹35)\n"
+                            f"🛑 <b>Stop Loss (Tight Capped):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE | Max -₹40)\n"
                             f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+2.5% / +17.5% ROE)\n\n"
                             f"🔄 <b>Progressive Profit Ladder:</b>\n"
                             f"• +2.0% ROE: Break-Even (+0.6% Fees Protected)\n"
@@ -1103,7 +1103,7 @@ def run_scan():
                             f"⚙️ <b>Trade Parameters:</b>\n"
                             f"• <b>Direction:</b> <code>SHORT</code> (8x Isolated)\n"
                             f"• <b>Entry CMP:</b> <code>${format_coin_price(cmp)}</code>\n"
-                            f"🛑 <b>Stop Loss (Tight Capped):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE | Max -₹35)\n"
+                            f"🛑 <b>Stop Loss (Tight Capped):</b> <code>${format_coin_price(raw_sl)}</code> (-{sl_dist_pct:.2f}% / -{sl_roe_pct:.1f}% ROE | Max -₹40)\n"
                             f"🎯 <b>Target (Max TP):</b> <code>${format_coin_price(tp1)}</code> (+2.5% / +17.5% ROE)\n\n"
                             f"🔄 <b>Progressive Profit Ladder:</b>\n"
                             f"• +2.0% ROE: Break-Even (+0.6% Fees Protected)\n"
@@ -1453,7 +1453,7 @@ def run_telegram_command_listener():
                             f"• Daily Quality Cap: {len(today_executed)} / {DAILY_MAX_TRADES} Trades Taken Today\n"
                             f"• Proximity Filter: Strictly <= 0.35% from 20 EMA (Eliminates Chase Traps!)\n"
                             f"• Profit Ladder: BE @ +2% | Lock @ +3% (+1.8%) | Lock @ +4% (+2.8%) | Trail @ +5%\n"
-                            f"• Risk Safety: 4-Hr Stop-Out Lock + Capped SL (-₹35 max)"
+                            f"• Risk Safety: 4-Hr Stop-Out Lock + Capped SL (-₹40 max @ 8x)"
                         )
                     elif cmd in ["/report", "report", "/today", "today"]:
                         report_text = generate_daily_trade_report()
@@ -1645,8 +1645,8 @@ def start_background_loop():
         "   └ 🚀 +5.0% ROE & Above ➔ Continuous Peak Trail (1.2% below peak, ride runners like APT +14%!)\n"
         "• <b>Watchlist:</b> 70 Top High-Liquidity Coins\n"
         "• <b>Loss Protection:</b> 4-Hour Cooldown on Stop-Outs (Bans repeat loss traps like FIL!)\n"
-        "• <b>Daily Quality Cap:</b> Max 8 Top-Tier Trades / Day (Cuts fee bleed by >70%)\n"
-        "• <b>Stop Loss:</b> Tight Swing SL Strictly Capped at -0.50% (Max -₹35 Loss)\n"
+        "• <b>Daily Quality Cap:</b> Max 999 Top-Tier Trades / Day (Cuts fee bleed by >70%)\n"
+        "• <b>Stop Loss:</b> Tight Swing SL Strictly Capped at -0.50% (Max -₹40 Loss @ 8x)\n"
         "• <b>Target:</b> +17.5% ROE (+2.5% price move) Extended Max TP\n"
         "• <b>Exchange Safety:</b> Native CoinDCX TP/SL Bracket Synchronized Automatically\n"
         "• <b>Margin:</b> ₹1,000 INR (8x Isolated Leverage)\n"
